@@ -12,6 +12,16 @@ Acquire::Retries "5";
 Acquire::http::Timeout "30";
 Acquire::https::Timeout "30";
 APT
+# 2026-11-11 the runners' resolver (Azure DNS, via systemd-resolved) stopped answering for the Ubuntu archives while
+# other names resolved: then use public resolvers as well
+if ! getent hosts archive.ubuntu.com >/dev/null && [ -d /run/systemd/resolve ]; then
+	echo "deps: archive.ubuntu.com does not resolve; adding public DNS servers"
+	mkdir -p /etc/systemd/resolved.conf.d
+	printf '[Resolve]\nDNS=1.1.1.1 8.8.8.8\nFallbackDNS=1.0.0.1 8.8.4.4\n' > /etc/systemd/resolved.conf.d/80-x86sim.conf
+	systemctl restart systemd-resolved
+	for i in 1 2 3 4 5; do getent hosts archive.ubuntu.com >/dev/null && break; sleep 2; done
+	getent hosts archive.ubuntu.com || echo "deps: archive.ubuntu.com still does not resolve"
+fi
 # GitHub's runners fetch Ubuntu through azure.archive.ubuntu.com (mirror list /etc/apt/apt-mirrors.txt); when it does
 # not answer (2026-11-11: every request timed out for an hour), use Ubuntu's own archive
 if [ -f /etc/apt/apt-mirrors.txt ] && ! curl -fsS --max-time 15 -o /dev/null http://azure.archive.ubuntu.com/ubuntu/dists/noble/InRelease; then
