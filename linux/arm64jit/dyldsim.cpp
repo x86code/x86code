@@ -241,9 +241,13 @@ void dyld_sim_patches(u64 slide) {
     if (const char *e = getenv("X86SIM_A64_DYLD_NATIVE"); e && atoi(e) == 0) return;
     // bl Loader::image; add x0, sp, #8; bl Header::installName  ->  bl kInstallName; nop; nop
     uint32_t *p = nullptr;
-    for (u64 a = kSearchLo; a < kSearchHi && !p; a += 4) {
+    // Platforms 1: the bl's distance differs between runtimes (0x9400107a in iOS 27.2, 0x94001077 in tvOS 27.2), so
+    // the call is found by the instructions around it: "add x8, sp, #8; mov x0, x19; mov x1, x21" before it
+    for (u64 a = kSearchLo + 12; a < kSearchHi && !p; a += 4) {
         auto *q = (uint32_t *)(slide + a);
-        if (q[0] == 0x9400107au && q[1] == 0x910023e0u && (q[2] >> 26) == 0x25) p = q;
+        if ((q[0] >> 26) == 0x25 && q[1] == 0x910023e0u && (q[2] >> 26) == 0x25 && q[-3] == 0x910023e8u && q[-2] == 0xaa1303e0u
+            && q[-1] == 0xaa1503e1u)
+            p = q;
     }
     auto *pad = (uint32_t *)(slide + kTextPad);
     if (!p) {

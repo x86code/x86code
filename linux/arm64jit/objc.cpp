@@ -109,13 +109,12 @@ void h_objc_msgSend(GuestThread &t, u32) {
 
 }  // namespace
 
-static u64 g_bks_text;  // BackBoardServices' __TEXT in this runtime's cache (sim_service_patches)
+static u64 g_bks_text, g_bks_hi;  // BackBoardServices' __TEXT in this runtime's cache (sim_service_patches)
 static u64 g_objc_text_lo, g_objc_text_hi;  // libobjc's __TEXT (objc_cache_gc_guard)
 
 void native_objc_prepare(const std::string &cache_path) {
-    u64 bks_hi = 0;
     cache_exports(cache_path, "/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices", nullptr,
-                  &g_bks_text, &bks_hi);
+                  &g_bks_text, &g_bks_hi);
     cache_exports(cache_path, "/usr/lib/libobjc.A.dylib", nullptr, &g_objc_text_lo, &g_objc_text_hi);
     // X86SIM_A64_GUEST_OBJC=1: leave guest A64 msgSend alone (baseline).
     const char *guest = getenv("X86SIM_A64_GUEST_OBJC");
@@ -247,7 +246,19 @@ void objc_cache_gc_guard(GuestThread &t) {
 // it ends up with on a Mac too); mode pushes and queries go to nil. X86SIM_A64_UISENSOR=1 leaves it alone.
 // Speed 24: as an offset into BackBoardServices' __TEXT (0x1c8e3e22c in 27.0, 0x1c8dec22c in 27.2, 0x1c8f2622c in
 // 27.1: the same code, the image moved); patch_return checks the prologue.
+// Platforms 1: tvOS / watchOS 27.2 have it at +0xb0b0 (PineBoard and Carousel use the overseer too), so it is found by
+// its first 9 instructions (one hit in each 27.2 runtime's BackBoardServices), else the iOS offset.
 constexpr u64 kUISensorConnect = 0xb22c;  // -[_BKSHIDUISensorOverseer _connectionLock_connectToRemoteServiceIfNeeded]
+static u64 find_ui_sensor_connect() {
+    static const uint32_t sig[] = {0xd102c3ffu, 0xa9075ff8u, 0xa90857f6u, 0xa9094ff4u, 0xa90a7bfdu,
+                                   0x910283fdu, 0xb40016e0u, 0xaa0003f3u, 0x91004000u};
+    u64 hit = 0;
+    int n = 0;
+    if (g_bks_hi > g_bks_text)
+        for (u64 a = g_bks_text; a + sizeof sig <= g_bks_hi; a += 4)
+            if (!memcmp((const void *)a, sig, sizeof sig)) { hit = a; n++; }
+    return n == 1 ? hit : g_bks_text + kUISensorConnect;
+}
 void sim_service_patches(GuestThread &t) {
     if (const char *e = getenv("X86SIM_A64_UISENSOR"); e && atoi(e) == 1) return;
     if (!g_bks_text) {
@@ -255,7 +266,7 @@ void sim_service_patches(GuestThread &t) {
         return;
     }
     // sub sp, sp, #0xb0 -> mov x0, #0
-    patch_return(t, g_bks_text + kUISensorConnect, 0xd102c3ffu, 0xd2800000u, "BKS UI sensor connect -> nil");
+    patch_return(t, find_ui_sensor_connect(), 0xd102c3ffu, 0xd2800000u, "BKS UI sensor connect -> nil");
 }
 
 void native_objc_configure_jit(Dynarmic::A64::UserConfig &c) {
