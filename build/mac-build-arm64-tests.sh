@@ -8,6 +8,10 @@ S=${1:?src}; O=${2:?out}; mkdir -p "$O"
 SIM="xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=17.0 -O2"
 MAC="xcrun -sdk macosx clang -arch arm64 -O2"
 for t in hello bench threads signals fp16 fp16v sharestress icstress fusestress clockprobe timerprobe netprobe; do $SIM -o "$O/$t.sim" "$S/$t.c"; done
+# Platforms 1: x86sim-aot's builder process (icstress) for tvOS and watchOS runtimes: dyld_sim runs only a main
+# executable of its own platform
+xcrun -sdk appletvsimulator clang -arch arm64 -mtvos-simulator-version-min=17.0 -O2 -o "$O/icstress-tvos.sim" "$S/icstress.c"
+xcrun -sdk watchsimulator clang -arch arm64 -mwatchos-simulator-version-min=10.0 -O2 -o "$O/icstress-watchos.sim" "$S/icstress.c"
 $MAC -o "$O/bench.mac" "$S/bench.c"
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=17.0 -O1 -fobjc-arc -framework Foundation -o "$O/cfprobe.sim" "$S/cfprobe.m"
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=17.0 -O1 -fobjc-arc -framework Foundation -o "$O/threxit.sim" "$S/threxit.m"

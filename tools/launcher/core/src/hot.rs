@@ -193,15 +193,22 @@ pub fn write_shipped(dirs: &[PathBuf], uuid: &str, out: &Path, merge: &[PathBuf]
     let mut files: Vec<PathBuf> = vec![];
     for d in dirs {
         let Ok(rd) = std::fs::read_dir(d) else { continue };
-        let mut newest: HashMap<String, PathBuf> = HashMap::new();
+        // Platforms 1: a dir with no .live at all (a runtime that has no AOT image yet, so no process ran on one: tvOS /
+        // watchOS's first training) gives each program's newest training .bin instead (a dir that has .live files
+        // keeps leaving its .bins out: they describe sessions under older translator builds)
+        let (mut newest, mut newest_bin): (HashMap<String, PathBuf>, HashMap<String, PathBuf>) = Default::default();
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
-            if n.starts_with(uuid) && n.ends_with(".live") {
+            let m = if n.ends_with(".live") { &mut newest } else if n.ends_with(".bin") { &mut newest_bin } else { continue };
+            if n.starts_with(uuid) {
                 let (f, exe) = (e.path(), exe_of(&n).unwrap_or("?").to_string());
-                if newest.get(&exe).is_none_or(|g| mtime(&f) > mtime(g)) {
-                    newest.insert(exe, f);
+                if m.get(&exe).is_none_or(|g| mtime(&f) > mtime(g)) {
+                    m.insert(exe, f);
                 }
             }
+        }
+        if newest.is_empty() {
+            newest = newest_bin;
         }
         files.extend(newest.into_values());
     }

@@ -1188,7 +1188,7 @@ fn build_once(p: &Paths, cfg: &Config, opts: &BuildOpts, on_progress: &mut dyn F
         let mut cmd = Command::new("nice");
         cmd.args(["-n", "19", "ionice", "-c", "3"])
             .arg(repo.join("tests/arm64/run.sh"))
-            .arg(repo.join("tests/arm64/icstress.sim"))
+            .arg(repo.join(builder_exe(&cfg.runtime_root)))
             .current_dir(&repo)
             .env("A64_DPREFIX", &cfg.test_prefix)
             // Speed 23: the builder maps this runtime's cache (run.sh defaults to 27.0: another runtime's image
@@ -1642,5 +1642,20 @@ mod tests {
         // the prefix itself need not exist (Darling makes it), its directory must
         assert_eq!(c.test_prefix, scratch().join("a64testprefix"));
         let _ = std::fs::remove_dir_all(&t);
+    }
+}
+
+/// Platforms 1: the builder process (tests/arm64/icstress*.sim) must be built for the runtime's platform: dyld_sim
+/// refuses a main executable of another one ("built for platform iOS-simulator"), so a tvOS / watchOS image built
+/// nothing. The platform is the runtime's SystemVersion.plist ProductName, as mksimdevice.py reads it.
+fn builder_exe(runtime_root: &Path) -> &'static str {
+    let sv = std::fs::read(runtime_root.join("System/Library/CoreServices/SystemVersion.plist")).unwrap_or_default();
+    let sv = String::from_utf8_lossy(&sv);
+    if sv.contains("Apple TVOS") || sv.contains("tvOS") {
+        "tests/arm64/icstress-tvos.sim"
+    } else if sv.contains("Watch OS") || sv.contains("watchOS") {
+        "tests/arm64/icstress-watchos.sim"
+    } else {
+        "tests/arm64/icstress.sim"
     }
 }
