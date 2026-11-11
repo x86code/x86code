@@ -1464,6 +1464,19 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 - (void)drawIndexedPrimitives:(MTLPrimitiveType)t indexCount:(NSUInteger)n indexType:(MTLIndexType)it indexBuffer:(id<MTLBuffer>)b indexBufferOffset:(NSUInteger)o {
 	[self drawIndexedPrimitives:t indexCount:n indexType:it indexBuffer:b indexBufferOffset:o instanceCount:1 baseVertex:0 baseInstance:0];
 }
+// Platforms 1: indirect draws (watchOS face rendering uses both); the arguments stay in the buffer for mtlvk to read
+- (void)drawPrimitives:(MTLPrimitiveType)t indirectBuffer:(id<MTLBuffer>)ib indirectBufferOffset:(NSUInteger)io {
+	struct { uint32_t t, pad; uint64_t ib, io; } c = { (uint32_t)t, 0, vid(ib), io };
+	[_cb keep:ib];
+	[self cmd:VKMTL_C_RE_DRAW_INDIRECT data:&c size:sizeof(c)];
+}
+- (void)drawIndexedPrimitives:(MTLPrimitiveType)t indexType:(MTLIndexType)it indexBuffer:(id<MTLBuffer>)b indexBufferOffset:(NSUInteger)o
+	indirectBuffer:(id<MTLBuffer>)ib indirectBufferOffset:(NSUInteger)io {
+	struct { uint32_t t, it; uint64_t b, o, ib, io; } c = { (uint32_t)t, (uint32_t)it, vid(b), o, vid(ib), io };
+	[_cb keep:b];
+	[_cb keep:ib];
+	[self cmd:VKMTL_C_RE_DRAW_INDEXED_INDIRECT data:&c size:sizeof(c)];
+}
 @end
 
 @implementation VKMTLCommandBuffer

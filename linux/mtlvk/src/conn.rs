@@ -1174,7 +1174,7 @@ impl State {
                         npass += 1;
                     }
                 }
-                C_RE_PIPELINE..=C_RE_USE => {
+                C_RE_PIPELINE..=C_RE_USE | C_RE_DRAW_INDIRECT | C_RE_DRAW_INDEXED_INDIRECT => {
                     let Enc::Render(re) = &mut enc else {
                         return Err(format!("render command {kind} outside a render encoder"));
                     };
@@ -1473,6 +1473,21 @@ impl State {
                 let it = IndexType::try_from(it).map_err(err("index type"))?;
                 if !self.skip_draws.get() {
                     enc.draw_indexed_primitives(p, count, it, self.buf(ib)?, off, inst, base_vertex, base_inst).map_err(e)?;
+                }
+            }
+            C_RE_DRAW_INDIRECT => {
+                let (p, _pad, ib, off) = (c.u32(), c.u32(), c.u64(), c.u64());
+                let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
+                if !self.skip_draws.get() {
+                    enc.draw_primitives_indirect(p, self.buf(ib)?, off).map_err(e)?;
+                }
+            }
+            C_RE_DRAW_INDEXED_INDIRECT => {
+                let (p, it, xb, xoff, ib, off) = (c.u32(), c.u32(), c.u64(), c.u64(), c.u64(), c.u64());
+                let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
+                let it = IndexType::try_from(it).map_err(err("index type"))?;
+                if !self.skip_draws.get() {
+                    enc.draw_indexed_primitives_indirect(p, it, self.buf(xb)?, xoff, self.buf(ib)?, off).map_err(e)?;
                 }
             }
             C_RE_USE => {

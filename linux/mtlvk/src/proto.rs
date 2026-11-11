@@ -71,6 +71,8 @@ pub const C_RE_DRAW: u32 = 46;
 pub const C_RE_DRAW_INDEXED: u32 = 47;
 pub const C_RE_END: u32 = 48;
 pub const C_RE_USE: u32 = 49;
+pub const C_RE_DRAW_INDIRECT: u32 = 50;
+pub const C_RE_DRAW_INDEXED_INDIRECT: u32 = 51;
 
 pub const MAX_COLOR: usize = 8;
 

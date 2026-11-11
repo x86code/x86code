@@ -149,6 +149,10 @@ enum {
 	                              //  u64 indexOffset, i32 baseVertex, u32 baseInstance}
 	VKMTL_C_RE_END = 48,        // {}  (store actions set late are already in the pass: it is sent at endEncoding)
 	VKMTL_C_RE_USE = 49,        // {u64 resource, u32 usage, u32 isTexture}
+	// Platforms 1 (watchOS faces): draws whose arguments a buffer holds (MTLDraw[Indexed]PrimitivesIndirectArguments)
+	VKMTL_C_RE_DRAW_INDIRECT = 50, // {u32 primitive, u32 pad, u64 indirectBuffer, u64 indirectOffset}
+	VKMTL_C_RE_DRAW_INDEXED_INDIRECT = 51, // {u32 primitive, u32 indexType, u64 indexBuffer, u64 indexOffset,
+	                                       //  u64 indirectBuffer, u64 indirectOffset}
 };
 
 // VKMTL_RPS_NEW
