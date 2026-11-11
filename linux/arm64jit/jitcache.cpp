@@ -59,7 +59,35 @@ constexpr u64 kCacheHi = 0x300000000ull;
 // the cache format, reloc kinds). Speed 18: it replaces the libarm64jit build-id hash, so a rebuild that leaves codegen
 // alone keeps every image chunk (tools/launcher x86sim-aot mirrors this value: core/src/key.rs).
 // Loading still checks what can be checked: the prelude size and handler layout, reloc kinds, the image UUID.
-constexpr u64 kCodegenVersion = 0x00000040ull;  // Perf 22: every malloc_create_zone zone, malloc_size, kdebug, assert_owner, pthread_main_np as guest code (0x3c: Perf 21: CheckBit terminals branch on the IsZero ZF (0x3b: Perf 20: conditional branches on the live host flags after SetNZCV (0x3a: Perf 19: r15 points 128 bytes into the JitState (disp8 guest registers) (0x38: Perf 18: QoS encode/decode, recursive unfair lock as guest code (0x37: Perf 17: zone API, malloc_default_zone, malloc_good_size fast paths (0x35: Perf 16: malloc/calloc/free fast paths as guest code (long ones in dead libmalloc functions) (0x33: Perf 15: strncmp, memchr, strchr, strnlen, os_unfair_lock fast paths as guest code (0x30: Perf 14: NZCV, x0, x8 pinned in r12-r14 (0x2a: Perf 9: forward block links skip the halt check (0x29: Perf 8: import stubs link to the libsystem stub dylibs, fixed in the cache window; their svc thunk blocks persisted (0x25: Perf 7: PopRSB hit path inline per return site (0x24: Perf 6: RSB 32 entries (0x23: Perf 5: spills to free callee-saved GPRs first (0x22: Perf 4: GetSetElimination forwards W<->X (0x21: Perf 1f: no objc_msgSend hit/miss counters (0x20: Perf 1c: image RSB push sites linked at load (0x1f: Perf 1b: unlinked RSB entries go to the fast dispatch handler (0x1e: Perf 1: dyld_sim's some_image_overridden count patched (dyldsim.cpp) (0x1d: RAM 13: host calls through a fixed stub page (no reach limit) (0x1c: LSE atomics/CAS/CASP drop a top-byte tag inline (0x1b: RAM 3: unchecked fastmem (no inline address check, r13 allocatable) (0x1a: Speed 35: inline FRINTA/FRINTX, FCVTAS/FCVTAU in image chunks (0x19: Speed 25: RSB push sites persisted unlinked (0x18: RSB on 0x17: Swift scan steps found per runtime) (0x15: Speed 20 lock-free exclusive monitor)
+// History (newest first):
+//   0x40 Perf 22: every malloc_create_zone zone, malloc_size, kdebug, assert_owner, pthread_main_np as guest code
+//   0x3c Perf 21: CheckBit terminals branch on the IsZero ZF
+//   0x3b Perf 20: conditional branches on the live host flags after SetNZCV
+//   0x3a Perf 19: r15 points 128 bytes into the JitState (disp8 guest registers)
+//   0x38 Perf 18: QoS encode/decode, recursive unfair lock as guest code
+//   0x37 Perf 17: zone API, malloc_default_zone, malloc_good_size fast paths
+//   0x35 Perf 16: malloc/calloc/free fast paths as guest code (long ones in dead libmalloc functions)
+//   0x33 Perf 15: strncmp, memchr, strchr, strnlen, os_unfair_lock fast paths as guest code
+//   0x30 Perf 14: NZCV, x0, x8 pinned in r12-r14
+//   0x2a Perf 9: forward block links skip the halt check
+//   0x29 Perf 8: import stubs link to the libsystem stub dylibs, fixed in the cache window; their svc thunk blocks persisted
+//   0x25 Perf 7: PopRSB hit path inline per return site
+//   0x24 Perf 6: RSB 32 entries
+//   0x23 Perf 5: spills to free callee-saved GPRs first
+//   0x22 Perf 4: GetSetElimination forwards W<->X
+//   0x21 Perf 1f: no objc_msgSend hit/miss counters
+//   0x20 Perf 1c: image RSB push sites linked at load
+//   0x1f Perf 1b: unlinked RSB entries go to the fast dispatch handler
+//   0x1e Perf 1: dyld_sim's some_image_overridden count patched (dyldsim.cpp)
+//   0x1d RAM 13: host calls through a fixed stub page (no reach limit)
+//   0x1c LSE atomics/CAS/CASP drop a top-byte tag inline
+//   0x1b RAM 3: unchecked fastmem (no inline address check, r13 allocatable)
+//   0x1a Speed 35: inline FRINTA/FRINTX, FCVTAS/FCVTAU in image chunks
+//   0x19 Speed 25: RSB push sites persisted unlinked
+//   0x18 RSB on
+//   0x17 Swift scan steps found per runtime
+//   0x15 Speed 20: lock-free exclusive monitor
+constexpr u64 kCodegenVersion = 0x00000040ull;
 // kCodegenVersion (bits 0-15), code-shaping env flags (16-18), placement table hash (32-63). The load base is not
 // part of it (relocations cover every base; a mapped image is keyed by its layout instead, see LoadPersistentCache).
 u64 g_build = kCodegenVersion;
@@ -92,8 +120,12 @@ const std::string &scratch_dir() {
 namespace {
 std::string default_dir() {
     if (const char *d = getenv("X86SIM_A64_JITCACHE_DIR")) return d;
-    if (const char *s = getenv("X86SIM_SCRATCH")) return std::string(s) + "/jitcache";
     return scratch_dir() + "/jitcache";
+}
+// X86SIM_A64_JITCACHE=0: no .bin / image load or save
+bool jitcache_off() {
+    static const bool off = getenv("X86SIM_A64_JITCACHE") && atoi(getenv("X86SIM_A64_JITCACHE")) == 0;
+    return off;
 }
 
 // Speed 14: placement.txt lines "addr slot fsize mtime key" (hex addr/slot; key = path from RuntimeRoot/ on, or the
@@ -228,7 +260,7 @@ void jitcache_prepare(const std::string &cache_path, const std::string &exe) {
 }
 
 u64 jitcache_image_code_bytes() {
-    if (!g_uuid_ok || !g_aot_eligible || (getenv("X86SIM_A64_JITCACHE") && atoi(getenv("X86SIM_A64_JITCACHE")) == 0)) return 0;
+    if (!g_uuid_ok || !g_aot_eligible || jitcache_off()) return 0;
     u64 code = 0;
     if (FILE *f = fopen(g_aot_path.c_str(), "rb")) {
         if (fseek(f, 32, SEEK_SET) || fread(&code, 8, 1, f) != 1) code = 0;  // PersistHeader::code_size
@@ -253,8 +285,7 @@ void jitcache_try_load(Dynarmic::A64::Jit::SharedCode &shared) {
             }
         }
     }
-    // Default on. X86SIM_A64_JITCACHE=0 disables load/save.
-    if (getenv("X86SIM_A64_JITCACHE") && atoi(getenv("X86SIM_A64_JITCACHE")) == 0) return;
+    if (jitcache_off()) return;
     // Perf 8: blocks of the libsystem stub dylibs (fixed in the cache window) are in the image and the .bin files. The
     // first process of a key records the stubs' code hash; one whose stubs differ neither loads nor saves.
     {
@@ -296,7 +327,7 @@ void jitcache_try_load(Dynarmic::A64::Jit::SharedCode &shared) {
 void jitcache_try_save(Dynarmic::A64::Jit::SharedCode &shared, const std::string &to) {
     if (!g_uuid_ok) return;
     const std::string &dst = to.empty() ? g_path : to;
-    if (getenv("X86SIM_A64_JITCACHE") && atoi(getenv("X86SIM_A64_JITCACHE")) == 0) return;
+    if (jitcache_off()) return;
     mkdir(g_dir.c_str(), 0755);
     std::string tmp = dst + ".tmp." + std::to_string(getpid());  // Speed 8: two sim instances save the same <exe>.bin
     size_t bytes = Dynarmic::A64::Jit::SavePersistentCache(shared, tmp, g_uuid, g_build, kCacheLo, kCacheHi);
@@ -417,8 +448,7 @@ static bool autosave_on() {
     const char *e = getenv("X86SIM_A64_JITCACHE_AUTOSAVE");
     const char *a = getenv("X86SIM_A64_AOT_AUTOSAVE");
     if (g_aot_loaded && !(a && atoi(a) == 1)) return false;
-    return !(e && atoi(e) == 0) && !(getenv("X86SIM_A64_JITCACHE") && atoi(getenv("X86SIM_A64_JITCACHE")) == 0) &&
-           !getenv("X86SIM_A64_AOT_BUILD");
+    return !(e && atoi(e) == 0) && !jitcache_off() && !getenv("X86SIM_A64_AOT_BUILD");
 }
 static void save_if_grown(Dynarmic::A64::Jit::SharedCode &sc, const char *why) {
     if (!autosave_on()) return;  // the image is loaded after the saver thread starts

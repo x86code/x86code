@@ -491,7 +491,6 @@ static void native_backtrace(ucontext_t *ctx) {
 // kills at once; no SIGALRM watchdog: unblocking a pending SIGALRM killed the process mid-report), then SIGKILL. X86SIM_A64_NATIVE_FAULT=chain
 // restores the old chaining.
 static void fatal_exit(int code) {
-    (void)code;
     syscall(SYS_kill, getpid(), SIGKILL);
     syscall(SYS_exit_group, 128 + code);
 }
@@ -508,8 +507,9 @@ static void on_fault(int sig, siginfo_t *si, void *uc) {
     }
     // RAM 3: unchecked fastmem: a guest access with a tagged (non-canonical) address is a #GP in JIT code (SI_KERNEL,
     // no address). Dynarmic's fastmem handler calls the access's callback (which drops the tag); nothing to report.
-    if (sig == SIGSEGV && si->si_code == SI_KERNEL && Dynarmic::Backend::IsJitCodeAddress((u64)ctx->uc_mcontext.gregs[REG_RIP]) &&
-        (g_old_segv.sa_flags & SA_SIGINFO)) {
+    // With base rbp or rsp it is a #SS instead, which arrives as SIGBUS (also SI_KERNEL): the same handler serves it.
+    if ((sig == SIGSEGV || sig == SIGBUS) && si->si_code == SI_KERNEL &&
+        Dynarmic::Backend::IsJitCodeAddress((u64)ctx->uc_mcontext.gregs[REG_RIP]) && (g_old_segv.sa_flags & SA_SIGINFO)) {
         g_old_segv.sa_sigaction(sig, si, uc);
         return;
     }
@@ -578,16 +578,6 @@ static void on_fault(int sig, siginfo_t *si, void *uc) {
             if (syscall(SYS_process_vm_readv, getpid(), &lo, 1, &re, 1, 0) == (ssize_t)sizeof w)
                 for (int i = 0; i < 48; i += 8)
                     logf("  code +%#x: %08x %08x %08x %08x %08x %08x %08x %08x", i * 4, w[i], w[i + 1], w[i + 2], w[i + 3], w[i + 4], w[i + 5], w[i + 6], w[i + 7]);
-        }
-        // Hash-table probe diagnostics: count at [x20+0xc] and whether bucket math matches x22.
-        const u64 x20 = t->x(20), x21 = t->x(21), x0 = t->x(0);
-        if (x20) {
-            u32 count = 0;
-            struct iovec lo{&count, 4}, re{reinterpret_cast<void*>(x20 + 0xc), 4};  // x20 may be unmapped
-            if (syscall(SYS_process_vm_readv, getpid(), &lo, 1, &re, 1, 0) != 4) count = 0;
-            const u64 expect = count ? (x21 + (x0 % count) * 16) : x21;
-            logf("  [x20+0xc] count=%u expect_x22 %#lx (x0%%count=%lu)", count, (unsigned long)expect,
-                 count ? (unsigned long)(x0 % count) : 0ul);
         }
     }
     if (GuestThread *t = GuestThread::current(); t && si->si_code != SEGV_ACCERR) { logf("  pc in %s, in thunk %s", where(t->jit->GetPC()).c_str(), t->in_thunk >= 0 ? g_thunks[t->in_thunk].name.c_str() : "-"); guest_backtrace(*t); }
@@ -705,6 +695,15 @@ static void hook_native_abort() {
 void memlog_shared_stats();
 void gheap_stats();
 
+// X86SIM_A64_STATS: the most called svc thunks (counted in jit.cpp CallSVC)
+extern u64 g_thunk_counts[0x10000];
+static void log_top_thunks(size_t top, const char *prefix) {
+    std::vector<std::pair<u64, u32>> v;
+    for (u32 i = 0, n = thunk_count(); i < n; i++) if (g_thunk_counts[i]) v.push_back({g_thunk_counts[i], i});
+    std::sort(v.rbegin(), v.rend());
+    for (size_t k = 0; k < v.size() && k < top; k++) logf("%s%10lu %s", prefix, (unsigned long)v[k].first, g_thunks[v[k].second].name.c_str());
+}
+
 // One-shot glibc + anon RSS line (also used by the periodic MEMLOG thread and SIGUSR1).
 static void memlog_once() {
     struct mallinfo2 mi = mallinfo2();
@@ -714,13 +713,7 @@ static void memlog_once() {
         while (fgets(l, sizeof l, f)) if (!strncmp(l, "RssAnon:", 8)) anon = atol(l + 8);
         fclose(f);
     }
-    if (getenv("X86SIM_A64_STATS")) {  // Speed 6: hottest svc thunks so far (SIGUSR1; was only at exit)
-        extern u64 g_thunk_counts[0x10000];
-        std::vector<std::pair<u64, u32>> v;
-        for (u32 i = 0, n = thunk_count(); i < n; i++) if (g_thunk_counts[i]) v.push_back({g_thunk_counts[i], i});
-        std::sort(v.rbegin(), v.rend());
-        for (size_t k = 0; k < v.size() && k < 25; k++) logf("memlog: thunk %10lu %s", (unsigned long)v[k].first, g_thunks[v[k].second].name.c_str());
-    }
+    if (getenv("X86SIM_A64_STATS")) log_top_thunks(25, "memlog: thunk ");  // Speed 6: so far (SIGUSR1; was only at exit)
     logf("memlog: anon %ld MB, glibc arena %zu MB (in use %zu MB, mmapped %zu MB in %zu blocks, free %zu MB)", anon / 1024,
          mi.arena >> 20, mi.uordblks >> 20, mi.hblkhd >> 20, mi.hblks, mi.fordblks >> 20);
     memlog_shared_stats();
@@ -972,7 +965,7 @@ static void cow_diff_once() {
     FILE *o = fopen(out, "w");
     if (pm < 0 || fd < 0 || !o) { if (o) fclose(o); if (pm >= 0) close(pm); if (fd >= 0) close(fd); return; }
     u64 pages = 0, same = 0, resident = 0, runs = 0;
-    u64 k_head_link = 0, k_head_unlink = 0, k_head_other = 0, k_rcx = 0, k_other = 0, to_image = 0, to_outside = 0;
+    u64 k_head_link = 0, k_head_unlink = 0, k_rcx = 0, k_other = 0, to_image = 0, to_outside = 0;
     u64 rcx_to_image = 0, rcx_to_outside = 0, rcx_to_ret = 0;
     uint8_t fp[4096 + 16];
     int samples = 0;
@@ -1006,9 +999,7 @@ static void cow_diff_once() {
             } else if (al >= 2 && fp[al - 2] == 0x48 && fp[al - 1] == 0xB9) {
                 k_rcx++;
                 u64 t; memcpy(&t, m + al, 8);
-                u64 t0; memcpy(&t0, fp + al, 8);
                 if (t >= a && t < b) rcx_to_image++; else rcx_to_outside++;
-                (void)t0;
                 k = std::max<u64>(k, al + 8);
             } else if (al < 4096 - 8 && al >= 8 && j == al + 2 && fp[al] == 0x48 && fp[al + 1] == 0xB9) {
                 k_rcx++; rcx_to_ret++;
@@ -1028,9 +1019,9 @@ static void cow_diff_once() {
     }
     fprintf(o, "image %s\nresident %lu private %lu identical-to-file %lu diff-runs %lu\n", path, (unsigned long)resident,
             (unsigned long)pages, (unsigned long)same, (unsigned long)runs);
-    fprintf(o, "link heads linked %lu (to image %lu, outside %lu), unlinked/other %lu/%lu; rcx imm %lu (image %lu outside %lu); other %lu\n",
+    fprintf(o, "link heads linked %lu (to image %lu, outside %lu), unlinked %lu; rcx imm %lu (image %lu outside %lu ret %lu); other %lu\n",
             (unsigned long)k_head_link, (unsigned long)to_image, (unsigned long)to_outside, (unsigned long)k_head_unlink,
-            (unsigned long)k_head_other, (unsigned long)k_rcx, (unsigned long)rcx_to_image, (unsigned long)rcx_to_outside,
+            (unsigned long)k_rcx, (unsigned long)rcx_to_image, (unsigned long)rcx_to_outside, (unsigned long)rcx_to_ret,
             (unsigned long)k_other);
     fclose(o);
     close(pm);
@@ -1142,11 +1133,7 @@ void print_stats() {
         while (fgets(l, sizeof l, f)) if (!strncmp(l, "RssAnon", 7) || !strncmp(l, "Threads", 7)) logf("%s", strtok(l, "\n"));
         fclose(f);
     }
-    extern u64 g_thunk_counts[0x10000];
-    std::vector<std::pair<u64, u32>> v;
-    for (u32 i = 0, n = thunk_count(); i < n; i++) if (g_thunk_counts[i]) v.push_back({g_thunk_counts[i], i});
-    std::sort(v.rbegin(), v.rend());
-    for (size_t k = 0; k < v.size() && k < 12; k++) logf("  %10lu %s", (unsigned long)v[k].first, g_thunks[v[k].second].name.c_str());
+    log_top_thunks(12, "  ");
     native_objc_stats();
     jitcache_save_if_shared();
 }
@@ -1165,17 +1152,14 @@ extern "C" __attribute__((visibility("default"))) int a64_host_main(int argc, ch
     if (getenv("X86SIM_A64_PERFMAP") && !getenv("PERF_BUILDID_DIR"))
         setenv("PERF_BUILDID_DIR", "/tmp", 0);
     g_trace = getenv("X86SIM_A64_TRACE") != nullptr;
+    // "name[,name]": the executable's basename is one of them
+    auto exe_listed = [](const char *names) {
+        const char *e = getenv("X86SIM_A64_EXE"), *b = strrchr(e, '/');
+        return (std::string(",") + names + ",").find(std::string(",") + (b ? b + 1 : e) + ",") != std::string::npos;
+    };
     // X86SIM_A64_TRACE_PROC=name[,name]: trace only these executables (set for a whole boot)
-    if (const char *tp = getenv("X86SIM_A64_TRACE_PROC"); tp && getenv("X86SIM_A64_EXE")) {
-        const char *e = getenv("X86SIM_A64_EXE"), *b = strrchr(e, '/');
-        std::string base = b ? b + 1 : e, list = std::string(",") + tp + ",";
-        g_trace = list.find("," + base + ",") != std::string::npos;
-    }
-    if (const char *sp = getenv("X86SIM_A64_STEP_PROC"); sp && getenv("X86SIM_A64_EXE")) {
-        const char *e = getenv("X86SIM_A64_EXE"), *b = strrchr(e, '/');
-        std::string base = b ? b + 1 : e, list = std::string(",") + sp + ",";
-        g_step = list.find("," + base + ",") != std::string::npos;
-    }
+    if (const char *tp = getenv("X86SIM_A64_TRACE_PROC"); tp && getenv("X86SIM_A64_EXE")) g_trace = exe_listed(tp);
+    if (const char *sp = getenv("X86SIM_A64_STEP_PROC"); sp && getenv("X86SIM_A64_EXE")) g_step = exe_listed(sp);
     d_open = (int (*)(const char *, int, ...))dsym("open");
     boundary_init();
 
@@ -1210,18 +1194,12 @@ extern "C" __attribute__((visibility("default"))) int a64_host_main(int argc, ch
             }
         }
         if (!park.empty()) {
-            const char *plist = park.c_str();
-            std::string list = std::string(",") + park + ",";
-            const char *base = strrchr(exe.c_str(), '/');
-            std::string leaf = base ? base + 1 : exe;
-            bool hit = list.find("," + leaf + ",") != std::string::npos;
-            if (!hit) {
-                for (size_t i = 0, j; !hit && plist[i]; i = j + 1) {
-                    j = i; while (plist[j] && plist[j] != ',') j++;
-                    std::string tok(plist + i, plist + j);
-                    if (!tok.empty() && exe.find(tok) != std::string::npos) hit = true;
-                    if (!plist[j]) break;
-                }
+            // any entry that is a substring of the executable's path (a whole basename is one too)
+            bool hit = false;
+            for (size_t i = 0; !hit && i <= park.size();) {
+                const size_t j = std::min(park.find(',', i), park.size());
+                hit = j > i && exe.find(park.substr(i, j - i)) != std::string::npos;
+                i = j + 1;
             }
             if (hit) {
                 fprintf(stderr, "arm64host: slim-park %s\n", exe.c_str());
@@ -1302,7 +1280,7 @@ extern "C" __attribute__((visibility("default"))) int a64_host_main(int argc, ch
     size_t apple_at = ka.size();
     ka.push_back((u64)strdup(("executable_path=" + exe).c_str()));
     char buf[128];
-    snprintf(buf, sizeof buf, "stack_guard=0x%lx", (unsigned long)((u64)random() << 32 | random()) & ~0xffull); ka.push_back((u64)strdup(buf));
+    snprintf(buf, sizeof buf, "stack_guard=0x%lx", (unsigned long)(((u64)random() << 32 | random()) & ~0xffull)); ka.push_back((u64)strdup(buf));
     snprintf(buf, sizeof buf, "malloc_entropy=0x%lx,0x%lx", (unsigned long)random(), (unsigned long)random()); ka.push_back((u64)strdup(buf));
     ka.push_back((u64)strdup("ptr_munge=0x0"));
     ka.push_back(0);

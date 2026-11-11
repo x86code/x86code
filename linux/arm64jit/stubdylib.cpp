@@ -261,7 +261,7 @@ StubLib build_stub_dylib(const std::string &install, const std::vector<std::stri
             h = h_missing;
         }
         if (!h) h = native ? h_generic : h_missing;
-        if (!native && h != h_missing && (h == h_generic || h == h_generic_bool || h == h_variadic)) h = h_missing;
+        if (!native && (h == h_generic || h == h_generic_bool || h == h_variadic)) h = h_missing;
         if (h == h_missing) nmissing++;
         u32 idx = add_thunk(name, h, native, nfixed);
         code.push_back(0); code.push_back(0);

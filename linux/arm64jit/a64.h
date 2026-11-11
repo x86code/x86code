@@ -30,8 +30,8 @@ struct DarwinApi {
     int *(*error)(void);                  // __error
 };
 extern const DarwinApi *g_darwin;
-void *dsym(const char *name);
-bool is_fast_fill(const void *fn);  // dsym's replacements for Darling's bzero/memset/memset_pattern (host.cpp)  // native Darwin symbol (no leading underscore), searched in the three host libraries
+void *dsym(const char *name);       // native Darwin symbol (no leading underscore), searched in the three host libraries
+bool is_fast_fill(const void *fn);  // dsym's replacements for Darling's bzero/memset/memset_pattern (host.cpp)
 
 // Native results of a guest->native call: rax, rdx, xmm0, xmm1.
 struct NRet { u64 rax, rdx, xmm0, xmm1; };
@@ -75,8 +75,8 @@ struct GuestThread final : Dynarmic::A64::UserCallbacks {
     void run_guest_tsd_destructors();  // at thread exit (jit.cpp)
     Dynarmic::A64::UserConfig cfg;
     ~GuestThread() override;
-    static GuestThread &self();
-    static GuestThread *current();  // null if this thread has none  // the calling native thread's GuestThread (created on first use)
+    static GuestThread &self();     // the calling native thread's GuestThread (created on first use)
+    static GuestThread *current();  // null if this thread has none
 
     // Runs guest code at pc with integer args x0..x7 and fp args d0..d7 until it returns to the exit stub.
     // Nested calls (from a native callee of guest code) save and restore the full guest state.
@@ -169,8 +169,7 @@ u32 add_thunk(const std::string &name, Handler fn, const void *native = nullptr,
 u64 stub_code(u32 index);              // guest address of thunk i's "svc #i; ret" in the shared stub page
 void emit_stub(uint32_t *at, u32 index);  // writes "svc #index; ret" at a guest address
 void boundary_init();
-void dyld_sim_patches(u64 slide);
-struct GuestThread;
+void dyld_sim_patches(u64 slide);  // dyldsim.cpp: native shortcuts in dyld_sim (after mapping, before it runs)
 void dyld_scan_step(GuestThread &t, bool loop_b);
 void astc_step(GuestThread &t);
 void lzfse_step(GuestThread &t, bool lzfse_entry);
@@ -184,13 +183,11 @@ const std::string &scratch_dir();  // jitcache.cpp: $X86SIM_SCRATCH, else <real 
 const std::string &jitcache_cache_file();  // jitcache.cpp: the main dyld cache file
 u32 swift_text_word(u64 a);  // swiftscan.cpp: a code word of the cache, read from its file
 u64 swift_text_find(const u32 *words, const u32 *mask, size_t n);  // swiftscan.cpp: code pattern in libswiftCore
-struct GuestThread;
 void svc_bench(GuestThread &t);  // X86SIM_A64_SVCBENCH=n / X86SIM_A64_GUESTLIB_TEST=1 (guestlibc.cpp)
 bool is_guest_libc_export(const std::string &n);
-size_t emit_guest_libc(const std::string &n, uint32_t *o, u32 slow);  // dyldsim.cpp: native shortcuts in dyld_sim (after mapping, before it runs)
+size_t emit_guest_libc(const std::string &n, uint32_t *o, u32 slow);  // guestlibc.cpp
 uint32_t thunk_count();                // acquire-load of published thunk count (see add_thunk)
 
-// Generic handlers: integer/pointer/fp arguments straight through (x0-x7 -> rdi..r9 + stack, d0-d7 -> xmm0-7).
 bool memcheck();            // X86SIM_A64_MEMCHECK=1: inline address check per guest access (RAM 3; jit.cpp)
 bool strict_monitor();      // X86SIM_A64_STRICT_MONITOR=1: dynarmic's global exclusive monitor (handlers.cpp)
 bool timebase_apple();       // X86SIM_A64_TIMEBASE=apple: guest mach time at 24 MHz (handlers.cpp)
@@ -198,6 +195,7 @@ void tb_convert_qos_changes(void *list, int n);  // kevent_qos_s timer changes: 
 u64 tb_ns_to_ticks(u64 ns);
 void gsample_start(GuestThread *t);
 void gsample_forget(GuestThread *t);  // X86SIM_A64_GSAMPLE (jit.cpp)
+// Generic handlers: integer/pointer/fp arguments straight through (x0-x7 -> rdi..r9 + stack, d0-d7 -> xmm0-7).
 void h_generic(GuestThread &t, u32 i);
 void h_generic_bool(GuestThread &t, u32 i);  // bool result: zero-extend al
 void h_variadic(GuestThread &t, u32 i);      // fixed args in registers, the rest from guest stack slots
@@ -210,7 +208,6 @@ const void *guest_callable(u64 pc);
 u64 guest_of_callable(const void *native);  // inverse (0 if not a trampoline)
 extern "C" void a64_tramp_entry();           // callconv.S
 
-// Special handlers for libsystem functions (handlers.cpp). Returns null if the export needs no special handling.
 void h_sigaction(GuestThread &t, u32 i);  // signals.cpp
 void h_platform_sigaction(GuestThread &t, u32 i);
 void deliver_signals(GuestThread &t);
@@ -219,6 +216,7 @@ void susp_thread_fini(GuestThread &t);
 void h_thread_get_state(GuestThread &t, u32 i);
 void h_thread_set_state(GuestThread &t, u32 i);
 void h_thread_get_register_pointer_values(GuestThread &t, u32 i);
+// Special handlers for libsystem functions (handlers.cpp). Returns null if the export needs no special handling.
 Handler special_handler(const std::string &name, int *nfixed, const char **native_name);
 bool special_needs_native(const std::string &name);
 bool is_guest_code_export(const std::string &name);  // setjmp family: emitted as arm64 code in the stub dylib
@@ -245,7 +243,7 @@ std::vector<std::string> cache_exports(const std::string &cache_path, const std:
                                        u64 *text_lo = nullptr, u64 *text_hi = nullptr);
 // Native malloc (malloc.cpp): replaces libsystem_malloc's exports in the mapped cache with thunks to Darling's malloc.
 void native_malloc_prepare(const std::string &cache_path);  // before dyld_sim maps the cache: reads the exports
-void native_malloc_install();
+void native_malloc_install();  // from ___libkernel_init: patches the mapped cache text
 // Native / inline objc_msgSend (objc.cpp).
 void native_objc_prepare(const std::string &cache_path);
 void native_objc_install();
@@ -284,7 +282,7 @@ u64 reserve_aligned(u64 size, u64 mask);  // guest-VM range [12 GB, 63 GB), PROT
 // gheap.cpp
 void gheap_set_native(void (*nfree)(void *), size_t (*nsize)(const void *));
 void *gh_malloc(size_t); void *gh_calloc(size_t, size_t); void *gh_realloc(void *, size_t); void gh_free(void *);
-void *gh_memalign(size_t align, size_t size); size_t gh_size(const void *); size_t gh_good_size(size_t);                               // from ___libkernel_init: patches the mapped cache text
+void *gh_memalign(size_t align, size_t size); size_t gh_size(const void *); size_t gh_good_size(size_t);
 void ax_euid_prepare(const std::string &cache);  // handlers.cpp: libAccessibility's text range for h_geteuid
 int stub_fd_for_path(const char *path);  // open() redirect: a dup of the stub dylib's fd, or -1
 const char *stub_path_for_fd(int fd);    // F_GETPATH for a stub dylib open on fd (its real copy), or nullptr
@@ -292,9 +290,9 @@ const char *stub_path_for_fd(int fd);    // F_GETPATH for a stub dylib open on f
 void set_guest_key_destructor(u64 key, u64 guest_dtor);  // pthread keys (handlers.cpp, jit.cpp)
 
 // misc
-void guest_backtrace(GuestThread &t);
+void guest_backtrace(GuestThread &t);  // frame-pointer chain to the log (jit.cpp)
 void register_stub_symbols(const std::string &file, std::vector<std::pair<u64, std::string>> fn);  // stub dylib exports
-std::string where(u64 guest_addr);  // file+offset (non-cache) or "cache"  // frame-pointer chain to the log (jit.cpp)
+std::string where(u64 guest_addr);  // file+offset (non-cache) or "cache"
 [[noreturn]] void die(const char *fmt, ...);
 void logf(const char *fmt, ...);
 extern bool g_trace;

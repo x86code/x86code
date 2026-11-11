@@ -11,7 +11,6 @@
 #include <cstdio>
 #include <atomic>
 #include <map>
-#include <unistd.h>
 #include <sys/mman.h>
 #include <csetjmp>
 #include <sys/syscall.h>
@@ -127,12 +126,11 @@ static void h_workqueue_setup(GuestThread &t, u32 i) {  // (struct pthread_workq
 }
 
 // _simple_* formatters (libsystem_platform's async-signal-safe printf).
-static void simple_out(GuestThread &t, int fd, const std::string &s) {
-    (void)t;
+static void simple_out(int fd, const std::string &s) {
     if (write(fd, s.data(), s.size()) < 0) {}
 }
-static void h_simple_dprintf(GuestThread &t, u32) { simple_out(t, (int)t.x(0), guest_format((const char *)t.x(1), (const u64 *)t.sp())); }
-static void h_simple_vdprintf(GuestThread &t, u32) { simple_out(t, (int)t.x(0), guest_format((const char *)t.x(1), (const u64 *)t.x(2))); }
+static void h_simple_dprintf(GuestThread &t, u32) { simple_out((int)t.x(0), guest_format((const char *)t.x(1), (const u64 *)t.sp())); }
+static void h_simple_vdprintf(GuestThread &t, u32) { simple_out((int)t.x(0), guest_format((const char *)t.x(1), (const u64 *)t.x(2))); }
 static int sappend(u64 b, const std::string &s) {
     static auto *fn = (int (*)(u64, const char *))dsym("_simple_sappend");
     return fn(b, s.c_str());
@@ -523,14 +521,13 @@ static void h_pthread_exit(GuestThread &t, u32 i) {
         }
         t.set_x(0, exit_value);
     }
-    if (main_thread && !getenv("X86SIM_A64_MAIN_EXIT_NOTSD")) {
-        logf("pthread_exit on the main thread (linux tid %ld, pid %d): TSD destructors, then parking it",
-             (long)syscall(SYS_gettid), (int)getpid());
-        // libdispatch's _dispatch_queue_cleanup2 ends in _dispatch_sig_thread (sigsuspend forever on this thread)
-        t.run_guest_tsd_destructors();
-    }
     if (main_thread) {
-        if (getenv("X86SIM_A64_MAIN_EXIT_NOTSD")) logf("pthread_exit on the main thread (pid %d): parking it", (int)getpid());
+        if (!getenv("X86SIM_A64_MAIN_EXIT_NOTSD")) {
+            logf("pthread_exit on the main thread (linux tid %ld, pid %d): TSD destructors, then parking it",
+                 (long)syscall(SYS_gettid), (int)getpid());
+            // libdispatch's _dispatch_queue_cleanup2 ends in _dispatch_sig_thread (sigsuspend forever on this thread)
+            t.run_guest_tsd_destructors();
+        } else logf("pthread_exit on the main thread (pid %d): parking it", (int)getpid());
         static auto *dsleep = (unsigned (*)(unsigned))dsym("sleep");
         for (;;) dsleep(100000);
     }
@@ -820,11 +817,6 @@ Handler special_handler(const std::string &n, int *nfixed, const char **native_n
         {"_guarded_open_dprotected_np", 6}, {"_panic", 1},
     };
     if (auto it = variadic.find(n); it != variadic.end()) { *nfixed = it->second; return h_variadic; }
-    if (Handler h = timebase_handler(n)) {
-        if (n == "_mach_absolute_time_kernel") *native_name = "mach_absolute_time";
-        if (n == "_mach_continuous_time_kernel") *native_name = "mach_continuous_time";
-        return h;
-    }
     // Darling (x86_64) keeps the 32-bit-inode structs under the plain names; arm64 only has the 64-bit ones.
     static const std::map<std::string, const char *> renamed = {
         {"_stat", "stat$INODE64"}, {"_fstat", "fstat$INODE64"}, {"_lstat", "lstat$INODE64"}, {"_fstatat", "fstatat$INODE64"},
@@ -835,7 +827,10 @@ Handler special_handler(const std::string &n, int *nfixed, const char **native_n
         {"_mach_absolute_time_kernel", "mach_absolute_time"}, {"_mach_continuous_time_kernel", "mach_continuous_time"},
         {"_cthread_yield", "sched_yield"},
     };
-    if (auto it = renamed.find(n); it != renamed.end()) { *native_name = it->second; return h_generic; }
+    const auto ren = renamed.find(n);
+    if (ren != renamed.end()) *native_name = ren->second;
+    if (Handler h = timebase_handler(n)) return h;  // (the *_kernel variants with their renamed native)
+    if (ren != renamed.end()) return h_generic;
     static const std::map<std::string, Handler> special = {
         {"____chkstk_darwin", h_noop}, {"_thread_chkstk_darwin", h_noop}, {"_geteuid", h_geteuid},
         {"_sys_icache_invalidate", h_icache_invalidate}, {"_sys_cache_control", h_cache_control}, {"_sys_dcache_flush", h_noop},
@@ -914,7 +909,6 @@ size_t emit_guest_code(const std::string &n, uint32_t *o, u32 slow) {
             0x52800000,  // mov w0, #0
             0xD65F03C0,  // ret
         };
-        (void)slow;
         memcpy(o, c, sizeof c);
         return 4;
     }

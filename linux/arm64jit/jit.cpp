@@ -954,7 +954,7 @@ static void profile_tick() {
     if (now - prev < 10000000000ull || !last.compare_exchange_strong(prev, now)) return;
     timespec c; clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &c);
     Dynarmic::A64::Jit::SharedStats st{};
-    if (shared_translations()) st = Dynarmic::A64::Jit::GetSharedStats(*shared_code(GuestThread::self().cfg));
+    if (shared_translations() && g_shared_code) st = Dynarmic::A64::Jit::GetSharedStats(*g_shared_code);
     logf("profile: wall %.1fs cpu %.1fs translate %.1fs blocks %llu insns %llu code %.1f MB lookups %llu threads %d"
          " | getblock %llu thunk %llu l0 %llu probe %llu lf %llu",
          (now - start) / 1e9, c.tv_sec + c.tv_nsec / 1e9, st.translate_ns / 1e9, (unsigned long long)st.blocks,
@@ -986,22 +986,14 @@ bool with_shared_code_lock(void (*fn)(void *), void *arg) {
 
 // Called from host.cpp memlog_once / SIGUSR1. Safe when this tid has no GuestThread.
 void memlog_shared_stats() {
-    if (!shared_translations()) return;
-    if (!GuestThread::current()) {  // RAM 3: a host thread (SIGUSR1 lands on one mostly): the maps line only
-        if (!g_shared_code) return;
-        auto st = Dynarmic::A64::Jit::GetSharedStats(*g_shared_code);
-        logf("memlog: shared blocks %llu insns %llu code %.1f MB translate %.1fs lookups %llu threads %d",
-             (unsigned long long)st.blocks, (unsigned long long)st.guest_instructions, st.code_bytes / 1048576.0,
-             st.translate_ns / 1e9, (unsigned long long)st.lookups, g_live_threads.load());
-        logf("memlog: maps (MB) %s", Dynarmic::A64::Jit::GetMemoryReport(*g_shared_code).c_str());
-        return;
-    }
-    auto st = Dynarmic::A64::Jit::GetSharedStats(*shared_code(GuestThread::self().cfg));
+    // g_shared_code is set when the first GuestThread's Jit is made, so a thread with a GuestThread always has it
+    if (!shared_translations() || !g_shared_code) return;
+    auto st = Dynarmic::A64::Jit::GetSharedStats(*g_shared_code);
     logf("memlog: shared blocks %llu insns %llu code %.1f MB translate %.1fs lookups %llu threads %d",
-         (unsigned long long)st.blocks, (unsigned long long)st.guest_instructions,
-         st.code_bytes / 1048576.0, st.translate_ns / 1e9,
-         (unsigned long long)st.lookups, g_live_threads.load());
-    logf("memlog: maps (MB) %s", Dynarmic::A64::Jit::GetMemoryReport(*shared_code(GuestThread::self().cfg)).c_str());
+         (unsigned long long)st.blocks, (unsigned long long)st.guest_instructions, st.code_bytes / 1048576.0,
+         st.translate_ns / 1e9, (unsigned long long)st.lookups, g_live_threads.load());
+    logf("memlog: maps (MB) %s", Dynarmic::A64::Jit::GetMemoryReport(*g_shared_code).c_str());
+    if (!GuestThread::current()) return;  // RAM 3: a host thread (SIGUSR1 lands on one mostly): the maps line only
     native_objc_stats();
     jitcache_save_if_shared();
 }
@@ -1142,9 +1134,11 @@ void GuestThread::CallSVC(uint32_t swi) {
                         nm.find("readlink") != std::string::npos || nm.find("realpath") != std::string::npos;
             // a user-space pointer, not a small int or AT_FDCWD (-2: 0xfffffffe) taken for a string
             auto uptr = [](u64 v) { return v > 0x10000 && v < 0x800000000000ull && v != 0xfffffffeull; };
-            if (path && (nm.find("at") != std::string::npos && nm.find("stat") == std::string::npos ? true : false) && uptr(x(1)))
+            // the *at forms (openat, faccessat, ...; not the stat family) take the path second
+            const bool at_form = path && nm.find("at") != std::string::npos && nm.find("stat") == std::string::npos;
+            if (at_form && uptr(x(1)))
                 logf("-> %s(%#lx, \"%.200s\", %#lx)", nm.c_str(), (unsigned long)x(0), (const char *)x(1), (unsigned long)x(2));
-            else if (path && nm.find("at") != std::string::npos && nm.find("stat") == std::string::npos)
+            else if (at_form)
                 logf("-> %s(%#lx, %#lx, %#lx)", nm.c_str(), (unsigned long)x(0), (unsigned long)x(1), (unsigned long)x(2));
             else if (path && uptr(x(0))) logf("-> %s(\"%.200s\", %#lx, %#lx)", nm.c_str(), (const char *)x(0), (unsigned long)x(1), (unsigned long)x(2));
             else logf("-> %s(%#lx, %#lx, %#lx)", nm.c_str(), (unsigned long)x(0), (unsigned long)x(1), (unsigned long)x(2));
