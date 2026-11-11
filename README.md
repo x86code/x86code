@@ -23,7 +23,8 @@ required.
 - **Fast arm64 → x86-64 translation**, with an optional one-time pre-translation of iOS for quick starts
 - **GPU rendering**: Metal is translated to Vulkan, including iOS 27's glass effects
 - **Touch, gestures and host-keyboard input** in a native viewer window
-- **Many device models**: iPhones and iPads, including dual-screen models
+- **Many device models**: iPhones and iPads, including dual-screen models, plus Apple TV (tvOS 27) and Apple Watch
+  (watchOS 27, Digital Crown on the mouse wheel)
 - **Several phones at once**, each with its own apps and data, isolated in a container
 - **Lightweight**: boots in about 20 seconds; about 0.8–1.1 GB of RAM per phone
 

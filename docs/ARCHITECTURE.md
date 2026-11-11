@@ -108,6 +108,36 @@ The launcher (`tools/launcher`, `core/src/sim.rs` and `instance.rs`) runs boot-a
 `A64_DPREFIX` and `X86SIM_METAL`, finds a phone's processes by exact checks (its prefix's darlingserver and its
 descendants), and starts `simview.py` for its window.
 
+## Apple TV and Apple Watch (tvOS / watchOS)
+
+The same pieces run Apple's tvOS 27 and watchOS 27 simulator runtimes (`runtimes/tvos-<ver>-<build>-arm64`,
+`watchos-...`; `runtime-fetch.py fetch 24K150` / `24S118`). What differs from iOS:
+
+- **Our in-simulator binaries are built per platform** (`host/<name>/arm64-tvos`, `arm64-watchos`;
+  `X86SIM_PLATFORM=tvos|watchos build/mac-build-arm64-shims.sh`): dyld_sim loads only Mach-Os of its own platform.
+  mksimdevice.py picks the platform's build from the runtime's SystemVersion.plist. libarm64jit's stub dylibs take
+  the dyld cache's platform (its header's `platform` field).
+- **launchd_sim has only the system domain.** iOS's launchd_sim runs the jobs in `user/<uid>`, which ends its own
+  bootstrap mode once loaded; tvOS's and watchOS's put every job in `system`, which stays in bootstrap mode (every
+  request of its jobs deferred, so nothing gets past xpcproxy_sim) until the host sends MIG 700 of subsystem 700
+  (launchd_sim the server): a send right to a host port, which launchd_sim also watches for death. simhost sends it
+  when `SIMHOST_BOOTSTRAP_DONE=1` (boot-a64.sh, for non-iOS runtimes).
+- **Shell and jobs**: PineBoard (tvOS) and Carousel (watchOS) take SpringBoard's place; boot-a64.sh has their job
+  lists (`TV_UI`, `WATCH_UI`) and leaves out shared jobs the runtime doesn't ship.
+- **The cache holds MTLSimImplementation**, whose calls into Metal can't be rebound: metalhostd patches the two
+  device entry points in its own process (WORKAROUNDS.md).
+- **Libraries built like device ones**: libdispatch receives large messages with `mach_msg2` and an aux buffer
+  (Darling's `mach_msg2_internal` counts receive vectors), and libobjc's `_collecting_in_critical` is found by its
+  code, not an iOS address (objc.cpp).
+- **Input**: Apple TV has no touchscreen; tvOS takes the hardware keyboard as the remote (arrows, return = select,
+  escape = back). An Apple Watch gets simhid's Digital Crown service (`crown <delta> y`; the mouse wheel in
+  simview).
+- **Device types**: `devicetypes-a64.json` entries with `"platform": "tvos"` / `"watchos"` (`x86sim device create
+  --model "Apple TV 4K (3rd generation)"` takes the newest tvOS runtime). Apple TV's capabilities name its display
+  `TVOut`; simfb serves it as the main display (`LCD`) all the same.
+- Not yet: pairing a watch with a phone (both devices' `ids_simd` must reach each other's Mach ports, which live in
+  different Darling containers), pre-translation training for these runtimes.
+
 ## simshim (host/simshim)
 
 `libsimshim.dylib` is injected into every simulator process (`DYLD_INSERT_LIBRARIES` in `sim.env`). It interposes the

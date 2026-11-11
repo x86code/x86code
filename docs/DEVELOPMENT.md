@@ -57,6 +57,10 @@ phone) from the launcher's Setup page; see [docs/RELEASE.md](RELEASE.md). From s
    ```
    It decrypts Apple's archive (`ipsw`), unpacks the APFS image (`7z`), and remakes every symlink 7-Zip gets wrong
    (`tools/runtime/extract-runtime.py --links`, then `--check`).
+   Apple TV and Apple Watch: `runtime-fetch.py list all`, then e.g. `fetch 24K150` (tvOS 27.2, about 4 GB) or
+   `fetch 24S118` (watchOS 27.2) into `runtimes/tvos-...` / `runtimes/watchos-...`, and
+   `x86sim device create --model "Apple TV 4K (3rd generation) (at 1080p)" tv` or `--model "Apple Watch Series 11 (46mm)"
+   watch` (the newest runtime of the model's platform). Boot one with `A64_DEVICE=var/device-a64-tv` as usual.
 3. **Build and install Darling** (bin/darling must be setuid root, so this asks for sudo):
    ```sh
    make darling-install                  # configures external/darling -> $X86SIM_PREFIX, builds, installs
@@ -130,6 +134,12 @@ instead. Two ways to fill `sdks/`:
   accepting Apple's SDK agreement.
 - **From Xcode:** copy `iPhoneSimulator.sdk` and `MacOSX.sdk` from Xcode, plus `swift-6.4.2/` from swift.org and
   `swift-lib/` from Xcode's toolchain for the Swift parts.
+
+tvOS and watchOS builds of the same binaries (`host/<name>/arm64-tvos`, `arm64-watchos`) take
+`X86SIM_PLATFORM=tvos|watchos build/mac-build-arm64-shims.sh ...` and their own SDK in `sdks/`: `AppleTVSimulator.sdk`
+and `WatchSimulator.sdk`, from Xcode or made by `build/sdk/sim-sdk.py --runtime runtimes/<tvos-|watchos-...>` like
+the iOS one. Xcode's WatchSimulator.sdk has no IOKit, IOSurface, Metal or SystemConfiguration (private on watchOS),
+which our binaries need: use the substitute for watchOS.
 
 `cargo install apple-codesign` for signing either way. Metal shader sources are the exception: `build/linux-metal.sh`
 serves recorded Mac-built libraries (`build/metal-cache`) and a changed shader still needs a Mac.

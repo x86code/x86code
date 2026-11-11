@@ -29,4 +29,18 @@ before connecting (Linux's own limit is 108):
                                  children, finger indexes 1 and 2 with their own identities
   key down|up <usage>            keyboard usage (page 7), e.g. 4 = 'a', 0x28 = return
   button home|lock|volup|voldown down|up
+  button menu|tv|playpause|side down|up
+                                 consumer page: menu = home (0x40), side = lock (0x30), tv 0x60, playpause 0xcd
+  usage <page> <usage> down|up   any page / usage on the buttons service (for finding what a platform reads)
+  crown <delta> [x|y|z]          Apple Watch: the Digital Crown turned by <delta> (a scroll event on that axis,
+                                 default y; positive = down). The crown service is Apple's: vendor page 0xff0b,
+                                 usage 1, built in; there is none on other models
 ```
+
+On an Apple TV the keyboard is the remote (tvOS turns hardware arrow keys into focus moves, return into select and
+escape into back); the Siri Remote's own HID services (buttons, touch surface) are not there. Its buttons are consumer
+usages on the buttons service, found by trying them in tvOS 27.2: 0x40 (Menu) is Back, 0x60 the TV button (PineBoard's
+home from anywhere), 0xcd play / pause. 0x223 (AC Home) also goes back one level. Holding 0x30 (power) puts the TV
+to sleep, and nothing here wakes it again; the launcher does not offer it. On an Apple Watch 0x40 is the crown's
+press (watch face / app grid) and a short 0x30 the side button (sleep / wake the screen); a crown step of ~120
+scrolls a Settings list about one row.
