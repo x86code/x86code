@@ -360,6 +360,42 @@ __attribute__((constructor)) static void shim_ifimage_init(void)
 	_dyld_register_func_for_add_image(shim_ifimage_added);
 }
 
+// x86Sim Platforms 1: tvOS system sleep. PineBoard's sleep (power button held, Settings > Sleep Now, the idle timer) runs
+// -[PBPowerManager sleepSystemWithReason:completion:]: its own will-sleep step sends HDMI-CEC standby through
+// +[PBExternalControlSystem sendAction:withCompletion:] and then cycles the display mode for sleep, and neither ever
+// answers here (no HDMI sink, no CEC). The power state stayed "going down to sleep" (2), PineBoard's hot-black window
+// covered the screen, and every wake was refused ("Unable to wake device for launch ... (wake failed)", power manager
+// error 8001): a black TV until the device was restarted. The simulator has no TV to put in standby: the request
+// completes at once as declined (NO, nil) and the system stays awake. X86SIM_TV_SLEEP=1 keeps PineBoard's own.
+static void shim_pb_sleep(id self, SEL sel, unsigned long reason, void (^completion)(BOOL, id))
+{
+	(void) self; (void) sel;
+	char b[120];
+	int k = snprintf(b, sizeof b, "simshim: PineBoard sleep request (reason %lu) declined: no TV to put in standby\n", reason);
+	write(2, b, k);
+	if (completion)
+		completion(NO, nil);
+}
+static void shim_pb_added(const struct mach_header* mh, intptr_t slide)
+{
+	static bool done;
+	if (done)
+		return;
+	Class c = objc_getClass("PBPowerManager");
+	Method m = c ? class_getInstanceMethod(c, sel_registerName("sleepSystemWithReason:completion:")) : NULL;
+	if (!m)
+		return;
+	done = true;
+	method_setImplementation(m, (IMP) shim_pb_sleep);
+	write(2, "simshim: hooked PBPowerManager sleepSystemWithReason:completion:\n", 65);
+}
+__attribute__((constructor)) static void shim_pb_init(void)
+{
+	const char* e = getenv("X86SIM_TV_SLEEP");
+	if (!strcmp(getprogname(), "PineBoard") && !(e && *e == '1'))
+		_dyld_register_func_for_add_image(shim_pb_added);
+}
+
 // x86Sim: button haptics. backboardd's BKButtonHapticsController enters a dispatch group, asks ButtonResolver
 // -[BRButtonResolverController scheduleReadyNotificationOnDispatchQueue:withBlock:] and leaves the group in that block;
 // every later haptics configuration waits on the group first (_configureAsyncWithBlock: -> dispatch_group_wait
