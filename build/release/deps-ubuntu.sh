@@ -12,6 +12,12 @@ Acquire::Retries "5";
 Acquire::http::Timeout "30";
 Acquire::https::Timeout "30";
 APT
+# GitHub's runners fetch Ubuntu through azure.archive.ubuntu.com (mirror list /etc/apt/apt-mirrors.txt); when it does
+# not answer (2026-11-11: every request timed out for an hour), use Ubuntu's own archive
+if [ -f /etc/apt/apt-mirrors.txt ] && ! curl -fsS --max-time 15 -o /dev/null http://azure.archive.ubuntu.com/ubuntu/dists/noble/InRelease; then
+	echo "deps: azure.archive.ubuntu.com not answering; using archive.ubuntu.com"
+	printf 'http://archive.ubuntu.com/ubuntu/\tpriority:1\n' > /etc/apt/apt-mirrors.txt
+fi
 apt-get update -q
 # Darling's own list (external/darling/debian/control), minus i386 (TARGET_i386=OFF), plus what our pieces and the
 # AppImage need (boost for dynarmic, squashfs/zsync for packing, file/desktop-file-utils for appimagetool's checks)
