@@ -629,5 +629,192 @@
   "suffix": "iphone",
   "json": "devicetype-iphone19,4.json",
   "note": "iOS 27.2 lists it as unsupported (Xcode can't create it on this runtime); it has a build of its own (iPhone Duo: 27.2 24B91016s, runtime-fetch.py fetch 24B91016s)"
+ },
+ "Apple TV 4K (3rd generation)": {
+  "model": "AppleTV14,1",
+  "class": "J255",
+  "w": "3840",
+  "h": "2160",
+  "scale": "1.000000",
+  "pitch": "0.000000",
+  "suffix": "",
+  "json": "devicetype-appletv14,1.json",
+  "platform": "tvos"
+ },
+ "Apple TV 4K (3rd generation) (at 1080p)": {
+  "model": "AppleTV14,1",
+  "class": "J255",
+  "w": "1920",
+  "h": "1080",
+  "scale": "1.000000",
+  "pitch": "0.000000",
+  "suffix": "",
+  "json": "devicetype-appletv14,1.json",
+  "platform": "tvos"
+ },
+ "Apple TV 4K (2nd generation)": {
+  "model": "AppleTV11,1",
+  "class": "J305",
+  "w": "3840",
+  "h": "2160",
+  "scale": "1.000000",
+  "pitch": "0.000000",
+  "suffix": "",
+  "json": "devicetype-appletv11,1.json",
+  "platform": "tvos"
+ },
+ "Apple TV 4K (2nd generation) (at 1080p)": {
+  "model": "AppleTV11,1",
+  "class": "J305",
+  "w": "1920",
+  "h": "1080",
+  "scale": "1.000000",
+  "pitch": "0.000000",
+  "suffix": "",
+  "json": "devicetype-appletv11,1.json",
+  "platform": "tvos"
+ },
+ "Apple Watch Series 12 (42mm)": {
+  "model": "Watch8,4",
+  "class": "N238s",
+  "w": "374",
+  "h": "446",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch8,4.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Series 12 (46mm)": {
+  "model": "Watch8,3",
+  "class": "N237b",
+  "w": "416",
+  "h": "496",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch8,3.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Ultra 4 (49mm)": {
+  "model": "Watch8,1",
+  "class": "N240",
+  "w": "422",
+  "h": "514",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch8,1.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Series 11 (46mm)": {
+  "model": "Watch7,18",
+  "class": "N227b",
+  "w": "416",
+  "h": "496",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,18.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Series 11 (42mm)": {
+  "model": "Watch7,17",
+  "class": "N227s",
+  "w": "374",
+  "h": "446",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,17.json",
+  "platform": "watchos"
+ },
+ "Apple Watch SE 3 (44mm)": {
+  "model": "Watch7,16",
+  "class": "N244b",
+  "w": "368",
+  "h": "448",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,16.json",
+  "platform": "watchos"
+ },
+ "Apple Watch SE 3 (40mm)": {
+  "model": "Watch7,13",
+  "class": "N243s",
+  "w": "324",
+  "h": "394",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,13.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Ultra 3 (49mm)": {
+  "model": "Watch7,12",
+  "class": "N230",
+  "w": "422",
+  "h": "514",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,12.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Series 10 (46mm)": {
+  "model": "Watch7,9",
+  "class": "N217b",
+  "w": "416",
+  "h": "496",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,9.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Series 10 (42mm)": {
+  "model": "Watch7,8",
+  "class": "N217s",
+  "w": "374",
+  "h": "446",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,8.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Ultra 2 (49mm)": {
+  "model": "Watch7,5",
+  "class": "N210",
+  "w": "410",
+  "h": "502",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,5.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Series 9 (45mm)": {
+  "model": "Watch7,4",
+  "class": "N208b",
+  "w": "396",
+  "h": "484",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,4.json",
+  "platform": "watchos"
+ },
+ "Apple Watch Series 9 (41mm)": {
+  "model": "Watch7,3",
+  "class": "N208s",
+  "w": "352",
+  "h": "430",
+  "scale": "2.000000",
+  "pitch": "326.000000",
+  "suffix": "",
+  "json": "devicetype-watch7,3.json",
+  "platform": "watchos"
  }
 }

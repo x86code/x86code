@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""x86Sim (Speed 22): iOS simulator runtimes straight from Apple, no Mac and no Apple ID.
+"""x86Sim (Speed 22): simulator runtimes straight from Apple, no Mac and no Apple ID.
 
-    runtime-fetch.py list                 iOS 27.x runtimes in Apple's catalogue (the one Xcode reads)
+    runtime-fetch.py list [ios|tvos|watchos|all]   27.x runtimes in Apple's catalogue (the one Xcode reads); default ios
     runtime-fetch.py url BUILD            the runtime's download URL (from gdmf.apple.com, as Xcode asks for it)
-    runtime-fetch.py fetch BUILD          download into runtimes/ios-<ver>-<build>-arm64/, decrypt, unpack, RuntimeRoot
+    runtime-fetch.py fetch BUILD          download into runtimes/<platform>-<ver>-<build>-arm64/ (ios-, tvos-, watchos-),
+                                          decrypt, unpack, RuntimeRoot
+Platforms 1: the platform is the build's own (builds are unique across platforms in the catalogue).
 
 How Xcode gets them: the catalogue (devimages-cdn .../index2.dvtdownloadableindex) lists each runtime as a MobileAsset
 download ("downloadMethod": "mobileAsset", no authentication). mobileassetd asks gdmf.apple.com/v2/assets for asset
@@ -30,14 +32,26 @@ APPLE_ROOT = "https://www.apple.com/appleca/AppleIncRootCertificate.cer"
 XCODE_SIM_AUDIENCE = "02d8e57e-dd1c-4090-aa50-b4ed2aef0062"
 
 
-def catalogue():
+# Platforms 1: key -> (catalogue platform, MobileAsset type, the .simruntime's name prefix). The key is also the
+# runtimes/<key>-<version>-<build>-arm64 dir prefix.
+PLATFORMS = {
+    "ios": ("com.apple.platform.iphoneos", "com.apple.MobileAsset.iOSSimulatorRuntime", "iOS"),
+    "tvos": ("com.apple.platform.appletvos", "com.apple.MobileAsset.appleTVOSSimulatorRuntime", "tvOS"),
+    "watchos": ("com.apple.platform.watchos", "com.apple.MobileAsset.watchOSSimulatorRuntime", "watchOS"),
+}
+
+
+def catalogue(platforms=("ios",)):
+    """(version, build, name, size, archs, platform key) of the arm64 27.x runtimes of these platforms."""
     with urllib.request.urlopen(INDEX) as r:
         d = plistlib.loads(r.read())
     out = []
     for x in d.get("downloadables", []):
         v = x.get("simulatorVersion", {})
-        if x.get("platform") == "com.apple.platform.iphoneos" and v.get("version", "").startswith("27"):
-            out.append((v["version"], v["buildUpdate"], x.get("name", ""), x.get("fileSize", 0), x.get("architectures")))
+        key = next((k for k in platforms if PLATFORMS[k][0] == x.get("platform")), None)
+        if key and v.get("version", "").startswith("27"):
+            out.append((v["version"], v["buildUpdate"], x.get("name", ""), x.get("fileSize", 0), x.get("architectures"),
+                        key))
     return out
 
 
@@ -50,10 +64,11 @@ def apple_ca(tmp):
 
 
 def asset(build):
-    version = next((c[0] for c in catalogue() if c[1] == build), None)
-    if not version:
-        sys.exit(f"runtime-fetch: build {build} is not in Apple's catalogue (see `list`)")
-    body = {"AssetAudience": XCODE_SIM_AUDIENCE, "AssetType": "com.apple.MobileAsset.iOSSimulatorRuntime",
+    c = next((c for c in catalogue(tuple(PLATFORMS)) if c[1] == build), None)
+    if not c:
+        sys.exit(f"runtime-fetch: build {build} is not in Apple's catalogue (see `list all`)")
+    version, key = c[0], c[5]
+    body = {"AssetAudience": XCODE_SIM_AUDIENCE, "AssetType": PLATFORMS[key][1],
             "ClientVersion": 2, "CertIssuanceDay": "2023-12-10", "RequestedBuild": build, "Build": build,
             "SimulatorVersion": version, "ProductVersion": version, "BuildVersion": build}
     with tempfile.TemporaryDirectory() as tmp:
@@ -63,18 +78,19 @@ def asset(build):
     d = json.loads(base64.urlsafe_b64decode(p[1] + "=" * (-len(p[1]) % 4)))
     for a in d.get("Assets", []):
         if a.get("Build") == build:
-            return version, a
+            return version, a, key
     sys.exit(f"runtime-fetch: gdmf has no asset for {build}: {d.get('Message', d)}")
 
 
 def fetch(build):
-    version, a = asset(build)
-    dst = os.path.join(ROOT, "runtimes", f"ios-{version}-{build}-arm64")
+    version, a, key = asset(build)
+    name = PLATFORMS[key][2]
+    dst = os.path.join(ROOT, "runtimes", f"{key}-{version}-{build}-arm64")
     dl = os.path.join(dst, "download")
     os.makedirs(dl, exist_ok=True)
     aar = os.path.join(dl, "runtime.aar")
     url = a["__BaseURL"] + a["__RelativePath"]
-    print(f"iOS {version} ({build}): {a['_DownloadSize'] / 1e9:.1f} GB from {url}", flush=True)
+    print(f"{name} {version} ({build}): {a['_DownloadSize'] / 1e9:.1f} GB from {url}", flush=True)
     if not (os.path.exists(aar) and os.path.getsize(aar) == a["_DownloadSize"]):
         subprocess.run(["curl", "-f", "-C", "-", "-o", aar, url], check=True)
     if os.path.getsize(aar) != a["_DownloadSize"]:
@@ -106,7 +122,7 @@ def fetch(build):
         sys.exit(f"runtime-fetch: no disk image in {out}")
     dmg = max(dmgs, key=os.path.getsize)
     subprocess.run(["7z", "x", "-snld", "-y", "-o" + os.path.join(dst, "extracted"), dmg], stdout=subprocess.DEVNULL)
-    rr = os.path.join("extracted/Library/Developer/CoreSimulator/Profiles/Runtimes", f"iOS {version}.simruntime",
+    rr = os.path.join("extracted/Library/Developer/CoreSimulator/Profiles/Runtimes", f"{name} {version}.simruntime",
                       "Contents/Resources/RuntimeRoot")
     if not os.path.isdir(os.path.join(dst, rr)):
         sys.exit(f"runtime-fetch: no {rr} after unpacking")
@@ -136,12 +152,15 @@ def fetch(build):
 def main():
     a = sys.argv[1:] or ["list"]
     if a[0] == "list":
-        for v, b, name, size, arch in catalogue():
-            have = os.path.isdir(os.path.join(ROOT, "runtimes", f"ios-{v}-{b}-arm64", "RuntimeRoot"))
+        which = a[1] if len(a) > 1 else "ios"
+        if which != "all" and which not in PLATFORMS:
+            sys.exit(f"runtime-fetch: platform {which}: one of {', '.join(PLATFORMS)} or all")
+        for v, b, name, size, arch, key in catalogue(tuple(PLATFORMS) if which == "all" else (which,)):
+            have = os.path.isdir(os.path.join(ROOT, "runtimes", f"{key}-{v}-{b}-arm64", "RuntimeRoot"))
             mark = "  (downloaded)" if have else ""
             print(f"{b:12} {name:42} {size / 1e9:4.1f} GB{mark}")
     elif a[0] == "url" and len(a) > 1:
-        v, x = asset(a[1])
+        v, x, _ = asset(a[1])
         print(x["__BaseURL"] + x["__RelativePath"])
     elif a[0] == "fetch" and len(a) > 1:
         fetch(a[1])

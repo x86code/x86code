@@ -15,11 +15,12 @@ usage: x86sim <command> [args]
 
 Phones
   wait [home|app] [s]  wait for the home screen (or an app page) on the framebuffer
-  device models|list   arm64 phone models / devices (var/device-a64*)
+  device models|list   arm64 device models (iPhone, iPad, Apple TV, Apple Watch) / devices (var/device-a64*)
   device create --model "iPhone 17 Pro" [name]
-                       new arm64 device of that model (var/device-a64-<name>); boot it with A64_DEVICE=<dir>
-  runtime list|url B|fetch B
-                       iOS 27.x simulator runtimes from Apple (no Mac / Apple ID): fetch downloads build B into runtimes/
+                       new arm64 device of that model (var/device-a64-<name>); boot it with A64_DEVICE=<dir>. An Apple TV
+                       or Apple Watch model takes the newest tvOS / watchOS runtime in runtimes/
+  runtime list [ios|tvos|watchos|all] | url B | fetch B
+                       27.x simulator runtimes from Apple (no Mac / Apple ID): fetch downloads build B into runtimes/
   logs [label]         list the device's job logs, or tail one (<device>/data/var/log/<label>.log)
 
 Display and input
@@ -28,7 +29,9 @@ Display and input
                        newest frame as PNG (fb2png.py; default ./x86sim-<time>.png, full size)
   tap X Y | swipe X1 Y1 X2 Y2 [ms] | pinch CX CY R1 R2 [ms] | pan2 X1 Y1 X2 Y2 [ms]
   type TEXT | key USAGE | home | lock | openurl URL | app BUNDLEID | dismiss [rounds] | raw LINE...
-                       input through the SimulatorHID stand-in (simtouch.py; device pixels)
+  crown DELTA [steps]  Apple Watch: turn the Digital Crown
+                       input through the SimulatorHID stand-in (simtouch.py; device pixels). Apple TV: the arrow keys,
+                       return (select) and escape (back) are the remote
   fps [secs]           delivered frames per second (fpsmeter.py)
 
 Apps (as xcrun simctl install/uninstall/launch)
@@ -102,7 +105,7 @@ case $c in
 	logs) cmd_logs "$@" ;;
 	view) cmd_view "$@" ;;
 	screenshot|shot) cmd_screenshot "$@" ;;
-	tap|swipe|pinch|pan2|key|home|lock|openurl|app|dismiss|raw) exec python3 "$L/simtouch.py" "$c" "$@" ;;
+	tap|swipe|pinch|pan2|key|home|lock|crown|openurl|app|dismiss|raw) exec python3 "$L/simtouch.py" "$c" "$@" ;;
 	type|text) exec python3 "$L/simtouch.py" text "$*" ;;
 	fps) exec python3 "$L/fpsmeter.py" "${1:-10}" ;;
 	install|uninstall) exec "$L/appinstall.sh" "$c" "$@" ;;

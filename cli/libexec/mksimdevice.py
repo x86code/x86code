@@ -27,7 +27,9 @@ RUNTIME = x86config.get("X86SIM_RUNTIME")
 # slim-by-default pass below strips RunAtLoad and sleepd never starts under on-demand-only launchd_sim.
 EAGER = {"com.apple.SpringBoard", "com.apple.backboardd", "com.apple.runningboardd", "com.apple.configd_sim",
          "com.apple.syslogd", "com.apple.UserEventAgent-System", "com.apple.distnoted.xpc.daemon",
-         "com.apple.sleepd"}
+         "com.apple.sleepd",
+         # Platforms 1: tvOS's and watchOS's SpringBoard
+         "com.apple.Pineboard", "com.apple.Carousel"}
 PREFIX = x86config.get("X86SIM_PREFIX")
 MTLVK_SOCKET = os.environ.get("X86SIM_MTLVK_SOCKET") or os.path.join(x86config.get("X86SIM_STATE"), "mtlvk.sock")
 # x86Sim: the host side of the simulator's audio (cli/libexec/simaudio.py, started by cli/libexec/arm64/boot-a64.sh)
@@ -71,11 +73,27 @@ def device_type(device):
     return dt
 
 
+def runtime_platform(root=None):
+    """Platforms 1: "ios", "tvos" or "watchos", from the runtime's SystemVersion.plist ProductName."""
+    try:
+        with open(os.path.join(root or RUNTIME, "System/Library/CoreServices/SystemVersion.plist"), "rb") as f:
+            name = plistlib.load(f).get("ProductName", "")
+    except (OSError, plistlib.InvalidFileException):
+        return "ios"
+    return {"Apple TVOS": "tvos", "Watch OS": "watchos"}.get(name, "ios")
+
+
+PLATFORM = runtime_platform()
+# Platforms 1: the platform's name in SIMULATOR_VERSION_INFO, as CoreSimulator writes it
+PLATFORM_NAME = {"ios": "iOS", "tvos": "tvOS", "watchos": "watchOS"}[PLATFORM]
+
+
 def host_path(rel):
     """Linux path of the arm64 build of one of our in-simulator binaries (rel: host/<name>/... -> host/<name>/arm64/...),
-    or None if that build doesn't exist."""
+    or None if that build doesn't exist. Platforms 1: tvOS / watchOS runtimes take host/<name>/arm64-tvos|-watchos (dyld_sim
+    loads only Mach-Os built for its own platform), never the iOS build."""
     a, b, rest = rel.split("/", 2)
-    p = "/".join([PROJECT, a, b, "arm64", rest])
+    p = "/".join([PROJECT, a, b, "arm64" if PLATFORM == "ios" else "arm64-" + PLATFORM, rest])
     return p if os.path.exists(p) else None
 
 
@@ -285,6 +303,13 @@ def main():
     dt = device_type(device)
     with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", dt["json"])) as f:
         caps = json.load(f)
+    # Platforms 1: device types sharing a model's capabilities but not its screen (Apple TV 4K "at 1080p": the 4K
+    # model's file says 3840x2160): the main display takes the device type's own size
+    disp = caps.get("capabilities", {}).get("displays") or []
+    if disp and str(disp[0].get("width")) != dt["w"]:
+        disp[0]["width"], disp[0]["height"] = int(dt["w"]), int(dt["h"])
+        sd = caps["capabilities"].get("ScreenDimensionsCapability", {})
+        sd["main-screen-width"], sd["main-screen-height"] = dt["w"], dt["h"]
     with open(capabilities, "wb") as f:
         plistlib.dump(caps, f)
     # Stand-in for the host's configd: configd_sim's SimulatorSupport plugin opens the
@@ -449,7 +474,8 @@ def main():
         # listener). A Mac's device has the same empty file and variable.
         "SIMULATOR_MEMORY_WARNINGS": home + "/var/run/memory_warning_simulation",
         "SIMULATOR_BOOT_TIME": str(int(os.path.getmtime(data))),
-        "SIMULATOR_VERSION_INFO": "x86Sim - Device: x86sim (%s) - Runtime: iOS %s (%s)" % (udid, dt["version"], dt["build"]),
+        "SIMULATOR_VERSION_INFO": "x86Sim - Device: x86sim (%s) - Runtime: %s %s (%s)" % (udid, PLATFORM_NAME, dt["version"],
+                                                                                               dt["build"]),
         "XPC_SIMULATOR_LAUNCHD_NAME": "com.apple.CoreSimulator.SimDevice." + udid,
         # x86Sim: no XPC_SERVICE_NAME here. launchd_sim gives each job XPC_SERVICE_NAME=<label> only when its own
         # environment has none, so every job inherited the device's name: lsd's [NSProcessInfo bs_jobLabel] wasn't
@@ -494,6 +520,9 @@ def main():
             "SimulatorRuntimeRoot": rt,
         },
     }
+    # X86SIM_LAUNCHD_LOGIPC=1: launchd_sim logs its IPC and every bootstrap error (debugging)
+    if os.environ.get("X86SIM_LAUNCHD_LOGIPC") == "1":
+        bootstrap.update(LogIPC=True, LogAllBootstrapErrors=True)
     with open(data + "/var/run/launchd_bootstrap.plist", "wb") as f:
         plistlib.dump(bootstrap, f)
     with open(device + "/sim.env", "w") as f:

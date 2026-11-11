@@ -7,6 +7,10 @@
                                                  new var/device-a64-<name>: <device>/model, runtime (+ name), sim.env
     device-a64.py runtimes                       the iOS versions in runtimes/ (version, build, dir)
 
+Platforms 1: Apple TV and Apple Watch models (devicetypes-a64.json "platform": tvos / watchos) get the newest runtime of
+their platform in runtimes/ (tvos-<ver>-<build>-arm64, watchos-...; runtime-fetch.py list all); --ios also picks one of
+those by version or build (--os is the same option).
+
 A new device gets a copy (reflinks) of var/device-a64's data/ when that has booted once (apps registered, setup
 done), so its first boot is a normal boot (device-repath.py moves its absolute paths to the new device); mksimdevice.py writes the model's screen, identifiers and capabilities.
 Speed 24: --ios picks the runtime (default 27.2); <device>/runtime names its runtimes/ dir and boot-a64.sh boots the
@@ -35,11 +39,19 @@ DEFAULT_RT = "ios-27.2-24B8117-arm64"
 MAX_SLUG = 24  # device-a64-<slug>: see create
 
 
-def runtimes():
-    """[(version, build, dir)] of the arm64 runtimes in runtimes/, oldest first."""
+PLATFORM_NAMES = {"ios": "iOS", "tvos": "tvOS", "watchos": "watchOS"}
+
+
+def platform_of_model(t):
+    """Platforms 1: a devicetypes-a64.json entry's platform (none: iOS)"""
+    return t.get("platform", "ios") if isinstance(t, dict) else "ios"
+
+
+def runtimes(platform="ios"):
+    """[(version, build, dir)] of the arm64 runtimes of this platform in runtimes/, oldest first."""
     out = []
     for d in os.listdir(os.path.join(ROOT, "runtimes")):
-        m = re.match(r"ios-([0-9.]+)-([0-9A-Za-z]+)-arm64$", d)
+        m = re.match(re.escape(platform) + r"-([0-9.]+)-([0-9A-Za-z]+)-arm64$", d)
         if m and os.path.isdir(os.path.join(ROOT, "runtimes", d, "RuntimeRoot")):
             out.append((m[1], m[2], d))
     return sorted(out, key=lambda r: ([int(x) for x in r[0].split(".")], bool(restricted_to(r[2])), r[1]))
@@ -80,16 +92,16 @@ def cmd_list():
         if d.startswith("device-a64") and os.path.exists(os.path.join(p, "sim.env")):
             e = env_of(p)
             m = e.get("SIMULATOR_MODEL_IDENTIFIER", "")
-            rt = re.match(r"ios-([0-9.]+)-", runtime_of(p))
+            rt = re.match(r"(ios|tvos|watchos)-([0-9.]+)-", runtime_of(p))
             print(f"{d:24} {names.get(m, m):24} {e.get('SIMULATOR_MAINSCREEN_WIDTH')}x{e.get('SIMULATOR_MAINSCREEN_HEIGHT')}"
-                  f"  iOS {rt[1] if rt else '?':5} {e.get('SIMULATOR_DEVICE_NAME', '')}")
+                  f"  {PLATFORM_NAMES[rt[1]] if rt else 'iOS':7} {rt[2] if rt else '?':5} {e.get('SIMULATOR_DEVICE_NAME', '')}")
 
 
 def cmd_create(args):
     model, name, ios = None, None, None
     while args:
         a = args.pop(0)
-        if a in ("--model", "--ios"):
+        if a in ("--model", "--ios", "--os"):
             v = args.pop(0)
             if a == "--model":
                 model = v
@@ -97,19 +109,24 @@ def cmd_create(args):
                 ios = v
         elif a.startswith("--model="):
             model = a.split("=", 1)[1]
-        elif a.startswith("--ios="):
+        elif a.startswith(("--ios=", "--os=")):
             ios = a.split("=", 1)[1]
         else:
             name = a
     types = models()
     if model not in types:
         sys.exit(f"device create: --model one of: {', '.join(types)}")
-    rts = runtimes()
+    plat = platform_of_model(types[model])
+    rts = runtimes(plat)
     # Models 2: a runtime limited to some models (the iPhone Duo's 27.2 build) is taken for them, never for others
     mid = types[model].get("model", "") if isinstance(types[model], dict) else ""
     fits = [r for r in rts if not restricted_to(r[2]) or mid in restricted_to(r[2])]
     own = [r for r in fits if mid in restricted_to(r[2])]
-    rt = DEFAULT_RT if not own else own[0][2]
+    if plat != "ios" and not fits:
+        sys.exit(f"device create: {model} needs a {PLATFORM_NAMES[plat]} runtime in runtimes/ "
+                 f"(cli/libexec/arm64/runtime-fetch.py list {plat}, then fetch BUILD)")
+    # Platforms 1: an Apple TV / Watch takes the newest runtime of its platform
+    rt = own[0][2] if own else DEFAULT_RT if plat == "ios" else fits[-1][2]
     if ios:
         hit = [r for r in fits if ios in (r[0], r[1], r[2])]
         if not hit:
@@ -159,10 +176,12 @@ def main():
     a = sys.argv[1:] or ["list"]
     if a[0] == "models":
         for k, v in models().items():
-            print(f"{k:24} {v['model']:12} {v['w']}x{v['h']} @{float(v['scale']):g}x")
+            print(f"{k:34} {v['model']:12} {v['w']}x{v['h']} @{float(v['scale']):g}x"
+                  f"{'  ' + PLATFORM_NAMES[platform_of_model(v)] if platform_of_model(v) != 'ios' else ''}")
     elif a[0] == "runtimes":
-        for v, b, d in runtimes():
-            print(f"{v:6} {b:10} {d}")
+        for plat in PLATFORM_NAMES:
+            for v, b, d in runtimes(plat):
+                print(f"{PLATFORM_NAMES[plat]:8} {v:6} {b:10} {d}")
     elif a[0] == "list":
         cmd_list()
     elif a[0] == "create":

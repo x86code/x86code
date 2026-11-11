@@ -11,6 +11,8 @@
                                                       distance from it going from r1 to r2 (r2 > r1 = zoom in)
     cli/libexec/simtouch.py pan2 <x1> <y1> <x2> <y2> [ms]   two fingers 200 px apart, moved together from (x1,y1) to (x2,y2)
     cli/libexec/simtouch.py key <usage> | text <ascii>
+    cli/libexec/simtouch.py crown <delta> [steps]          Apple Watch: turn the Digital Crown (<delta> per step, positive =
+                                                      down / towards the bottom; default 8 steps of 30 ms)
     cli/libexec/simtouch.py raw "<line>" ...               protocol lines (see host/simhid/simhid.m)
     cli/libexec/simtouch.py app <bundle id>                open an app (also ones the home screen doesn't show); as openurl
     cli/libexec/simtouch.py dismiss [rounds]               answer permission prompts on screen (location: "Allow While Using
@@ -209,6 +211,11 @@ def main(a):
         touch2("up", pts(1))
     elif a[0] in ("home", "lock"):
         send(s, "button %s down" % a[0]); time.sleep(0.1); send(s, "button %s up" % a[0])
+    elif a[0] == "crown":
+        # Platforms 1: host/simhid's crown service (Apple Watch models)
+        for _ in range(int(a[2]) if len(a) > 2 else 8):
+            send(s, "crown %s y" % float(a[1]))
+            time.sleep(0.03)
     elif a[0] == "key":
         # a usage (page 7: 0x28 = return) or a name
         named = {"return": 0x28, "enter": 0x28, "escape": 0x29, "esc": 0x29, "delete": 0x2a, "backspace": 0x2a,

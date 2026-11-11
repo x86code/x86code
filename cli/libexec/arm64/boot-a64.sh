@@ -23,7 +23,17 @@ export A64_DEVICE X86SIM_DEVICE=$A64_DEVICE
 # overrides. Each runtime has its own JIT/AOT cache dir ($X86SIM_SCRATCH/jc-<build>; 27.0: jitcache) and placement table.
 A64_RT_DIR=$(cat "$X86SIM_DEVICE/runtime" 2>/dev/null)
 export X86SIM_RUNTIME=${A64_RUNTIME:-$X86SIM_ROOT/runtimes/${A64_RT_DIR:-ios-27.2-24B8117-arm64}/RuntimeRoot}
-A64_BUILD=$(basename "$(dirname "$X86SIM_RUNTIME")" | sed -n 's/^ios-[0-9.]*-\([0-9A-Za-z]*\)-arm64$/\1/p')
+A64_BUILD=$(basename "$(dirname "$X86SIM_RUNTIME")" | sed -n 's/^\(ios\|tvos\|watchos\)-[0-9.]*-\([0-9A-Za-z]*\)-arm64$/\2/p')
+# Platforms 1: the runtime's platform (ios, tvos, watchos): its runtimes/ dir name, else its SystemVersion.plist
+A64_PLATFORM=$(basename "$(dirname "$X86SIM_RUNTIME")" | sed -n 's/^\(ios\|tvos\|watchos\)-.*/\1/p')
+if [ -z "$A64_PLATFORM" ]; then
+	case $(sed -n '/ProductName/{n;s/.*<string>\(.*\)<\/string>.*/\1/p}' "$X86SIM_RUNTIME/System/Library/CoreServices/SystemVersion.plist" 2>/dev/null) in
+	"Apple TVOS") A64_PLATFORM=tvos ;; "Watch OS") A64_PLATFORM=watchos ;; *) A64_PLATFORM=ios ;;
+	esac
+fi
+# our in-simulator binaries are built per platform: host/<name>/arm64 (iOS), arm64-tvos, arm64-watchos
+A64_HOSTDIR=arm64; [ "$A64_PLATFORM" = ios ] || A64_HOSTDIR=arm64-$A64_PLATFORM
+export A64_PLATFORM
 export X86SIM_STATE=${A64_STATE:-$X86SIM_ROOT/var/run-a64}
 . "$X86SIM_ROOT/cli/lib/config.sh"
 if [ -z "${X86SIM_A64_JITCACHE_DIR:-}" ] && [ -n "$A64_BUILD" ] && [ "$A64_BUILD" != 24A434 ]; then
@@ -191,8 +201,26 @@ FULLUI="com.apple.chronod"
 # showed Recents. DesktopServicesHelper (Speed 17, on demand): Files lists On My iPhone (the LocalStorage domain, no
 # extension in iOS 27) through DesktopServices, whose com.apple.DesktopServicesHelper.FileService does the file
 # operations. Without it the folder stayed "Loading" and New Folder did nothing.
-OUR_JOBS="com.x86sim.openurl=host/openurl/arm64/openurl
-	com.x86sim.fpsim2host=host/fpsim2host/arm64/fpsim2host|mach:com.apple.FileProvider.sim2host"
+OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl
+	com.x86sim.fpsim2host=host/fpsim2host/$A64_HOSTDIR/fpsim2host|mach:com.apple.FileProvider.sim2host"
+# Platforms 1: tvOS. PineBoard is tvOS's SpringBoard (the home screen, "Top Shelf" and the app switcher); TVSystemUIService
+# (angel) draws the system overlays (volume, Control Center). No sleepd, InputUI or nanoregistryd on tvOS.
+TV_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd
+	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.TVSystemUIService
+	com.apple.PosterBoard com.apple.campo com.apple.splashboardd com.apple.MediaRemoteUI"
+TV_UI_SLIM="com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd com.apple.FileCoordination"
+# Platforms 1: watchOS. Carousel is watchOS's SpringBoard (the watch face, the app grid, notifications); the watch face
+# itself comes from nanotimekitd. nanoregistryd (+ its launch helper) holds the pairing state, unpaired for a watch booted
+# on its own. No PosterBoard on watchOS.
+WATCH_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Carousel com.apple.sleepd com.apple.TextInput.kbd
+	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.campo com.apple.splashboardd
+	com.apple.nanoregistryd com.apple.nanoregistrylaunchd com.apple.nanotimekitd com.apple.carouselecomoded"
+WATCH_UI_SLIM="com.apple.backboardd com.apple.Carousel com.apple.TextInput.kbd com.apple.FileCoordination
+	com.apple.nanoregistryd com.apple.nanotimekitd"
+case $A64_PLATFORM in
+	tvos) UI=$TV_UI; UI_SLIM=$TV_UI_SLIM; FULLUI= ;;
+	watchos) UI=$WATCH_UI; UI_SLIM=$WATCH_UI_SLIM; FULLUI= ;;
+esac
 case "${A64_JOBS:-std}" in
 	min) JOBS="$MIN $OUR_JOBS" ;;
 	slim) JOBS="$MIN $UI_SLIM $OUR_JOBS" ;;
@@ -252,6 +280,18 @@ JOBS="$JOBS $FEAT_ADD"
 [ -n "$FEAT_PARK" ] && A64_PARK_EXTRA=${A64_PARK_EXTRA:+$A64_PARK_EXTRA,}$FEAT_PARK
 # A64_DROP="label ...": leave these jobs out (experiments). Matches a label or a label=executable entry.
 for j in ${A64_DROP:-} $FEAT_DROP; do JOBS=$(echo " $JOBS " | sed "s/[[:space:]]$j\(=[^[:space:]]*\)\?[[:space:]]/ /"); done
+# Platforms 1: the shared lists name iOS jobs a tvOS / watchOS runtime doesn't ship (cfprefsd's system daemon,
+# containermanagerd.system, fontservicesd, appprotectiond, ...): those are left out there
+if [ "$A64_PLATFORM" != ios ]; then
+	JOBS=$(echo $JOBS)  # one line: sed below works line by line
+	left=
+	for j in $JOBS; do
+		case $j in *=*) continue ;; esac
+		[ -f "$X86SIM_RUNTIME/System/Library/LaunchDaemons/$j.plist" ] || [ -f "$X86SIM_RUNTIME/System/Library/LaunchAngels/$j.plist" ] && continue
+		JOBS=$(echo " $JOBS " | sed "s/[[:space:]]$j[[:space:]]/ /"); left="$left $j"
+	done
+	[ -n "$left" ] && echo "  not in this $A64_PLATFORM runtime:$left"
+fi
 # Speed 10: A64_CLONE_FROM=<device dir> starts a new device (no data/ yet) from a copy of that device's data/, like
 # simctl clone. A fresh device's first boot otherwise builds the LaunchServices database (lsd) while SpringBoard's icon
 # requests wait on it: ~80 s, and SpringBoard was killed and relaunched at ~90 s (home after ~5 min). The store refers
@@ -287,7 +327,8 @@ if [ -n "$RING" ]; then
 fi
 # Strip home-screen / Today widgets so SpringBoard does not demand WidgetRenderer (even with park).
 # A64_KEEP_WIDGETS=1 leaves IconState alone (full profile / wallpaper experiments).
-if [ "${A64_KEEP_WIDGETS:-0}" != 1 ]; then
+# Platforms 1: SpringBoard's (iOS) only
+if [ "${A64_KEEP_WIDGETS:-0}" != 1 ] && [ "$A64_PLATFORM" = ios ]; then
 	python3 - "$D/data/Library/SpringBoard" <<'PY'
 import os, sys, plistlib
 d = sys.argv[1]
@@ -511,8 +552,15 @@ if [ "${X86SIM_MDNS:-1}" != 0 ]; then
 	echo $! > "$ST/mdns.pid"
 	MDNS_LINK="ln -sf '/Volumes/SystemRoot$ST/mDNSResponder' /var/run/mDNSResponder;"
 fi
+# Platforms 1: tvOS / watchOS launchd_sim has only the system domain, which stays in bootstrap mode (every request of its
+# jobs deferred) until the host's MIG 700: simhost sends it (host/simhost/simhost.c). A64_BOOTSTRAP_DONE=1: on iOS too
+# (experiments; its jobs are in the user domain, which ends bootstrap mode itself).
+BDONE=
+if [ "$A64_PLATFORM" != ios ] || [ "${A64_BOOTSTRAP_DONE:-0}" = 1 ]; then
+	BDONE="SIMHOST_BOOTSTRAP_DONE=1"
+fi
 cat > "$CMDFILE" <<CMDEOF
-$MDNS_LINK exec "$H" /usr/bin/env $ENVS "$R/sbin/launchd_sim" "/Volumes/SystemRoot$D/data/var/run/launchd_bootstrap.plist"
+$MDNS_LINK $BDONE exec "$H" /usr/bin/env $ENVS "$R/sbin/launchd_sim" "/Volumes/SystemRoot$D/data/var/run/launchd_bootstrap.plist"
 CMDEOF
 
 # Speed 14: fixed placement of non-cache Mach-Os (libarm64jit; mkplacement.py): the jitcache dir gets the committed

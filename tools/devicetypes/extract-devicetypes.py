@@ -15,6 +15,9 @@ Only data derived from the plists is written; no Apple binaries.
 --include-unsupported also takes iPhone/iPad types the runtime refuses but whose minRuntimeVersion allows (iPhone Duo,
 iPhone19,4, on 27.2: the runtime profile's unsupportedDeviceTypes), with a "note". The committed files are
 `extract-devicetypes.py --include-unsupported` against Xcode 27.2 (27B52).
+Platforms 1: Apple TV and Apple Watch device types are added after the iPhones and iPads, with "platform": "tvos" /
+"watchos" (an entry without "platform" is iOS). Which of them a 27.x runtime takes comes from each profile's product
+family (3 = Apple TV, 4 = Apple Watch) and min/maxRuntimeVersion, so the Mac needs no tvOS/watchOS runtime installed.
 """
 import io
 import json
@@ -77,6 +80,22 @@ def main():
                     and ver(prof.get("minRuntimeVersion", "0")) <= ver(rtver) \
                     and ver(rtver) <= ver(prof.get("maxRuntimeVersion", "99.99")):
                 bundles.append(b)
+    # Platforms 1: (bundle, platform) for every device type; iOS first, as before
+    plat = {b: None for b in bundles}
+    for fam, key in ((3, "tvos"), (4, "watchos")):
+        # newest first, as Xcode's own lists show them (model identifier generation, then name)
+        cands = []
+        for p in sorted(files):
+            b = p.split("/")[0]
+            prof = files.get(b + "/Contents/Resources/profile.plist", {})
+            if p.endswith("/profile.plist") and fam in prof.get("supportedProductFamilyIDs", []) \
+                    and ver(prof.get("minRuntimeVersion", "0")) <= ver(rtver) <= ver(prof.get("maxRuntimeVersion", "99.99")) \
+                    and "arm64" in prof.get("supportedArchs", ["arm64"]):
+                cands.append(b)
+        gen = lambda b: [int(x) for x in "".join(c if c.isdigit() else " " for c in files[b + "/Contents/Resources/profile.plist"]["modelIdentifier"]).split()]
+        for b in sorted(cands, key=lambda b: (gen(b), b), reverse=True):
+            plat[b] = key
+    bundles = list(plat)
     out, written = {}, set()
     for b in bundles:
         prof = files[b + "/Contents/Resources/profile.plist"]
@@ -87,11 +106,14 @@ def main():
         out[b[:-len(".simdevicetype")]] = {
             "model": model, "class": prof["productClass"],
             "w": str(ints(sd["main-screen-width"])), "h": str(ints(sd["main-screen-height"])),
-            "scale": "%f" % sd["main-screen-scale"], "pitch": "%f" % sd["main-screen-pitch"],
+            "scale": "%f" % sd["main-screen-scale"], "pitch": "%f" % sd.get("main-screen-pitch", 0),  # Apple TV: none (an external display)
             "suffix": prof.get("environment", {}).get("SIMULATOR_LEGACY_ASSET_SUFFIX",
+                                                       "" if plat[b] else
                                                        "ipad" if 2 in prof["supportedProductFamilyIDs"] else "iphone"),
             "json": js}
-        if b not in supported:
+        if plat[b]:
+            out[b[:-len(".simdevicetype")]]["platform"] = plat[b]
+        elif b not in supported:
             out[b[:-len(".simdevicetype")]]["note"] = (
                 f"iOS {rtver} lists it as unsupported (Xcode can't create it on this runtime); it has a build of its "
                 f"own (iPhone Duo: 27.2 24B91016s, runtime-fetch.py fetch 24B91016s)")
@@ -101,6 +123,7 @@ def main():
                 json.dump(ints(caps), f, indent=1, sort_keys=True)
     with open(os.path.join(LIB, "devicetypes-a64.json"), "w") as f:
         json.dump(out, f, indent=1)
+    print(f"{sum(1 for v in out.values() if 'platform' in v)} of them Apple TV / Apple Watch")
     print(f"{len(out)} device types ({len(written)} capability files) for iOS {rtver} {rt['buildversion']}")
 
 

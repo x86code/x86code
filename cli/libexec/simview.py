@@ -51,6 +51,18 @@ def phone_name():
     return "x86Sim"
 
 
+def device_model():
+    """Platforms 1: the device's model identifier (SIMULATOR_MODEL_IDENTIFIER of <device>/sim.env): Watch*, AppleTV*, ..."""
+    for d in (os.path.dirname(os.path.dirname(os.path.abspath(sockpath))), booted_device()):
+        try:
+            for line in open(os.path.join(d, "sim.env")):
+                if line.startswith("SIMULATOR_MODEL_IDENTIFIER="):
+                    return line.split("=", 1)[1].strip()
+        except (OSError, TypeError):
+            pass
+    return ""
+
+
 def current_sock():
     if "SIMHID_SOCKET" not in os.environ or os.environ.get("SIMVIEW_FOLLOW", "1") != "0":
         d = booted_device()
@@ -284,7 +296,8 @@ def on_activate(app):
         mon = disp.get_monitor_at_surface(surf) if surf else None
         mons = disp.get_monitors()
         mon = mon or (mons.get_item(0) if mons.get_n_items() else None)
-        H = h // div + 2 * (PAD + BEZEL)
+        # Platforms 1: a watch's screen (~500 px) at full size, not halved
+        H = h // (1 if h <= 800 else div) + 2 * (PAD + BEZEL)
         if mon:
             H = min(H, int(mon.get_geometry().height * 0.75))
         bw = max(bar.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 1)
@@ -368,6 +381,16 @@ def on_activate(app):
     drag.connect("drag-update", update)
     drag.connect("drag-end", end)
     pic.add_controller(drag)
+
+    # Platforms 1: the mouse wheel turns an Apple Watch's Digital Crown (host/simhid "crown"; as Apple's Simulator does)
+    if device_model().startswith("Watch"):
+        wheel = Gtk.EventControllerScroll.new(Gtk.EventControllerScrollFlags.VERTICAL)
+
+        def turn(c, dx, dy):
+            send("crown %.2f y" % (dy * float(os.environ.get("X86SIM_CROWN_STEP", "8"))))
+            return True
+        wheel.connect("scroll", turn)
+        pic.add_controller(wheel)
 
     keys = Gtk.EventControllerKey()
 
