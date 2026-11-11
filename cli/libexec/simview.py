@@ -173,7 +173,7 @@ def on_activate(app):
     pic = Gtk.Picture()
     pic.set_content_fit(Gtk.ContentFit.FILL)
     dw, dh = state["size"]
-    pic.set_size_request(dw // div, dh // div)
+    pic.set_size_request(dw // 16, dh // 16)   # a floor only: the window's size comes from size_window
     pic.set_can_shrink(True)
     # The screen and, to its right, the launcher's tools (tools/launcher/gui/src/phone.rs screen_toolbar, theme.rs):
     # the same panel, buttons, icons (Phosphor) and colours, the bar 12 px from the screen at its top, the two centred
@@ -195,7 +195,7 @@ def on_activate(app):
     css.load_from_string(rule) if hasattr(css, "load_from_string") else css.load_from_data(rule.encode())
     Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
     win.add_css_class("x86view")
-    GAP, PAD, BEZEL = 12, 12, 10
+    GAP, PAD, BEZEL = 12, 0, 10   # PAD: the stage's margin (none: the window is the phone and its bar)
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=GAP)
     pic.set_hexpand(True)
     pic.set_vexpand(True)
@@ -275,8 +275,41 @@ def on_activate(app):
     tool("\ue2ce", "Click the screen to tap, drag to swipe.\nDrag in from an edge for system gestures (Home, Control "
          "Center, back).\nCtrl + drag to pinch, Shift + drag to scroll with two fingers.\nF1 Home · F2 Lock · F3/F4 volume",
          lambda: None, live=False)
-    TOOLS_W = 2 * BEZEL + GAP + 46 + 2 * PAD   # the bezel, the gap, the bar (the launcher's TOOLBAR_W), the margins
-    win.set_default_size(dw // div + TOOLS_W, dh // div + 2 * (PAD + BEZEL))
+    def window_size():
+        """The phone at half its pixels with its bezel, the gap and the bar, no taller than 75% of the screen the window
+        is on (else the first monitor), the width following the phone's shape: no empty side."""
+        w, h = state["size"]
+        disp = Gdk.Display.get_default()
+        surf = win.get_surface()
+        mon = disp.get_monitor_at_surface(surf) if surf else None
+        mons = disp.get_monitors()
+        mon = mon or (mons.get_item(0) if mons.get_n_items() else None)
+        H = h // div + 2 * (PAD + BEZEL)
+        if mon:
+            H = min(H, int(mon.get_geometry().height * 0.75))
+        bw = max(bar.measure(Gtk.Orientation.HORIZONTAL, -1)[1], 1)
+        W = round((H - 2 * (PAD + BEZEL)) * w / h) + 2 * (PAD + BEZEL) + GAP + bw
+        return W, H
+
+    def size_window(*_):
+        W, H = window_size()
+        win.set_default_size(W, H)
+        # Hyprland (Omarchy) opens a floating window at its own size (1100x760, or the app's remembered one) and
+        # ignores the client's: ask it for this size, centred, once the window is up
+        if os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+            import subprocess
+            sel = "pid:%d" % os.getpid()
+
+            def ask():
+                for d in ("hl.dsp.window.resize({ x = %d, y = %d, relative = false, window = '%s' })" % (W, H, sel),
+                          "hl.dsp.window.center({ window = '%s' })" % sel):
+                    subprocess.run(["hyprctl", "dispatch", d], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return False
+            GLib.timeout_add(150, ask)
+
+    win.connect("map", size_window)
+    W0, H0 = window_size()
+    win.set_default_size(W0, H0)
 
     def screenshot():
         tex = state.get("tex")
@@ -364,8 +397,8 @@ def on_activate(app):
             # Speed 22: another phone model booted: size the window to its screen
             print("simview: screen %dx%d" % (w, h), flush=True)
             state["size"] = (w, h)
-            pic.set_size_request(w // div, h // div)
-            win.set_default_size(w // div + TOOLS_W, h // div + 2 * (PAD + BEZEL))
+            pic.set_size_request(w // 16, h // 16)
+            size_window()
         state["size"] = (w, h)
         now = time.monotonic()
         state["frame_at"] = now
