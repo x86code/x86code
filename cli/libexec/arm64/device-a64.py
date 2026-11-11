@@ -32,6 +32,7 @@ def models():
 
 
 DEFAULT_RT = "ios-27.2-24B8117-arm64"
+MAX_SLUG = 24  # device-a64-<slug>: see create
 
 
 def runtimes():
@@ -115,8 +116,15 @@ def cmd_create(args):
             sys.exit(f"device create: --ios one of: {', '.join(r[0] for r in fits)}")
         rt = ([r for r in hit if r in own] or hit)[0][2]
     name = name or model
-    slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    # the folder name is capped (the name itself is kept whole in <device>/name): every path in the phone grows with
+    # it, and Unix socket paths are short (simhid's socket; host/simhid also handles a path that is still too long)
+    full = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+    slug = full[:MAX_SLUG].strip("-")
     dev = os.path.join(VAR, "device-a64-" + slug)
+    n = 2
+    while slug != full and os.path.exists(dev):  # two long names that start alike
+        dev = os.path.join(VAR, "device-a64-%s-%d" % (full[:MAX_SLUG - 3].strip("-"), n))
+        n += 1
     if os.path.exists(dev):
         sys.exit(f"device create: {dev} exists")
     os.makedirs(dev)

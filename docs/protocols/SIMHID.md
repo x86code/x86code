@@ -21,7 +21,9 @@ no-op under the A64 JIT).
 
 ```
 Socket: $SIMHID_SOCKET (default <SIMULATOR_SHARED_RESOURCES_DIRECTORY>/simhid.sock), stream, any number of
-clients, one text command per line:
+clients, one text command per line. A path too long for sun_path (104 bytes, Darling's /Volumes/SystemRoot included)
+is a symlink to /run/user/<uid>/x86sim-simhid-<SIMULATOR_UDID>.sock (next to the frame ring); clients resolve it
+before connecting (Linux's own limit is 108):
   touch down|move|up <x> <y>     x, y normalized to the display (0..1, origin top left)
   touch2 down|move|up <x1> <y1> <x2> <y2>   two fingers (pinch, two-finger pan): one hand event with two finger
                                  children, finger indexes 1 and 2 with their own identities

@@ -43,7 +43,9 @@ impl Hid {
         }
         for _ in 0..2 {
             if self.sock.is_none() {
-                match UnixStream::connect(&self.path) {
+                // a device path too long for sun_path is a symlink to a short socket (host/simhid listen_thread)
+                let path = std::fs::canonicalize(&self.path).unwrap_or_else(|_| self.path.clone());
+                match UnixStream::connect(&path) {
                     Ok(mut s) => {
                         let _ = s.set_write_timeout(Some(Duration::from_millis(500)));
                         // a human types with pauses: keep simhid's on-demand keyboard attached for 5 min after this
@@ -151,5 +153,25 @@ mod tests {
         assert_eq!(unrotate_edge("bottom", 270), "right");
         assert_eq!(unrotate_edge("left", 270), "bottom");
         assert_eq!(unrotate_edge("bottom", 0), "bottom");
+    }
+
+    #[test]
+    fn long_socket_path_is_followed() {
+        // simhid links a device path too long for sun_path to a short socket: connect through the link
+        use std::io::BufRead;
+        let t = std::env::temp_dir().join(format!("x86sim-hid-{}", std::process::id()));
+        let dir = t.join("d".repeat(60)).join("e".repeat(60)).join("data");
+        std::fs::create_dir_all(&dir).unwrap();
+        let short = t.join("s.sock");
+        let link = dir.join("simhid.sock");
+        assert!(link.as_os_str().len() > 108);
+        let l = std::os::unix::net::UnixListener::bind(&short).unwrap();
+        std::os::unix::fs::symlink(&short, &link).unwrap();
+        Hid::new(&link).send("touch down 0.5 0.5");
+        let (c, _) = l.accept().unwrap();
+        let lines: Vec<String> = std::io::BufReader::new(c).lines().take(2).map(|l| l.unwrap()).collect();
+        assert!(lines[0].starts_with("kbidle "));
+        assert_eq!(lines[1], "touch down 0.5 0.5");
+        std::fs::remove_dir_all(&t).unwrap();
     }
 }

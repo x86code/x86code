@@ -121,7 +121,7 @@ def send(line):
             if state["sock"] is None:
                 s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
                 s.settimeout(0.5)
-                s.connect(current_sock())
+                s.connect(os.path.realpath(current_sock()))  # long paths: a symlink to a short socket
                 # keep simhid's on-demand keyboard attached 5 min after our last key (its default is 30 s, then
                 # the next key pays a re-attach + 1.5 s settle); see host/simhid/simhid.m kbidle
                 s.sendall(("kbidle %s\n" % os.environ.get("X86SIM_VIEWER_KB_IDLE_S", "300")).encode())

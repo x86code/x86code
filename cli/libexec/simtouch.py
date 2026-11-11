@@ -60,7 +60,7 @@ KEYS.update({" ": (0x2c, False), "\n": (0x28, False), "-": (0x2d, False), "=": (
 
 def connect():
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(SOCK)
+    s.connect(os.path.realpath(SOCK))  # a long device path is a symlink to a short socket (host/simhid listen_thread)
     return s
 
 

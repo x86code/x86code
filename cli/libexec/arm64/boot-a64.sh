@@ -450,6 +450,8 @@ if [ "${A64_STOP_ONLY:-0}" = 1 ]; then
 	# for an iPhone 17, 140 MB for the Duo's two screens) until its next boot replaced them. The next boot makes new ones.
 	R=$(sed -n 's#^SIMFB_RING=/Volumes/SystemRoot##p' "$D/sim.env" 2>/dev/null)
 	[ -n "$R" ] && rm -f "$R" "${R%.ring}"-[0-9].ring
+	# a device path too long for a Unix socket: simhid's socket is in /run/user too, data/simhid.sock links to it
+	[ -L "$D/data/simhid.sock" ] && rm -f "$(readlink "$D/data/simhid.sock")" "$D/data/simhid.sock"
 	exit 0
 fi
 # the marks of the last boot (Darling pids are reused)

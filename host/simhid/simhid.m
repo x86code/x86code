@@ -11,7 +11,7 @@
 // fed by a Unix socket (simview / cli/libexec/simtouch.py on Linux) instead of Indigo messages.
 //
 // Socket: $SIMHID_SOCKET (default <SIMULATOR_SHARED_RESOURCES_DIRECTORY>/simhid.sock), stream, any number of
-// clients, one text command per line:
+// clients, one text command per line (a path too long for sun_path: a symlink to a short one, see listen_thread):
 //   touch down|move|up <x> <y> [edge]   x, y normalized to the display (0..1, origin top left); edge (on down, kept
 //                                  for the whole touch): none|top|left|bottom|right, a touch that begins at that screen
 //                                  edge (system gestures: home indicator, Control/Notification Center)
@@ -563,21 +563,59 @@ static void* client_thread(void* arg) {
 	return NULL;
 }
 
+// A socket path that does not fit sockaddr_un.sun_path (104 bytes on Darwin; the Linux path plus Darling's
+// /Volumes/SystemRoot, e.g. a long home or device name) used to be cut short by strlcpy: unlink removed the real path,
+// bind made a truncated sibling, and the next boot failed with EADDRINUSE. Such a socket now lives next to the phone's
+// frame ring (SIMFB_RING's directory, /run/user/<uid>), named after the phone, and the expected path becomes a symlink
+// to its Linux path: the clients (simview, simtouch, the launcher) are on Linux, nothing in the guest connects.
+// Reported with a fix by Prathamesh913 (x86sim/x86sim#1).
+static const char kSystemRoot[] = "/Volumes/SystemRoot";
+
+static bool short_socket(const char* path, char* out, size_t n) {
+	char dir[256];
+	const char* ring = getenv("SIMFB_RING");
+	const char* slash = ring ? strrchr(ring, '/') : NULL;
+	if (slash && strncmp(ring, kSystemRoot, sizeof(kSystemRoot) - 1) == 0)
+		snprintf(dir, sizeof(dir), "%.*s", (int)(slash - ring), ring);
+	else
+		snprintf(dir, sizeof(dir), "%s/run/user/%u", kSystemRoot, (unsigned)getuid());
+	const char* udid = getenv("SIMULATOR_UDID");
+	uint64_t h = 1469598103934665603ull;  // FNV-1a of the path, for a phone without a UDID
+	for (const char* p = path; *p; p++) h = (h ^ (uint8_t)*p) * 1099511628211ull;
+	int w = udid && *udid ? snprintf(out, n, "%s/x86sim-simhid-%s.sock", dir, udid)
+	                      : snprintf(out, n, "%s/x86sim-simhid-%016llx.sock", dir, (unsigned long long)h);
+	return w > 0 && (size_t)w < n;
+}
+
 static void* listen_thread(void* arg) {
-	char path[256];
+	char path[256], bound[256];
+	struct sockaddr_un a = { 0 };
 	const char* env = getenv("SIMHID_SOCKET");
 	const char* dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY") ?: getenv("HOME") ?: "/tmp";
 	if (env) snprintf(path, sizeof(path), "%s", env); else snprintf(path, sizeof(path), "%s/simhid.sock", dir);
-	int s = socket(AF_UNIX, SOCK_STREAM, 0);
-	struct sockaddr_un a = { 0 };
-	a.sun_family = AF_UNIX;
-	strlcpy(a.sun_path, path, sizeof(a.sun_path));
-	unlink(path);
-	if (bind(s, (struct sockaddr*)&a, sizeof(a)) != 0 || listen(s, 8) != 0) {
-		slog("cannot listen on %s: errno %d", path, errno);
+	bool linked = strlen(path) >= sizeof(a.sun_path);
+	if (linked && !short_socket(path, bound, sizeof(a.sun_path))) {
+		slog("cannot listen on %s: path too long (%zu bytes) and no short path fits", path, strlen(path));
 		return NULL;
 	}
-	slog("listening on %s", path);
+	if (!linked) snprintf(bound, sizeof(bound), "%s", path);
+	int s = socket(AF_UNIX, SOCK_STREAM, 0);
+	a.sun_family = AF_UNIX;
+	strlcpy(a.sun_path, bound, sizeof(a.sun_path));
+	unlink(bound);
+	if (bind(s, (struct sockaddr*)&a, sizeof(a)) != 0 || listen(s, 8) != 0) {
+		slog("cannot listen on %s: errno %d", bound, errno);
+		return NULL;
+	}
+	if (linked) {
+		// the link names the Linux path; the guest's view of it (/Volumes/SystemRoot/...) means nothing to the clients
+		const char* target = strncmp(bound, kSystemRoot, sizeof(kSystemRoot) - 1) == 0 ? bound + sizeof(kSystemRoot) - 1 : bound;
+		unlink(path);
+		if (symlink(target, path) != 0) slog("cannot link %s -> %s: errno %d", path, target, errno);
+		slog("listening on %s (%s is too long for sun_path)", target, path);
+	} else {
+		slog("listening on %s", path);
+	}
 	for (;;) {
 		// x86Sim: Darling's accept() crashes with a NULL address (it converts the sockaddr back unconditionally)
 		struct sockaddr_un peer; socklen_t plen = sizeof(peer);
