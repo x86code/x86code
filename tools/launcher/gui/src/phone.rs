@@ -761,7 +761,7 @@ impl App {
         ui.spacing_mut().item_spacing.y = S2;
         ui.add_space(S3);
         ui.horizontal(|ui| {
-            if ui.add(Btn::secondary("Own window").icon(icon::APP_WINDOW).small()).on_hover_text("This phone's screen in a separate window, with its logs (simview)").clicked() {
+            if ui.add(Btn::secondary("Own window").icon(icon::APP_WINDOW).small()).on_hover_text("This phone's screen in a separate window, with its buttons beside it (simview)").clicked() {
                 match x86sim_core::sim::show_phone(inst) {
                     Ok(()) => self.say(format!("Opened {} in its own window", inst.name)),
                     Err(e) => self.say(format!("Couldn't open the window: {e:#}")),

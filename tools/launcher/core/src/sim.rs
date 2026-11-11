@@ -231,7 +231,6 @@ pub fn show_phone(inst: &crate::instance::Instance) -> Result<()> {
     cmd.args(["-E", "SIMVIEW_FOLLOW=0"])
         .args(["-E", &format!("SIMFB_RING_LINUX={}", inst.ring.display())])
         .args(["-E", &format!("SIMHID_SOCKET={}", inst.sock.display())])
-        .args(["-E", &format!("SIMVIEW_LOGS={}", inst.log_dir.display())])
         .args(["-E", &format!("SIMULATOR_MAINSCREEN_WIDTH={}", inst.screen.0)])
         .args(["-E", &format!("SIMULATOR_MAINSCREEN_HEIGHT={}", inst.screen.1)])
         .args(["-p", &format!("WorkingDirectory={}", repo_root().display())])

@@ -9,8 +9,8 @@ Mouse: click/drag = touch; Ctrl+drag = two-finger pinch around the window centre
 centre); Shift+drag = two-finger pan (fingers 100 px apart at device scale, moving together). Keyboard: typed keys go
 to the simulator's hardware keyboard (host/simhid). F1 or Ctrl+H = home button, F2 = lock button, F3/F4 = volume
 up/down. Input goes through <device data>/simhid.sock (backboardd's SimulatorHID stand-in).
-Console pane (right; SIMVIEW_CONSOLE=0 hides it): last-frame age (stall check), sim up/down + CPU, and the sim's logs, newest line at the top,
-followed once a second. Logs: SIMVIEW_LOGS (colon-separated dirs), default the a64 and x86 device log dirs."""
+Right of the screen, a column of the launcher's tools: Home, Lock (side button), volume, Siri, Save Screenshot (to
+Pictures), gesture help. The phone's logs are in the launcher (Logs)."""
 import glob, os, threading, socket, struct, sys, time
 import gi
 # x86Sim: GTK's GPU renderers (vulkan, the default, and gl) upload the whole frame texture for every
@@ -39,6 +39,16 @@ def booted_device():
                                  "var/run-a64/device")).read().strip() or None
     except OSError:
         return None
+
+
+def phone_name():
+    """The phone's name (<device>/name; the device is the one whose data/ holds the input socket)."""
+    for d in (os.path.dirname(os.path.dirname(os.path.abspath(sockpath))), booted_device()):
+        try:
+            return open(os.path.join(d, "name")).read().strip() or "x86Sim"
+        except (OSError, TypeError):
+            pass
+    return "x86Sim"
 
 
 def current_sock():
@@ -165,93 +175,72 @@ def on_activate(app):
     dw, dh = state["size"]
     pic.set_size_request(dw // div, dh // div)
     pic.set_can_shrink(True)
-    console = os.environ.get("SIMVIEW_CONSOLE", "1") != "0"
-    if console:
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        pic.set_hexpand(True)
-        box.append(pic)
-        side = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        side.set_size_request(560, -1)
-        status = Gtk.Label(xalign=0)
-        status.set_markup("<tt>waiting for frames</tt>")
-        side.append(status)
-        tv = Gtk.TextView(editable=False, cursor_visible=False, monospace=True, wrap_mode=Gtk.WrapMode.CHAR)
-        sw = Gtk.ScrolledWindow(vexpand=True)
-        sw.set_child(tv)
-        side.append(sw)
-        box.append(side)
-        win.set_child(box)
-        win.set_default_size(dw // div + 560, dh // div)
-        buf = tv.get_buffer()
-        root = os.path.dirname(here)
-        dirs = os.environ.get("SIMVIEW_LOGS") or ":".join([
-            os.path.join(booted_device() or os.path.join(os.path.dirname(root), "var/device-a64"), "data/var/log"),
-            os.path.join(os.environ.get("X86SIM_SCRATCH") or os.path.expanduser("~/scratch/x86sim"),
-                         "a64prefix/private/var/tmp/x86sim-a64"),
-            os.path.join(x86config.data(), "var/log")])
-        offs = {}
+    # the launcher's tools, floating in a column right of the screen (tools/launcher/gui/src/phone.rs screen_toolbar)
+    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    for m in ("start", "end", "top", "bottom"):
+        getattr(box, "set_margin_" + m)(10)
+    # the phone keeps its shape in any window size (a tiling window manager picks the size), against the tools;
+    # touches are normalized to the picture, which the frame sizes to the screen's aspect
+    frame = Gtk.AspectFrame(ratio=dw / dh, obey_child=False, xalign=1.0, yalign=0.5, hexpand=True, vexpand=True)
+    frame.set_child(pic)
+    box.append(frame)
+    bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, valign=Gtk.Align.CENTER)
+    bar.add_css_class("toolbar")
+    bar.add_css_class("osd")
+    css = Gtk.CssProvider()
+    rule = ".x86tools { border-radius: 10px; padding: 4px; }"
+    css.load_from_string(rule) if hasattr(css, "load_from_string") else css.load_from_data(rule.encode())
+    Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    bar.add_css_class("x86tools")
 
-        def poll():
-            now = time.monotonic()
-            last = state.get("frame_at")
-            age = "no frame yet" if last is None else "%.0f s ago" % (now - last)
-            if state.get("frame_t"):   # the frame's own publish time (simfb, CLOCK_REALTIME): its real age
-                age += ", frame is %.0f s old" % (time.time() - state["frame_t"])
-            if state.get("noframe") and now - state["noframe"] > 3:
-                age += ", ring seq %d but no valid frame" % ring.seq()
-            stalled = last is not None and now - last > 10
-            # the stack's systemd scope (cli/libexec/limited.sh): gone = sim down; cpu.stat delta = how busy it is
-            scopes = glob.glob("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service/app.slice/x86sim-*.scope"
-                               % (os.getuid(), os.getuid()))
-            if not scopes:
-                age += ", sim not running (frame is stale)"
-                stalled = False
-            else:
-                try:
-                    use = int(open(scopes[0] + "/cpu.stat").read().split()[1])
-                    prev = state.get("cpu")
-                    state["cpu"] = (now, use)
-                    if prev:
-                        age += ", sim CPU %d%%" % (100 * (use - prev[1]) / 1e6 / max(now - prev[0], 0.1))
-                except (OSError, ValueError, IndexError):
-                    pass
-            status.set_markup("<tt>frame %s, last %s%s</tt>" % (state["seq"], GLib.markup_escape_text(age),
-                              "  <span foreground='red'>STALLED?</span>" if stalled else ""))
-            new = []
-            for d in dirs.split(":"):
-                try:
-                    names = os.listdir(d)
-                except OSError:
-                    continue
-                for n in names:
-                    if not n.endswith(".log"):
-                        continue
-                    f = os.path.join(d, n)
-                    try:
-                        size = os.path.getsize(f)
-                    except OSError:
-                        continue
-                    o = offs.get(f)
-                    if o is None or size < o:   # first sight: only the tail; truncated: from the start
-                        o = max(0, size - 2048) if o is None else 0
-                    if size > o:
-                        with open(f, "rb") as fh:
-                            fh.seek(o)
-                            chunk = fh.read(min(size - o, 65536)).decode("utf-8", "replace")
-                        tag = n[:-4].replace("com.apple.", "")
-                        new += ["[%s] %s" % (tag, l) for l in chunk.splitlines() if l.strip()]
-                    offs[f] = size
-            if new:
-                buf.insert(buf.get_start_iter(), "\n".join(reversed(new[-300:])) + "\n")   # newest first, at the top
-                if buf.get_line_count() > 2000:
-                    buf.delete(buf.get_iter_at_line(2000)[1], buf.get_end_iter())
-                sw.get_vadjustment().set_value(0)
-            return GLib.SOURCE_CONTINUE
+    def tool(icon, tip, act):
+        b = Gtk.Button(icon_name=icon, tooltip_text=tip, focus_on_click=False)
+        b.add_css_class("flat")
+        b.connect("clicked", lambda _b: act())
+        bar.append(b)
 
-        GLib.timeout_add_seconds(1, poll)
-    else:
-        win.set_child(pic)
-        win.set_default_size(dw // div, dh // div)
+    def press(name):
+        send("button %s down" % name)
+        GLib.timeout_add(80, lambda: send("button %s up" % name) and False)
+
+    def siri():   # the side button held 2.5 s, as the launcher does
+        send("button lock down")
+        GLib.timeout_add(2500, lambda: send("button lock up") and False)
+
+    def sep():
+        bar.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL, margin_top=4, margin_bottom=4))
+
+    tool("go-home-symbolic", "Home (F1)", lambda: press("home"))
+    tool("system-lock-screen-symbolic", "Lock: the side button (F2)", lambda: press("lock"))
+    tool("audio-volume-high-symbolic", "Volume up (F3)", lambda: press("volup"))
+    tool("audio-volume-low-symbolic", "Volume down (F4)", lambda: press("voldown"))
+    tool("audio-input-microphone-symbolic", "Siri: holds the side button", siri)
+    sep()
+    tool("camera-photo-symbolic", "Save a screenshot to Pictures", lambda: screenshot())
+    sep()
+    help_ = Gtk.Image(icon_name="help-about-symbolic", margin_top=6, margin_bottom=6,
+                      tooltip_text="Click or drag: touch. Ctrl+drag: pinch. Shift+drag: two-finger pan.\n"
+                                   "Typing goes to the phone's keyboard. F1 home, F2 lock, F3/F4 volume.")
+    bar.append(help_)
+    box.append(bar)
+    win.set_child(box)
+    TOOLS_W = 76   # the column and the margins around it
+    win.set_default_size(dw // div + TOOLS_W, dh // div + 20)
+
+    def screenshot():
+        tex = state.get("tex")
+        if tex is None or state.get("blank"):
+            win.set_title("x86Sim iOS Simulator — no picture to save")
+            return
+        try:
+            pics = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_PICTURES) or os.path.expanduser("~/Pictures")
+            os.makedirs(pics, exist_ok=True)
+            f = os.path.join(pics, "%s %s.png" % (phone_name().replace("/", "-"), time.strftime("%Y-%m-%d at %H.%M.%S")))
+            tex.save_to_png(f)
+            print("simview: screenshot %s" % f, flush=True)
+            state["saved"] = (time.monotonic(), os.path.basename(f))
+        except (OSError, GLib.Error) as e:
+            print("simview: screenshot failed: %s" % e, flush=True)
 
     def norm(x, y):
         w, h = pic.get_width() or 1, pic.get_height() or 1
@@ -318,17 +307,21 @@ def on_activate(app):
     def show(w, h, stride, seq, px):
         tex = Gdk.MemoryTexture.new(w, h, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED, GLib.Bytes.new(px), stride)
         pic.set_paintable(tex)
+        state["tex"] = tex
         if state["size"] != (w, h):
             # Speed 22: another phone model booted: size the window to its screen
             print("simview: screen %dx%d" % (w, h), flush=True)
             state["size"] = (w, h)
             pic.set_size_request(w // div, h // div)
-            win.set_default_size(w // div + (560 if console else 0), h // div)
+            frame.set_ratio(w / h)
+            win.set_default_size(w // div + TOOLS_W, h // div + 20)
         state["size"] = (w, h)
         now = time.monotonic()
         state["frame_at"] = now
         f = state["fps"] = [t for t in state["fps"] if t > now - 1.0] + [now]
-        win.set_title("x86Sim iOS Simulator — frame %d, %d fps" % (seq, len(f)))
+        saved = state.get("saved")
+        note = ", saved %s" % saved[1] if saved and now - saved[0] < 4 else ""
+        win.set_title("%s — %d fps%s" % (phone_name(), len(f), note))
         state["shown"] = state.get("shown", 0) + 1
         if now - state.setdefault("logged", now) >= 5:   # the draw rate, every 5 s while frames come (stdout)
             print("simview: %d of %d frames drawn in %.1f s (peak 1 s: %d fps)" % (state["shown"],
@@ -348,7 +341,7 @@ def on_activate(app):
         pic.set_paintable(Gdk.MemoryTexture.new(w, h, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED,
                                                 GLib.Bytes.new(bytes(w * h * 4)), w * 4))
         state["frame_t"] = None
-        win.set_title("x86Sim iOS Simulator — %s" % why)
+        win.set_title("%s — %s" % (phone_name(), why))
 
     def watch():
         """Once a second: follow the booted phone's ring, and drop the picture when the sim stops or reboots."""

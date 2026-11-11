@@ -852,7 +852,7 @@ impl App {
         list_card(ui, |ui| {
             if running.is_empty() {
                 egui::Frame::new().inner_margin(16).show(ui, |ui| {
-                    ui.label(sub("Start a phone to open its screen in a window of its own (with its logs)."));
+                    ui.label(sub("Start a phone to open its screen in a window of its own."));
                 });
             }
             for (k, inst) in running.iter().enumerate() {
