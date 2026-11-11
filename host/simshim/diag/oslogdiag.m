@@ -32,7 +32,7 @@ static int on(void)
 		const char* e = getenv("X86SIM_OSLOG");
 		static char fbuf[1024];
 #ifdef SIMSHIM_OSLOG
-		// x86Sim: built into libsimshim (build/mac-build-simshim.sh) for `x86sim launch --oslog` / `x86sim log
+		// x86Sim: built into libsimshim (build/mac-build-arm64-shims.sh simshim) for `x86sim launch --oslog` / `x86sim log
 		// stream --app`: only the environment (X86SIM_OSLOG, set for one app through FrontBoard's debug options;
 		// DYLD_INSERT_LIBRARIES given that way is replaced by launchd's), log directory X86SIM_OSLOG_DIR
 		const char* dir = getenv("X86SIM_OSLOG_DIR");

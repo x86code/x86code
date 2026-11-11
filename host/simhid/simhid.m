@@ -1,4 +1,4 @@
-// x86Sim: stand-in for CoreSimulator's SimulatorHID.framework (x86_64, iOS simulator), loaded by backboardd.
+// x86Sim: stand-in for CoreSimulator's SimulatorHID.framework (arm64 simulator builds), loaded by backboardd.
 //
 // How the runtime uses it (SimulatorClient.framework, IndigoHIDSystemSpawnLoopback(IOHIDEventSystemRef)):
 //   path = getenv("SIMULATOR_HID_SYSTEM_MANAGER"); bundle = [NSBundle bundleWithPath:path];
@@ -11,25 +11,8 @@
 // fed by a Unix socket (simview / cli/libexec/simtouch.py on Linux) instead of Indigo messages.
 //
 // Socket: $SIMHID_SOCKET (default <SIMULATOR_SHARED_RESOURCES_DIRECTORY>/simhid.sock), stream, any number of
-// clients, one text command per line (a path too long for sun_path: a symlink to a short one, see listen_thread):
-//   touch down|move|up <x> <y> [edge]   x, y normalized to the display (0..1, origin top left); edge (on down, kept
-//                                  for the whole touch): none|top|left|bottom|right, a touch that begins at that screen
-//                                  edge (system gestures: home indicator, Control/Notification Center)
-//   touch2 down|move|up <x1> <y1> <x2> <y2>   two fingers (pinch, two-finger pan): one hand event with two finger
-//                                  children, finger indexes 1 and 2 with their own identities
-//   key down|up <usage>            keyboard usage (page 7), e.g. 4 = 'a', 0x28 = return
-//   button home|lock|volup|voldown down|up
-//   crown <delta> [x|y|z]          (Platforms 1, Apple Watch) Digital Crown rotation: a scroll event of <delta> on that
-//                                  axis (default y) through the crown service
-//   @<screenID> <touch command>    (Models 2) the touch on another integrated display (iPhone Duo: @3 = the inner
-//                                  "LCD-1"; x, y normalized to that display's framebuffer as simfb publishes it)
-//   hinge <degrees>                (Models 2, devices with two integrated displays) the hinge angle: 0 folded (closed),
-//   fold | unfold                  180 flat (open); fold / unfold = hinge 0 / 180. CoreMotion reads it from the hinge
-//                                  service (Apple vendor motion page 0xff0c, usage 0x21, as CoreMotion's CLAngleNotifier matches it: kIOHIDEventTypeHingeAngle events, copied
-//                                  and dispatched) and SpringBoard's device pose picks the outer or inner display.
-//   kbidle <seconds>               (arm64) this client's keyboard idle detach: after its last key the on-demand
-//                                  keyboard stays attached that long (default SIMHID_KB_IDLE_S). Interactive viewers
-//                                  send a long one so a human's typing pauses do not pay the re-attach settle.
+// clients, one text command per line (a path too long for sun_path: a symlink to a short one, see listen_thread).
+// The commands are in docs/protocols/SIMHID.md; handle_line parses them.
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
@@ -127,11 +110,10 @@ static void slog(const char* fmt, ...) {
 		if (g_logf) setvbuf(g_logf, NULL, _IOLBF, 0);
 	}
 	if (g_logf) {
-#if __arm64__
 		// wall-clock ns (same clock as the frame ring's slot t_ns) so touches line up with frames (simrecord.py)
-		{ struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); fprintf(g_logf, "%llu ", (unsigned long long)ts.tv_sec * 1000000000ull + ts.tv_nsec); }
-#endif
-		fprintf(g_logf, "simhid: ");
+		struct timespec ts;
+		clock_gettime(CLOCK_REALTIME, &ts);
+		fprintf(g_logf, "%llu simhid: ", (unsigned long long)ts.tv_sec * 1000000000ull + ts.tv_nsec);
 		va_list ap2; va_start(ap2, fmt);
 		vfprintf(g_logf, fmt, ap2);
 		va_end(ap2);
@@ -153,10 +135,10 @@ static VService touch_svc, buttons_svc, keyboard_svc;
 // Models 2: a device with two integrated displays (capabilities) gets a touchscreen per extra display and a hinge
 static VService inner_touch_svc, hinge_svc;
 static uint32_t inner_display_id;
-static VService* cur_touch = &touch_svc;
+static VService* cur_touch = &touch_svc;   // the touchscreen of the command being handled (@<screenID> prefix)
 // Platforms 1: an Apple Watch's Digital Crown, as Apple's watchOS SimulatorHID registers it
 // ("com.apple.SimulatorHID.MainScreenDigitalCrownService": Apple vendor usage page 0xff0b, usage 1, built in)
-static VService crown_svc;   // the touchscreen of the command being handled (@<screenID> prefix)
+static VService crown_svc;
 static double hinge_deg, hinge_vel;
 static uint16_t hinge_phase = 2;
 // Models 2: CoreMotion's device state (the magic pose SpringBoard's SBFDevicePoseProvider combines with the angle:
@@ -277,7 +259,6 @@ static void add_service(IOHIDEventSystemRef_ sys, VService* s) {
 
 static uint64_t now_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1000000000ull + ts.tv_nsec; }
 
-#if __arm64__
 // Speed 34: detach the keyboard service again after SIMHID_KB_IDLE_S (default 30; 0 = never) without a key, as a
 // hardware keyboard that goes away. While one is attached UIKit runs in hardware-keyboard mode, and SpringBoard's
 // focus system then walks the focus environment on every app transition: +80-100 ms of SpringBoard CPU per warm
@@ -289,7 +270,10 @@ static uint64_t kb_last_ns;
 static uint64_t kb_idle_ns;  // idle detach of the client that sent the last key (kbidle, else SIMHID_KB_IDLE_S)
 static uint64_t kb_default_idle_ns;
 static int kb_down;  // keys held (no detach while one is down)
-static pthread_mutex_t cmd_mu;
+// x86Sim arm64: handle_line runs under cmd_mu (one command at a time, from every client's thread) instead of
+// dispatch_sync onto a queue: dispatch_sync from the socket pthread was observed to consume socket bytes without ever
+// running the block under the A64 JIT (no touch logs, no UI). Mutex + direct call stays on this GuestThread.
+static pthread_mutex_t cmd_mu = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t kb_cv = PTHREAD_COND_INITIALIZER;
 // Sleeps on kb_cv while no keyboard is attached (or it never detaches) instead of polling every 2 s for the whole
 // boot: a thread that woke up while backboardd was being torn down at phone shutdown called through a stub that no
@@ -299,8 +283,8 @@ static pthread_cond_t kb_cv = PTHREAD_COND_INITIALIZER;
 static void* kb_idle_thread(void* arg) {
 	pthread_mutex_lock(&cmd_mu);
 	for (;;) {
-		const uint64_t idle = kb_idle_ns ? kb_idle_ns : kb_default_idle_ns;
-		if (!keyboard_svc.service || !hid_system || kb_idle_ns == ~0ull || idle == ~0ull) {
+		const uint64_t idle = kb_idle_ns ? kb_idle_ns : kb_default_idle_ns;   // ~0: never
+		if (!keyboard_svc.service || !hid_system || idle == ~0ull) {
 			pthread_cond_wait(&kb_cv, &cmd_mu);
 			continue;
 		}
@@ -322,7 +306,6 @@ static void* kb_idle_thread(void* arg) {
 	}
 	return NULL;
 }
-#endif
 
 static void dispatch_event(VService* s, IOHIDEventRef e) {
 	if (!s->service || !e) {
@@ -471,7 +454,6 @@ static void handle_line(char* line, Client* cl) {
 	}
 	unsigned usage;
 	if (sscanf(line, "key %15s %i", a, &usage) == 2) {
-#if __arm64__
 		// x86Sim arm64: the keyboard service is attached at the first key command (see initUsingHIDService).
 		// Speed 31 held this client's keys for a fixed 1.5 s after every attach (keys 300 ms after the first were
 		// lost or scrambled). Input: host keyboard latency (kblat.py) found the attach itself is ready in ~0.1 s
@@ -509,7 +491,6 @@ static void handle_line(char* line, Client* cl) {
 		kb_down += !strcmp(a, "down") ? 1 : -1;
 		if (kb_down < 0) kb_down = 0;
 		pthread_cond_signal(&kb_cv);
-#endif
 		send_key(&keyboard_svc, 7, usage, !strcmp(a, "down"));
 		return;
 	}
@@ -520,18 +501,17 @@ static void handle_line(char* line, Client* cl) {
 		return;
 	}
 	if (sscanf(line, "kbidle %d", &secs) == 1) {
-#if __arm64__
 		// <= 0: never detach after this client's keys (like SIMHID_KB_IDLE_S=0)
 		if (cl) cl->kb_idle_ns = secs > 0 ? (uint64_t)secs * 1000000000ull : ~0ull;
 		slog("client fd=%d kbidle %d", cl ? cl->fd : -1, secs);
-#endif
 		return;
 	}
 	double delta;
-	if (sscanf(line, "crown %lf %15s", &delta, a) >= 1) {
+	int nf = sscanf(line, "crown %lf %15s", &delta, a);
+	if (nf >= 1) {
 		if (!crown_svc.service) { slog("no digital crown on this device: %s", line); return; }
 		note_input();
-		const char axis = strchr(line + 6, ' ') ? a[0] : 'y';
+		const char axis = nf == 2 ? a[0] : 'y';
 		dispatch_event(&crown_svc, IOHIDEventCreateScrollEvent(kCFAllocatorDefault, mach_absolute_time(),
 			axis == 'x' ? delta : 0, axis == 'y' ? delta : 0, axis == 'z' ? delta : 0, 0));
 		slog("crown %.2f (%c)", delta, axis);
@@ -547,10 +527,11 @@ static void handle_line(char* line, Client* cl) {
 	if (sscanf(line, "button %15s %15s", a, b) == 2) {
 		bool down = !strcmp(b, "down");
 		// consumer page: 0x40 menu (home), 0x30 power (lock), 0xe9/0xea volume.
-		// Platforms 1: tvOS reads 0x40 as the Siri Remote's Back (Menu) and 0x60 as its TV button (PineBoard's home;
-		// found by trying usages, see SIMHID.md), 0xcd play / pause; holding 0x30 sleeps the TV. On a watch 0x40 is
-		// the crown's press and 0x30 the side button ("side").
-		uint32_t u = !strcmp(a, "home") || !strcmp(a, "menu") ? 0x40 : !strcmp(a, "lock") || !strcmp(a, "side") ? 0x30
+		// Platforms 1: on tvOS "menu" is the Siri Remote's Back: 0x46 (Menu Escape) goes back one level, as the
+		// keyboard's Escape does; 0x40 (Menu) closed the app from any depth. 0x60 is its TV button (PineBoard's home;
+		// found by trying usages, see SIMHID.md), 0xcd play / pause. On a watch 0x40 is the crown's press and 0x30 the
+		// side button ("side").
+		uint32_t u = !strcmp(a, "menu") ? 0x46 : !strcmp(a, "home") ? 0x40 : !strcmp(a, "lock") || !strcmp(a, "side") ? 0x30
 			: !strcmp(a, "volup") ? 0xe9 : !strcmp(a, "voldown") ? 0xea : !strcmp(a, "tv") ? 0x60
 			: !strcmp(a, "playpause") ? 0xcd : 0;
 		if (u) send_key(&buttons_svc, 0x0c, u, down);
@@ -560,10 +541,6 @@ static void handle_line(char* line, Client* cl) {
 	if (*line) slog("unknown command: %s", line);
 }
 
-// x86Sim arm64: serialize with a mutex instead of dispatch_sync. dispatch_sync from the
-// socket pthread onto cmd_q was observed to consume socket bytes without ever running the
-// block under the A64 JIT (no touch logs, no UI). Mutex + direct call stays on this GuestThread.
-static pthread_mutex_t cmd_mu = PTHREAD_MUTEX_INITIALIZER;
 static void* client_thread(void* arg) {
 	int fd = (int)(intptr_t)arg;
 	Client cl = { fd, 0, -1 };
@@ -715,7 +692,6 @@ static void* listen_thread(void* arg) {
 			write_hinge_file(hinge_deg);
 		}
 	}
-#if __arm64__
 	// x86Sim arm64: an attached keyboard service puts UIKit in hardware-keyboard mode, so a text field never shows the
 	// software keyboard. Attach it only when the host first types (like Xcode's simulator does); SIMHID_KEYBOARD=1: at start.
 	hid_system = system;
@@ -727,15 +703,10 @@ static void* listen_thread(void* arg) {
 		const int idle = is && *is ? atoi(is) : 30;
 		// the thread also runs with SIMHID_KB_IDLE_S=0 (default "never"), so a client's kbidle still applies
 		kb_default_idle_ns = idle > 0 ? (uint64_t)idle * 1000000000ull : ~0ull;
-		{
-			pthread_t kt;
-			pthread_create(&kt, NULL, kb_idle_thread, NULL);
-			pthread_detach(kt);
-		}
+		pthread_t kt;
+		pthread_create(&kt, NULL, kb_idle_thread, NULL);
+		pthread_detach(kt);
 	}
-#else
-	add_service(system, &keyboard_svc);
-#endif
 	pthread_t t;
 	pthread_create(&t, NULL, listen_thread, NULL);
 	pthread_detach(t);

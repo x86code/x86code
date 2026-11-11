@@ -18,6 +18,7 @@
 //   nothing ever ran past xpcproxy_sim. (iOS: x86Sim loads its jobs into the user domain, which ends its bootstrap mode
 //   itself; the system domain staying in bootstrap mode is WORKAROUNDS.md's "System-domain jobs" entry.)
 #include <mach/mach.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,7 +90,7 @@ static void* wait_child(void* arg)
 	pid_t pid = (pid_t)(intptr_t) arg;
 	int status = 0;
 
-	while (waitpid(pid, &status, 0) < 0)
+	while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
 		;
 	if (WIFEXITED(status))
 		fprintf(stderr, "simhost: launchd_sim exited with %d\n", WEXITSTATUS(status));
@@ -190,7 +191,9 @@ int main(int argc, char** argv)
 			mach_msg_header_t header;
 			char data[8192];
 		} msg;
-		kern_return_t kr = mach_msg(&msg.header, MACH_RCV_MSG | MACH_RCV_LARGE, 0, sizeof(msg), bootstrap,
+		// no MACH_RCV_LARGE: a message larger than the buffer is dropped (none of launchd_sim's requests is), instead
+		// of staying queued and failing every receive after it
+		kern_return_t kr = mach_msg(&msg.header, MACH_RCV_MSG, 0, sizeof(msg), bootstrap,
 			MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
 
 		if (kr != KERN_SUCCESS)

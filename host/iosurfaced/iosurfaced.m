@@ -117,7 +117,7 @@ static void surfFree(Surf* s) {
 	free(s);
 }
 
-// properties -> layout (PROTOCOL.md section 5, after IOSurfaceClientCreate_Emulated)
+// properties -> layout (docs/protocols/IOSURFACE.md section 5, after IOSurfaceClientCreate_Emulated)
 static uint32_t surfCreate(CFDictionaryRef props, xpc_object_t clientShmem, Surf** out) {
 	Surf* s = calloc(1, sizeof(Surf));
 	uint32_t W = (uint32_t)num(props, "IOSurfaceWidth", 0), H = (uint32_t)num(props, "IOSurfaceHeight", 0);

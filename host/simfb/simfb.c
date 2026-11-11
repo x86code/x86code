@@ -1,4 +1,4 @@
-// x86Sim: stand-in for CoreSimulator's SimFramebuffer.framework (x86_64, iOS simulator).
+// x86Sim: stand-in for CoreSimulator's SimFramebuffer.framework (arm64 simulator builds).
 // There is no host: one built-in display; every submitted frame is copied to
 // a shared-memory ring (see "frame output" below; cli/libexec/fbring.py) and, every 2 s, to $SIMFB_OUT (default
 // $HOME/framebuffer.bgra) as a 16-byte header {w, h, stride, seq}
@@ -90,7 +90,7 @@ static CFTypeID conn_type, display_type, swapchain_type;
 #define MAX_DISPLAYS 4
 #define PRESENT_QUEUE 2
 struct ring_hdr;
-struct waiting { SFBSwapchainRef sc; IOSurfaceRef s; uint64_t target, t0, t0ns; };
+struct waiting { SFBSwapchainRef sc; IOSurfaceRef s; uint64_t target, id, t0ns; };   // target: last command buffer to wait for
 struct disp {
 	SFBDisplayRef ref;
 	uint32_t id, w, h;
@@ -367,22 +367,20 @@ _Static_assert(__builtin_offsetof(struct ring_hdr, st_submits) == 192, "ring lay
 static uint64_t file_last_ns;
 static dispatch_source_t file_timer;
 
-// x86Sim: readers on Linux (simview, fbring.wait) sleep in FUTEX_WAIT on the low 32 bits of the header's
-// seq instead of polling; every publish wakes them. Darling processes are Linux processes and its userland makes
-// Linux syscalls directly, so this is Linux's futex(2) (shared, not FUTEX_PRIVATE: the page is a /dev/shm file
-// mapped by other processes).
-static void ring_wake(void* addr) {
-#if defined(__arm64__)
-	// x86Sim: under libarm64jit, "svc #0xfffe" is a Linux syscall (x8 = x86_64 number)
-	register long x0 __asm__("x0") = (long)addr, x1 __asm__("x1") = 1, x2 __asm__("x2") = 0x7fffffffL;
-	register long x8 __asm__("x8") = 202;
+// x86Sim: a Linux system call (Darling processes are Linux processes): under libarm64jit, "svc #0xfffe" is one, with
+// x8 = the x86_64 syscall number
+static long linux_syscall3(long n, long a, long b, long c) {
+	register long x0 __asm__("x0") = a, x1 __asm__("x1") = b, x2 __asm__("x2") = c;
+	register long x8 __asm__("x8") = n;
 	__asm__ volatile("svc #0xfffe" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
-#else
-	long r;
-	__asm__ volatile("syscall" : "=a"(r) : "a"(202L /* SYS_futex */), "D"(addr), "S"(1L /* FUTEX_WAKE */), "d"(0x7fffffffL)
-		: "rcx", "r11", "memory");
-	(void)r;
-#endif
+	return x0;
+}
+
+// x86Sim: readers on Linux (simview, fbring.wait) sleep in FUTEX_WAIT on the low 32 bits of the header's
+// seq instead of polling; every publish wakes them. This is Linux's futex(2) (shared, not FUTEX_PRIVATE: the page
+// is a /dev/shm file mapped by other processes).
+static void ring_wake(void* addr) {
+	linux_syscall3(202 /* futex */, (long)addr, 1 /* FUTEX_WAKE */, 0x7fffffffL);
 }
 static uint64_t now_ns(void) { static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb); return mach_absolute_time() * tb.numer / tb.denom; }
 static uint64_t wall_ns(void) { struct timespec ts; clock_gettime(CLOCK_REALTIME, &ts); return (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec; }
@@ -394,17 +392,7 @@ static uint64_t wall_ns(void) { struct timespec ts; clock_gettime(CLOCK_REALTIME
 // zeroed pages): idle cost one frame per display. SIMFB_RING_IDLE_MS (default 1500; 0 = never trim).
 #define RING_IDLE_MS_DEFAULT 1500
 static long ring_madvise_remove(void* addr, size_t len) {
-#if defined(__arm64__)
-	// under libarm64jit, "svc #0xfffe" is a Linux syscall (x8 = x86_64 number): madvise(addr, len, MADV_REMOVE)
-	register long x0 __asm__("x0") = (long)addr, x1 __asm__("x1") = (long)len, x2 __asm__("x2") = 9;
-	register long x8 __asm__("x8") = 28;
-	__asm__ volatile("svc #0xfffe" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
-	return x0;
-#else
-	long r;
-	__asm__ volatile("syscall" : "=a"(r) : "a"(28L), "D"(addr), "S"((long)len), "d"(9L) : "rcx", "r11", "memory");
-	return r;
-#endif
+	return linux_syscall3(28 /* madvise */, (long)addr, (long)len, 9 /* MADV_REMOVE */);
 }
 static uint64_t ring_idle_ns;
 static dispatch_source_t ring_trim_timer;
@@ -519,9 +507,8 @@ static void dump(SFBSwapchainRef sc, IOSurfaceRef s, uint64_t submit_ns) {   // 
 		atomic_store_explicit(&ring->seq, D->ring_frames, memory_order_release);
 		ring_wake((void*)&ring->seq);
 		IOSurfaceUnlock(s, kIOSurfaceLockReadOnly, NULL);
-		// the file: at most every 2 s, from the ring; the timer writes a newer last frame later
-		if (D != &disps[0]) {}
-		else if (now_ns() - file_last_ns >= 2000000000ull) file_from_ring();
+		// the file (display 1 only): at most every 2 s, from the ring; the timer writes a newer last frame later
+		if (D == &disps[0] && now_ns() - file_last_ns >= 2000000000ull) file_from_ring();
 		if (D == &disps[0] && !file_timer) {
 			file_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dump_q);
 			dispatch_source_set_timer(file_timer, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), 2 * NSEC_PER_SEC, 100 * NSEC_PER_MSEC);
@@ -558,7 +545,7 @@ static size_t gpu_noutstanding;
 // surface isn't drawn into again until two newer presents are out). The single waiting slot of before dropped every
 // present that came while the previous one still waited (GPU latency ~9 ms vs a 16 ms frame: up to 60% of the
 // presents of a home-screen swipe). Only when the queue is full is the oldest dropped ("superseded").
-static uint64_t present_ids;   // t0 identifies a waiting present for its watchdog (a counter, unique)
+static uint64_t present_ids;   // struct waiting's id: identifies a waiting present for its watchdog (a counter, unique)
 static IMP orig_commit;
 static uint64_t stat_waited, stat_immediate, stat_frames;
 
@@ -648,7 +635,7 @@ static void present_watchdog(struct disp* D, uint64_t id) {
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC), dump_q, ^{
 		pthread_mutex_lock(&gpu_lock);
 		for (size_t i = 0; i < D->npresent; i++) {
-			if (D->present[i].t0 != id) continue;
+			if (D->present[i].id != id) continue;
 			fprintf(stderr, "simfb: present waited 1 s for the GPU (%zu command buffers outstanding), copying anyway\n", gpu_noutstanding);
 			for (size_t k = 0; k <= i; k++) { D->st_watchdog++; present_fire_locked(D, 0); }
 			break;

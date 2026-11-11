@@ -6,12 +6,28 @@
 //   (the "machine" never sleeps). Interposition only reaches callers outside the dyld
 //   shared cache (plugins, daemons' own code), which is where these calls come from.
 #include <IOKit/IOKitLib.h>
-#include <mach/mach.h>
+#include <Block.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <bsm/audit.h>
 #include <dispatch/dispatch.h>
+#include <dlfcn.h>
 #include <errno.h>
+#include <execinfo.h>
+#include <fcntl.h>
+#include <mach-o/dyld.h>
+#include <mach-o/getsect.h>
+#include <mach/mach.h>
+#include <objc/message.h>
+#include <objc/runtime.h>
+#include <pthread.h>
+#include <sqlite3.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
+#include <xpc/xpc.h>
 
 #define DYLD_INTERPOSE(_replacement, _replacee) \
 	__attribute__((used)) static struct { const void* replacement; const void* replacee; } _interpose_##_replacee \
@@ -22,7 +38,6 @@ extern io_connect_t IORegisterForSystemPower(void* refcon, IONotificationPortRef
 	IOServiceInterestCallback callback, io_object_t* notifier);
 extern IOReturn IODeregisterForSystemPower(io_object_t* notifier);
 extern IOReturn IOAllowPowerChange(io_connect_t kernelPort, intptr_t notificationID);
-extern IOReturn IOCancelPowerChange(io_connect_t kernelPort, intptr_t notificationID);
 
 // x86Sim (Speed 24): the fake ports are dead names, and IOServiceClose / IOObjectRelease on them succeed here. They
 // are MIG calls to the object's port; while this process held the receive right, nothing ever replied. iOS 27.2's
@@ -46,9 +61,11 @@ static mach_port_t fake_port(void)
 }
 static int is_fake_port(mach_port_t port)
 {
+	if (port == MACH_PORT_NULL)
+		return 0;
 	int n = __atomic_load_n(&fake_nports, __ATOMIC_RELAXED);
 	for (int i = 0; i < n && i < 64; i++)
-		if (port != MACH_PORT_NULL && fake_ports[i] == port)
+		if (fake_ports[i] == port)
 			return 1;
 	return 0;
 }
@@ -89,10 +106,14 @@ DYLD_INTERPOSE(shim_IOAllowPowerChange, IOAllowPowerChange)
 // then refuses it). Route those ops through csops; the audit token names the same pid.
 // Platforms 1: the same libSystem symbol under another name (tvOS/watchOS headers mark syscall() unavailable)
 extern int x86sim_syscall(int, ...) __asm("_syscall");
+static int is_entitlements_op(unsigned int ops)
+{
+	return ops == 7 /* CS_OPS_ENTITLEMENTS_BLOB */ || ops == 16 /* CS_OPS_DER_ENTITLEMENTS_BLOB */;
+}
 extern int csops_audittoken(pid_t pid, unsigned int ops, void* useraddr, size_t usersize, audit_token_t* token);
 static int shim_csops_audittoken(pid_t pid, unsigned int ops, void* useraddr, size_t usersize, audit_token_t* token)
 {
-	if (ops == 7 /* CS_OPS_ENTITLEMENTS_BLOB */ || ops == 16 /* CS_OPS_DER_ENTITLEMENTS_BLOB */)
+	if (is_entitlements_op(ops))
 	{
 		// the raw syscall: csops() in the simulator is libsystem_sim_kernel's own version
 		int r = x86sim_syscall(169 /* SYS_csops */, pid, ops, useraddr, usersize);
@@ -108,15 +129,11 @@ static int shim_csops_audittoken(pid_t pid, unsigned int ops, void* useraddr, si
 }
 DYLD_INTERPOSE(shim_csops_audittoken, csops_audittoken)
 
-// x86Sim: the xpc_init_services() skip that was here is gone. launchd_sim's pid-domain
-// uncork reply was lost to a workqueue wakeup race in Darling's sem_down/sem_up
-// (libsystem_kernel emulation, workq_kernreturn.c), now fixed.
-
 // Same for plain csops() (Security's SecTask uses it): entitlement blobs via the syscall
 extern int csops(pid_t pid, unsigned int ops, void* useraddr, size_t usersize);
 static int shim_csops(pid_t pid, unsigned int ops, void* useraddr, size_t usersize)
 {
-	if (ops == 7 /* CS_OPS_ENTITLEMENTS_BLOB */ || ops == 16 /* CS_OPS_DER_ENTITLEMENTS_BLOB */)
+	if (is_entitlements_op(ops))
 		return x86sim_syscall(169 /* SYS_csops */, pid, ops, useraddr, usersize);
 	return csops(pid, ops, useraddr, usersize);
 }
@@ -124,12 +141,6 @@ DYLD_INTERPOSE(shim_csops, csops)
 
 // Diagnostics: print every Objective-C exception's name and reason to stderr (os_log may be
 // off), then throw it as usual
-#include <objc/runtime.h>
-#include <execinfo.h>
-#include <dlfcn.h>
-#include <string.h>
-#include <objc/message.h>
-#include <CoreFoundation/CoreFoundation.h>
 extern void objc_exception_throw(id exception) __attribute__((noreturn));
 static void shim_print_cfstring(const char* label, CFStringRef s)
 {
@@ -176,9 +187,6 @@ extern void os_state_remove_handler(os_state_handle_t handle);
 // <dir>/req runs them all (every 5 s while it exists) and writes each one's title and data (a binary plist holding a
 // description string; `strings` reads it) to <dir>/<pid>.<n>. <dir> must not be in the prefix overlay (the guest
 // caches the miss): use a guest path into the device data, e.g. /Volumes/SystemRoot<data>/tmp/x86sim-state.
-#include <Block.h>
-#include <sys/stat.h>
-#include <fcntl.h>
 struct shim_state_hints { uint32_t version; const char* requestor; uint32_t api; uint32_t reason; };
 struct shim_state_data { uint32_t type; uint32_t size; char decoder[96]; char title[64]; uint8_t data[]; };
 typedef struct shim_state_data* (^shim_state_block)(struct shim_state_hints*);
@@ -236,7 +244,6 @@ static void shim_os_state_remove_handler(os_state_handle_t handle)
 DYLD_INTERPOSE(shim_os_state_remove_handler, os_state_remove_handler)
 
 // Diagnostics: log failing sqlite3_open_v2 calls (path, result, message, errno)
-#include <sqlite3.h>
 static int shim_sqlite3_open_v2(const char* filename, sqlite3** db, int flags, const char* vfs)
 {
 	int rc = sqlite3_open_v2(filename, db, flags, vfs);
@@ -255,8 +262,6 @@ DYLD_INTERPOSE(shim_sqlite3_open_v2, sqlite3_open_v2)
 // Darling does not implement (ENOSYS), and nothing is sandboxed here anyway. Issue opaque tokens and accept any
 // token. Without them PosterBoard could not hand poster paths to its extensions ("cannot extend access ...
 // sandbox errno=78") and drew no wallpaper.
-#include <string.h>
-#include <bsm/audit.h>
 extern char* sandbox_extension_issue_file(const char*, const char*, uint32_t);
 extern char* sandbox_extension_issue_file_to_process(const char*, const char*, uint32_t, audit_token_t);
 extern char* sandbox_extension_issue_file_to_process_by_pid(const char*, const char*, uint32_t, pid_t);
@@ -311,9 +316,6 @@ DYLD_INTERPOSE(shim_sandbox_extension_release, sandbox_extension_release)
 // (only icons served synchronously from a warm cache, which go the UIImage path, had colour). Fall back to a
 // plain CALayer with the flat CGImage as contents, as SBHGetIconLayerFromIconServicesImage itself does with
 // that option.
-#include <mach-o/dyld.h>
-#include <pthread.h>
-#include <stdbool.h>
 static IMP shim_ifimage_calayer_orig;
 static id shim_ifimage_calayer(id self, SEL sel)
 {
@@ -350,10 +352,10 @@ static void shim_ifimage_added(const struct mach_header* mh, intptr_t slide)
 		return;
 	Class c = objc_getClass("IFConcreteImage");
 	Method m = c ? class_getInstanceMethod(c, sel_registerName("ICRIconLayer")) : NULL;
-	if (m)
-		shim_ifimage_calayer_orig = method_setImplementation(m, (IMP) shim_ifimage_calayer);
-	if (m)
-		write(2, "simshim: hooked IFConcreteImage ICRIconLayer\n", 45);
+	if (!m)
+		return;
+	shim_ifimage_calayer_orig = method_setImplementation(m, (IMP) shim_ifimage_calayer);
+	write(2, "simshim: hooked IFConcreteImage ICRIconLayer\n", 45);
 }
 __attribute__((constructor)) static void shim_ifimage_init(void)
 {
@@ -403,8 +405,6 @@ __attribute__((constructor)) static void shim_pb_init(void)
 // first side-button press (lock) queued a configuration that never ran, and the unlock that followed froze the phone
 // (SpringBoard's AnimationKit waited on it with the screen dimmed). The block now also runs 2 s after it was scheduled
 // if ButtonResolver has not called it, and runs once either way: no hardware, zero haptic slots.
-#include <dispatch/dispatch.h>
-#include <stdlib.h>
 static IMP shim_br_ready_orig;
 static void shim_br_ready(id self, SEL sel, dispatch_queue_t q, void (^blk)(void))
 {
@@ -440,7 +440,6 @@ __attribute__((constructor)) static void shim_br_init(void)
 	_dyld_register_func_for_add_image(shim_br_added);
 }
 
-#if defined(__arm64__)
 // x86Sim (arm64, Speed 11): iconservicesagent keeps its icon store (IconsCache/<uuid>/, which also holds the Metal
 // shader cache __METAL_CACHE__ it points MTLSetShaderCachePath at) only if the store directory's owner is
 // "_iconservices", the daemon's user on a device. Here every process runs as the host user, so the store was wiped
@@ -491,7 +490,6 @@ __attribute__((constructor)) static void shim_owner_init(void)
 // that one site, found by its log string in RunningBoard's __TEXT (the bl right before the cbz w0 that skips the
 // message), so it holds for any runtime's build. The audio domain checks (RBPropertyDomainRestriction) see the
 // real value.
-#include <mach-o/getsect.h>
 static uintptr_t shim_rb_site;   // return address of _lock_suspend's [props supportsBackgroundAudio]
 static IMP shim_rb_audio_orig[2];
 static BOOL shim_rb_audio(id self, SEL sel, int k, uintptr_t ret)
@@ -562,16 +560,16 @@ __attribute__((constructor)) static void shim_rb_init(void)
 	if (!strcmp(getprogname(), "runningboardd"))
 		_dyld_register_func_for_add_image(shim_rb_added);
 }
-#endif
 
 // x86Sim: the Metal stand-in (host/metalhostd). MTLSimDriver marks its connections to com.apple.metal.simulator[.<proc>]
 // as sim-to-host (xpc_connection_enable_sim2host_4sim: messages packed in the host's macOS XPC format, for the
 // Mac-side SimMetalHost). Our service, metalhostd, runs inside the simulator on the simulator's libxpc, which drops
 // such messages (the handshake failed with an XPC error), so those connections stay plain simulator connections.
-// iOS 27 MTLSimDriver may call enable_sim2host before the connection name is set; a NULL name used to fall through
-// and enable sim2host framing, which hangs MTLCreateSystemDefaultDevice against in-sim metalhostd. When
-// X86SIM_METAL_IN_SIM is set (mksimdevice with Metal), skip sim2host for unnamed connections too.
-#include <xpc/xpc.h>
+// The same holds for com.apple.IOSurface.Remote (host/iosurfaced) and com.apple.FileProvider.sim2host
+// (host/fpsim2host). iOS 27 may call enable_sim2host before the connection's name is set (MTLSimDriver, possibly
+// IOSurface.Remote); sim2host framing on such an unnamed connection hung its first sync message
+// (MTLCreateSystemDefaultDevice against metalhostd), so unnamed connections stay simulator connections too. Host
+// services that really are forwarded set their name first.
 extern void xpc_connection_enable_sim2host_4sim(xpc_connection_t c);
 static void shim_xpc_connection_enable_sim2host_4sim(xpc_connection_t c)
 {
@@ -581,20 +579,8 @@ static void shim_xpc_connection_enable_sim2host_4sim(xpc_connection_t c)
 		logged++;
 		fprintf(stderr, "simshim: enable_sim2host name=%s\n", name ? name : "(null)");
 	}
-	if (name && strncmp(name, "com.apple.metal.simulator", 25) == 0)
-		return;
-	// x86Sim: same for IOSurface's connection: our com.apple.IOSurface.Remote (host/iosurfaced/iosurfaced)
-	// is a simulator process too
-	if (name && strcmp(name, "com.apple.IOSurface.Remote") == 0)
-		return;
-	// x86Sim: and FileProvider's host service, served in the simulator by host/fpsim2host
-	if (name && strcmp(name, "com.apple.FileProvider.sim2host") == 0)
-		return;
-	// x86Sim: iOS 27 may enable_sim2host before set_name (MTLSimDriver, and possibly IOSurface.Remote).
-	// Our stand-ins (metalhostd, iosurfaced, fpsim2host) are in-sim and cannot take host framing; a null-name
-	// enable hangs the first sync message. Skip all unnamed enables — named host-forwarded services set the
-	// name first. X86SIM_METAL_IN_SIM remains set by mksimdevice for documentation / older shims.
-	if (!name)
+	if (!name || strncmp(name, "com.apple.metal.simulator", 25) == 0 || strcmp(name, "com.apple.IOSurface.Remote") == 0 ||
+	    strcmp(name, "com.apple.FileProvider.sim2host") == 0)
 		return;
 	xpc_connection_enable_sim2host_4sim(c);
 }
@@ -619,16 +605,14 @@ __attribute__((constructor)) static void shim_app_stderr_init(void)
 {
 	char buf[1024] = "";
 	int lf = open("/private/var/tmp/x86sim-stderr-progs", O_RDONLY);
-	if (lf < 0) { shim_quiet_os_log(); return; }
-	ssize_t got = read(lf, buf, sizeof buf - 1);
-	close(lf);
-	if (got <= 0) { shim_quiet_os_log(); return; }
-	buf[got] = 0;
+	ssize_t got = lf >= 0 ? read(lf, buf, sizeof buf - 1) : 0;
+	if (lf >= 0)
+		close(lf);
+	buf[got > 0 ? got : 0] = 0;
 	for (char* q = buf; *q; q++) if (*q == '\n' || *q == ' ') *q = ',';
-	const char* list = buf;
 	const char* p = getprogname();
 	size_t n = strlen(p);
-	for (const char* s = list; s && *s; ) {
+	for (const char* s = buf; *s; ) {
 		const char* e = strchr(s, ',');
 		size_t l = e ? (size_t) (e - s) : strlen(s);
 		// x86Sim: "name+" also turns on info/debug messages (OS_ACTIVITY_MODE=debug)
@@ -644,7 +628,9 @@ __attribute__((constructor)) static void shim_app_stderr_init(void)
 			if (fd >= 0) { dup2(fd, 2); close(fd); setenv("OS_ACTIVITY_DT_MODE", "1", 1); }
 			break;
 		}
-		s = e ? e + 1 : NULL;
+		if (!e)
+			break;
+		s = e + 1;
 	}
 	shim_quiet_os_log();
 }

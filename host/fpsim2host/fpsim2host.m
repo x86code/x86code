@@ -156,12 +156,18 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 static void reply(NSInvocation* inv, NSArray* objs, long long num, NSError* err) {
 	replyv(inv, objs, &num, 1, err);
 }
+// a call that answers only success or an error: r < 0 fails with errno
+static void replyStatus(NSInvocation* inv, int r) {
+	int e = errno;
+	LOG("  -> %d errno %d", r, r < 0 ? e : 0);
+	reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+}
 static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int nnums, NSError* err) {
 	NSUInteger last = inv.methodSignature.numberOfArguments - 1;
 	id block = objArg(inv, last);
 	if (!block) return;
-	NSString* bt = blockTypes([extArgType(inv.selector, last + 1) UTF8String] ?: "");
 	NSString* ext = extArgType(inv.selector, last + 1);
+	NSString* bt = blockTypes(ext.UTF8String ?: "");
 	if (!bt.length) { LOG("  no block type for %s", sel_getName(inv.selector)); return; }
 	NSMethodSignature* bs = [NSMethodSignature signatureWithObjCTypes:bt.UTF8String];
 	NSInvocation* bi = [NSInvocation invocationWithMethodSignature:bs];
@@ -232,9 +238,7 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 		NSFileHandle* dir = objArg(inv, 2);
 		NSString* path = objArg(inv, 3);
 		int r = mkdirat(dir ? dir.fileDescriptor : AT_FDCWD, path.fileSystemRepresentation, (mode_t) intArg(inv, 4));
-		int e = errno;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_unlinkAt:path:flag:recursive:completionHandler:")) {
@@ -254,9 +258,7 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 			r = nftw(full, rmTreeEntry, 32, FTW_DEPTH | FTW_PHYS);
 		} else
 			r = unlinkat(dir ? dir.fileDescriptor : AT_FDCWD, path.fileSystemRepresentation, flag);
-		int e = errno;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_renameAt:from:tofd:to:flags:completionHandler:")) {
@@ -266,9 +268,7 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 		NSString* to = objArg(inv, 5);
 		int r = renameatx_np(fromDir ? fromDir.fileDescriptor : AT_FDCWD, from.fileSystemRepresentation,
 			toDir ? toDir.fileDescriptor : AT_FDCWD, to.fileSystemRepresentation, (unsigned) intArg(inv, 6));
-		int e = errno;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_setOrClearXattr:data:onFile:completionHandler:")) {
@@ -277,10 +277,8 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 		NSFileHandle* fh = objArg(inv, 4);
 		int r = data ? fsetxattr(fh.fileDescriptor, xname.UTF8String, data.bytes, data.length, 0, 0)
 			: fremovexattr(fh.fileDescriptor, xname.UTF8String, 0);
-		int e = errno;
-		if (r < 0 && !data && e == ENOATTR) r = 0;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		if (r < 0 && !data && errno == ENOATTR) r = 0;   // removing an absent xattr is done
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_pkgLookup:name:acceptDemotedPkg:detection:completionHandler:")) {
@@ -327,9 +325,7 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 		int r = fstat(fh.fileDescriptor, &st);
 		if (r == 0 && S_ISREG(st.st_mode) && size >= 0) r = ftruncate(fh.fileDescriptor, size);
 		if (r == 0) r = fchflags(fh.fileDescriptor, st.st_flags | SF_DATALESS);
-		int e = errno;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_unsetDatalessBitAt:completionHandler:")) {
@@ -337,9 +333,7 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 		struct stat st;
 		int r = fstat(fh.fileDescriptor, &st);
 		if (r == 0 && (st.st_flags & SF_DATALESS)) r = fchflags(fh.fileDescriptor, st.st_flags & ~SF_DATALESS);
-		int e = errno;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_materializeFile:from:size:completionHandler:")) {
@@ -375,9 +369,7 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 		NSFileHandle* fh = objArg(inv, 2);
 		uint64_t flags = (uint64_t) intArg(inv, 3);
 		int r = fsetxattr(fh.fileDescriptor, "com.apple.x86sim.purgeable", &flags, sizeof(flags), 0, 0);
-		int e = errno;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_setSyncRoot:flags:completionHandler:")) {
@@ -386,9 +378,7 @@ static void replyv(NSInvocation* inv, NSArray* objs, const long long* nums, int 
 		NSFileHandle* fh = objArg(inv, 2);
 		int flags = (int) intArg(inv, 3);
 		int r = fsetxattr(fh.fileDescriptor, "com.apple.x86sim.syncroot", &flags, sizeof(flags), 0, 0);
-		int e = errno;
-		LOG("  -> %d errno %d", r, r < 0 ? e : 0);
-		reply(inv, @[], 0, r < 0 ? posixError(e) : nil);
+		replyStatus(inv, r);
 		return;
 	}
 	if (!strcmp(name, "sim_registerMaterializationHandler:forURL:completionHandler:")) {

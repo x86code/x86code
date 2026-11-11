@@ -360,19 +360,13 @@ static void request(NSString* rest) {
 	answer(rid, r);
 }
 
-// x86Sim: a Linux system call (Darling processes are Linux processes).
-// Arm64 guest under libarm64jit: svc #0xfffe with x8 = x86_64 syscall number (same as simfb's futex).
+// x86Sim: a Linux system call (Darling processes are Linux processes): under libarm64jit, "svc #0xfffe" is one, with
+// x8 = the x86_64 syscall number (as in simfb)
 static long linux_syscall3(long n, long a, long b, long c) {
-#if defined(__arm64__)
 	register long x0 __asm__("x0") = a, x1 __asm__("x1") = b, x2 __asm__("x2") = c;
 	register long x8 __asm__("x8") = n;
 	__asm__ volatile("svc #0xfffe" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x8) : "memory");
 	return x0;
-#else
-	long r;
-	__asm__ volatile("syscall" : "=a"(r) : "a"(n), "D"(a), "S"(b), "d"(c) : "rcx", "r11", "memory");
-	return r;
-#endif
 }
 
 static volatile BOOL wake;
@@ -390,7 +384,6 @@ static volatile BOOL wake;
 //                 0 without, -1 unknown; task state RBSTaskState (-1 unknown); scenes (RAM 4): visibility
 //                 endowments of a UIScene FrontBoard shows (0 = left at the home screen), -1 unknown.
 //   "dump <pid> <bundle id>" lines (diagnosis): RunningBoard's full state and BKSApplicationStateMonitor's.
-// diagnosis: "dump <pid> <bundle id>" in the request: RunningBoard's full state and BackBoard's application state
 static void dumpState(NSString* arg, NSMutableString* o) {
 	NSArray* f = [arg componentsSeparatedByString:@" "];
 	int pid = [f[0] intValue];
@@ -505,9 +498,8 @@ int main(void) {
 			// the main queue, later on a serial queue) delivered the first event only: libdispatch never got the next
 			// one, so every request after the first waited for the 5 s fallback. CFRunLoopStop is
 			// thread-safe and isn't lost when the loop isn't waiting yet (its next run returns at once).
-			long fd_ = ifd;
 			pthread_t th;
-			pthread_create(&th, NULL, watchThread, (void*)fd_);
+			pthread_create(&th, NULL, watchThread, (void*)ifd);
 			pthread_detach(th);
 			fprintf(logf_, "openurl: watching %s/tmp (inotify)\n", home.UTF8String); fflush(logf_);
 		}
@@ -537,9 +529,7 @@ int main(void) {
 					}
 					// "install <path>" (absolute, or relative to the device's data directory), "uninstall <bundle id>"
 					if ([u hasPrefix:@"install "]) {
-						NSString* p = [[u substringFromIndex:8] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-						if (![p hasPrefix:@"/"]) p = [home stringByAppendingPathComponent:p];
-						installApp(p);
+						installApp(devPath([[u substringFromIndex:8] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]));
 						continue;
 					}
 					if ([u hasPrefix:@"uninstall "]) {

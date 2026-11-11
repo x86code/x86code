@@ -19,7 +19,8 @@ int main(int argc, char **argv) {
 		if (argc > 2) sleep(atoi(argv[2]));  // -dump <seconds>: let the boot settle first
 		// the store's job may not be loaded yet this early in the boot: retry for 30 s
 		SCDynamicStoreRef s = NULL;
-		// -host: the host's store (com.apple.SystemConfiguration.configd, here com.x86sim.host-configd), else the simulator's
+		// X86SIM_HOST_STORE: the host's store (com.apple.SystemConfiguration.configd, here com.x86sim.host-configd), else
+		// the simulator's
 		BOOL host = getenv("X86SIM_HOST_STORE") != NULL;
 		NSDictionary *opts = host ? @{ (__bridge NSString *)kSCDynamicStoreUseHostServer: @YES } : nil;
 		for (int i = 0; i < 30 && !(s = SCDynamicStoreCreateWithOptions(NULL, CFSTR("x86sim-netconfig"), (__bridge CFDictionaryRef)opts, NULL, NULL)); i++) sleep(1);
