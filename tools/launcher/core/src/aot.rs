@@ -109,6 +109,50 @@ impl Default for Config {
     }
 }
 
+/// A saved path that no longer exists, moved by the x86Code -> x86Sim rename (AppRun moves ~/.local/share/x86code and
+/// ~/.cache/x86code once): the same path with the x86code component renamed, if that one exists.
+fn renamed(p: &Path) -> Option<PathBuf> {
+    if p.exists() {
+        return None;
+    }
+    let mut hit = false;
+    let q: PathBuf = p
+        .components()
+        .map(|c| match c.as_os_str().to_str() {
+            Some("x86code") => {
+                hit = true;
+                std::ffi::OsStr::new("x86sim")
+            }
+            _ => c.as_os_str(),
+        })
+        .collect();
+    (hit && q.exists()).then_some(q)
+}
+
+impl Config {
+    /// config.json keeps absolute paths. After the rename move they pointed into the old directories: the test prefix
+    /// under a missing ~/.cache/x86code made every pre-translate worker fail ("only 0 of N chunks finished"), the
+    /// training dirs were silently missing. Renamed paths are followed; a test prefix whose directory is gone is the
+    /// default one.
+    pub fn healed(mut self) -> Config {
+        let heal = |p: &mut PathBuf| {
+            if let Some(q) = renamed(p) {
+                *p = q;
+            }
+        };
+        heal(&mut self.runtime_root);
+        if let Some(d) = self.device.as_mut() {
+            heal(d);
+        }
+        self.training.iter_mut().for_each(heal);
+        heal(&mut self.test_prefix);
+        if !self.test_prefix.parent().is_some_and(|d| d.is_dir()) {
+            self.test_prefix = scratch().join("a64testprefix");
+        }
+        self
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ChunkRec {
     pub name: String,
@@ -183,7 +227,8 @@ impl Paths {
         self.jc.join("placement.txt")
     }
     pub fn load_config(&self) -> Config {
-        std::fs::read(self.config()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let c: Config = std::fs::read(self.config()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        c.healed()
     }
     pub fn save_config(&self, c: &Config) -> Result<()> {
         write_json(&self.config(), c)
@@ -1573,4 +1618,29 @@ fn near_hot_first(mut statics: Vec<u64>, hot: &[(u64, u32)]) -> Vec<u64> {
     };
     statics.sort_by_cached_key(|&e| (dist(e), e));
     statics
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_follows_the_rename_move() {
+        let t = std::env::temp_dir().join(format!("x86sim-aot-heal-{}", std::process::id()));
+        let new_cache = t.join("cache/x86sim");
+        std::fs::create_dir_all(new_cache.join("s15/train5")).unwrap();
+        std::fs::create_dir_all(t.join("share/x86sim/var/device-a64-p")).unwrap();
+        let c = Config {
+            device: Some(t.join("share/x86code/var/device-a64-p")),
+            training: vec![t.join("cache/x86code/s15/train5"), t.join("cache/x86code/gone")],
+            test_prefix: t.join("cache/x86code/a64testprefix"),
+            ..Config::default()
+        }
+        .healed();
+        assert_eq!(c.device, Some(t.join("share/x86sim/var/device-a64-p")));
+        assert_eq!(c.training, vec![new_cache.join("s15/train5"), t.join("cache/x86code/gone")]);
+        // the prefix itself need not exist (Darling makes it), its directory must
+        assert_eq!(c.test_prefix, scratch().join("a64testprefix"));
+        let _ = std::fs::remove_dir_all(&t);
+    }
 }
