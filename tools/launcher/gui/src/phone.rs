@@ -2,16 +2,20 @@
 //! with a vertical tool bar right of it (Home, Lock, volume, Siri, screenshot, gesture help), and the inspector: Overview, then fold-out Features,
 //! Logs, Performance, Advanced.
 use crate::theme::*;
-use crate::{viewer, App, View};
+use crate::{remote, viewer, App, View};
 use eframe::egui;
 use std::time::{Duration, Instant};
 use x86sim_core::{features, instance, instance::Phase, logs};
 
-/// Width of the tool bar right of the screen
-const TOOLBAR_W: f32 = 46.0;
+/// Room right of a watch's case for its crown, which stands off the case's edge
+const WATCH_EDGE: f32 = 22.0;
+/// Width of the tool bar right of the screen (Platforms 1: an Apple TV's holds the remote)
+fn toolbar_w(platform: &str) -> f32 {
+    if platform == "tvos" { 116.0 } else { 46.0 }
+}
 const GESTURES: &str ="Click the screen to tap, drag to swipe.\nDrag in from an edge for system gestures (Home, Control Center, back).\nCtrl + drag to pinch, Shift + drag to scroll with two fingers.\nF1 Home · F2 Lock · F3/F4 volume";
-const GESTURES_TV: &str = "The keyboard is the remote: arrow keys move, Return selects, Esc goes back.\nClick the screen to select; the mouse wheel or a touchpad swipe moves the focus.\nF1 TV (home) · F2 play / pause · F3/F4 volume";
-const GESTURES_WATCH: &str = "Click the screen to tap, drag to swipe.\nThe mouse wheel turns the Digital Crown.\nF1 presses the crown (watch face / apps) · F2 the side button (sleep / wake)";
+const GESTURES_TV: &str = "The keyboard is the remote: arrow keys move, Return selects, Esc goes back.\nClick the screen or the clickpad's centre to select; the wheel over either moves the focus.\nF1 TV (home) · F2 play / pause · F3/F4 volume";
+const GESTURES_WATCH: &str = "Click the screen to tap, drag to swipe.\nThe mouse wheel (over the screen or the crown) or a drag on the crown turns it; a click on the crown presses it.\nF1 presses the crown (watch face / apps) · F2 the side button (sleep / wake)";
 
 impl App {
     pub fn phone_view(&mut self, ctx: &egui::Context, id: &str) {
@@ -28,55 +32,8 @@ impl App {
         egui::TopBottomPanel::top("phone-head").frame(egui::Frame::new().fill(CANVAS).inner_margin(egui::Margin { left: 16, right: 16, top: 10, bottom: 10 })).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.set_min_height(32.0);
-                ui.spacing_mut().item_spacing.x = 4.0;
-                if ui.add(Btn::ghost("Phones").icon(icon::CARET_LEFT)).on_hover_text("Back to all phones (Esc)").clicked() {
-                    self.view = View::Home;
-                }
-                ui.label(egui::RichText::new("/").size(T_TITLE).color(BORDER_STRONG));
-                // the phone's name doubles as a switcher
-                let txt = egui::RichText::new(format!("{}  {}", inst.name, icon::CARET_UP_DOWN)).size(T_TITLE).family(semibold()).color(INK);
-                let others: Vec<(String, String, Phase, bool)> = self.insts.iter().map(|i| (i.id.clone(), i.name.clone(), self.phase(&i.id), i.runtime_present)).collect();
-                let mut go = None;
-                egui::containers::menu::MenuButton::from_button(egui::Button::new(txt).frame_when_inactive(false)).ui(ui, |ui| {
-                    ui.set_width(260.0);
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for (oid, name, ph, present) in &others {
-                        let (r, resp) = ui.allocate_exact_size(egui::vec2(260.0, 30.0), egui::Sense::click());
-                        let p = ui.painter();
-                        if resp.hovered() {
-                            p.rect_filled(r, R_SM, RAISED);
-                        }
-                        if oid == id {
-                            p.text(r.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, icon::CHECK, font(13.0), INK);
-                        }
-                        let g = galley_trunc(ui, name, font_m(T_BODY), INK, 150.0);
-                        p.galley(egui::pos2(r.left() + 28.0, r.center().y - g.size().y / 2.0), g, INK);
-                        let state = match ph {
-                            Phase::Running => "Running",
-                            Phase::Starting => "Starting",
-                            Phase::Stopping => "Stopping",
-                            Phase::Off if !present => "Not installed",
-                            Phase::Off => "Off",
-                        };
-                        p.text(r.right_center() - egui::vec2(10.0, 0.0), egui::Align2::RIGHT_CENTER, state, font(T_SMALL), INK_3);
-                        if *ph == Phase::Running {
-                            let w = ui.painter().layout_no_wrap(state.into(), font(T_SMALL), INK_3).size().x;
-                            ui.painter().circle_filled(r.right_center() - egui::vec2(18.0 + w, 0.0), 3.5, GOOD);
-                        }
-                        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                            go = Some(oid.clone());
-                            ui.close();
-                        }
-                    }
-                });
-                if let Some(g) = go {
-                    self.view = View::Phone(g);
-                }
-                ui.add_space(6.0);
-                ui.label(muted(format!("{} · {}", inst.model, inst.ios)).size(T_BODY));
-                ui.add_space(8.0);
-                let (label, col) = phase_look(phase, inst.runtime_present);
-                badge(ui, label, col);
+                // the actions first, at the right; the breadcrumb then has what they leave, and its model line is
+                // cut to fit (drawn after it, the buttons covered a long model name at narrow widths)
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = S2;
                     self.phone_menu(ui, &inst, phase);
@@ -84,7 +41,7 @@ impl App {
                         // not installed: the Download action lives in the screen area's empty state
                         Phase::Off if !inst.runtime_present => {}
                         Phase::Off => {
-                            if ui.add(Btn::primary("Start").icon(icon::PLAY).min_w(84.0)).clicked() {
+                            if ui.add(Btn::primary("Start").icon(icon::PLAY).min_w(84.0)).on_hover_text("Start this device").clicked() {
                                 self.start(id);
                             }
                         }
@@ -92,26 +49,102 @@ impl App {
                             ui.add_enabled(false, Btn::secondary("Stopping…").min_w(84.0));
                         }
                         _ => {
-                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(CRIT_INK).min_w(84.0)).clicked() {
+                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(CRIT_INK).min_w(84.0)).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
                                 self.stop(id);
                             }
                             if instance::needs_restart(&inst, st.as_ref()) {
-                                if ui.add(Btn::primary("Restart to apply").icon(icon::ARROW_CLOCKWISE)).on_hover_text("Feature or start settings changed since this phone started").clicked() {
+                                if ui.add(Btn::primary("Restart to apply").icon(icon::ARROW_CLOCKWISE)).on_hover_text("Feature or start settings changed since this device started (Ctrl+R)").clicked() {
                                     self.restart(id);
                                 }
-                            } else if ui.add(Btn::secondary("Restart").icon(icon::ARROW_CLOCKWISE)).on_hover_text("Ctrl+R").clicked() {
+                            } else if ui.add(Btn::secondary("Restart").icon(icon::ARROW_CLOCKWISE)).on_hover_text("Stop and start again (Ctrl+R)").clicked() {
                                 self.restart(id);
                             }
                         }
                     }
+                    ui.add_space(S1);
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        if ui.add(Btn::ghost("Devices").icon(icon::CARET_LEFT)).on_hover_text("Back to all devices (Esc)").clicked() {
+                            self.view = View::Home;
+                        }
+                        ui.label(egui::RichText::new("/").size(T_TITLE).color(BORDER_STRONG));
+                        let (label, col) = phase_look(phase, inst.runtime_present);
+                        let badge_w = ui.painter().layout_no_wrap(label.to_string(), font_m(T_SMALL), INK_2).size().x + 30.0;
+                        // the phone's name doubles as a switcher; a long one is cut so the state stays in view
+                        let name_room = (ui.available_width() - badge_w - 60.0).max(80.0);
+                        let name = galley_trunc(ui, &inst.name, font_sb(T_TITLE), INK, name_room);
+                        let cut = name.elided;
+                        let shown = if cut { format!("{}…", name.text().trim_end_matches('…').trim_end()) } else { inst.name.clone() };
+                        let txt = egui::RichText::new(format!("{shown}  {}", icon::CARET_UP_DOWN)).size(T_TITLE).family(semibold()).color(INK);
+                        let others: Vec<(String, String, Phase, bool)> = self.insts.iter().map(|i| (i.id.clone(), i.name.clone(), self.phase(&i.id), i.runtime_present)).collect();
+                        let mut go = None;
+                        let (sw, _) = egui::containers::menu::MenuButton::from_button(egui::Button::new(txt).frame_when_inactive(false)).ui(ui, |ui| {
+                            ui.set_width(260.0);
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for (oid, name, ph, present) in &others {
+                                let (r, resp) = ui.allocate_exact_size(egui::vec2(260.0, 30.0), egui::Sense::click());
+                                let p = ui.painter();
+                                if resp.hovered() {
+                                    p.rect_filled(r, R_SM, RAISED);
+                                }
+                                if oid == id {
+                                    p.text(r.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, icon::CHECK, font(13.0), INK);
+                                }
+                                let g = galley_trunc(ui, name, font_m(T_BODY), INK, 150.0);
+                                p.galley(egui::pos2(r.left() + 28.0, r.center().y - g.size().y / 2.0), g, INK);
+                                let state = match ph {
+                                    Phase::Running => "Running",
+                                    Phase::Starting => "Starting",
+                                    Phase::Stopping => "Stopping",
+                                    Phase::Off if !present => "Not installed",
+                                    Phase::Off => "Off",
+                                };
+                                p.text(r.right_center() - egui::vec2(10.0, 0.0), egui::Align2::RIGHT_CENTER, state, font(T_SMALL), INK_3);
+                                if *ph == Phase::Running {
+                                    let w = ui.painter().layout_no_wrap(state.into(), font(T_SMALL), INK_3).size().x;
+                                    ui.painter().circle_filled(r.right_center() - egui::vec2(18.0 + w, 0.0), 3.5, GOOD);
+                                }
+                                if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                    go = Some(oid.clone());
+                                    ui.close();
+                                }
+                            }
+                        });
+                        sw.on_hover_text(if cut { format!("{} · switch to another device", inst.name) } else { "Switch to another device".to_string() });
+                        if let Some(g) = go {
+                            self.view = View::Phone(g);
+                        }
+                        ui.add_space(6.0);
+                        // model and version: here and nowhere else on the page, in the room left before the state badge.
+                        // The compact model name; the full one on hover (and on the badge when there is no room at all)
+                        let full = format!("{} · {}", inst.model, inst.ios);
+                        let line = device_line(&inst.name, &inst.model, &inst.ios);
+                        let room = ui.available_width() - badge_w - 8.0 - 4.0;
+                        let shown = room >= 64.0;
+                        if shown {
+                            let g = galley_trunc(ui, &line, font(T_BODY), INK_3, room);
+                            let (r, resp) = ui.allocate_exact_size(g.size(), egui::Sense::hover());
+                            ui.painter().galley(r.min, g, INK_3);
+                            resp.on_hover_text(&full);
+                            ui.add_space(8.0);
+                        }
+                        let b = badge(ui, label, col);
+                        if !shown {
+                            b.on_hover_text(full);
+                        }
+                    });
                 });
             });
         });
 
+        // the inspector may take at most ~40% of the page: dragged wide (or a narrow window) it left a landscape screen
+        // (Apple TV) a 200-point strip between it and the remote
+        let content_w = ctx.content_rect().width() - 212.0;
+        let side_max = (content_w * 0.42).clamp(340.0, 720.0);
         egui::SidePanel::right("phone-side")
             .resizable(true)
-            .default_width(392.0)
-            .width_range(340.0..=720.0)
+            .default_width(392.0_f32.min(side_max))
+            .width_range(340.0..=side_max)
             .frame(egui::Frame::new().fill(WINDOW).inner_margin(egui::Margin { left: 16, right: 12, top: 16, bottom: 12 }))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -126,7 +159,7 @@ impl App {
                 let h = ui.available_height();
                 ui.add_space((h / 2.0 - 110.0).max(0.0));
                 let mut dl = false;
-                empty_state(ui, icon::CLOUD_ARROW_DOWN, &format!("{} isn't installed", inst.ios), "Download it to start this phone. Its apps and data are kept.", |ui| {
+                empty_state(ui, icon::CLOUD_ARROW_DOWN, &format!("{} isn't installed", inst.ios), "Download it to start this device. Its apps and data are kept.", |ui| {
                     if busy {
                         let line = self.fetching.get(&inst.build).map(crate::home::fetch_line).unwrap_or_default();
                         ui.horizontal(|ui| {
@@ -145,21 +178,22 @@ impl App {
                 return;
             }
             let live = matches!(phase, Phase::Running | Phase::Starting);
-            let placeholder = match phase {
-                Phase::Off => "Off",
-                Phase::Starting => "Starting…",
-                Phase::Stopping => "Stopping…",
-                Phase::Running => "Waiting for the screen…",
-            };
+            // the state is the header's badge; the screen only says what the badge can't
+            let placeholder = if phase == Phase::Running { "Waiting for the screen…" } else { "" };
             // the screen and, to its right, the tools (as Simulator's side buttons): centred together
-            let avail = ui.available_size() - egui::vec2(TOOLBAR_W + S3, 0.0);
+            let watch = inst.platform == "watchos";
+            let edge = if watch { WATCH_EDGE } else { 0.0 };
+            let avail = ui.available_size() - egui::vec2(toolbar_w(&inst.platform) + S3 + edge, 0.0);
             let rid = egui::Id::new(("screen-row", id));
             let w: f32 = ui.data(|d| d.get_temp(rid)).unwrap_or(avail.x);
             let r = ui.horizontal_top(|ui| {
                 ui.add_space(((ui.available_width() - w) / 2.0).max(0.0));
                 let start = ui.cursor().min.x;
-                if let Some(v) = self.viewer(id) {
-                    v.show(ui, avail, live, placeholder, true, viewer::FULL);
+                let case = self.viewer(id).map(|v| v.show(ui, avail, live, placeholder, true, viewer::FULL));
+                // Platforms 1: a watch's crown and side button stand off its case's right edge, as on the watch
+                if let (true, Some(case)) = (watch, case) {
+                    ui.add_space(edge);
+                    self.watch_controls(ui, id, live, case);
                 }
                 ui.add_space(S3);
                 self.screen_toolbar(ui, id, live);
@@ -177,17 +211,25 @@ impl App {
             ui.spacing_mut().item_spacing.y = 0.0;
             self.phone_menu_items(ui, inst, phase);
         });
-        resp.on_hover_text("More");
+        resp.on_hover_text("More: own window, rename, remove");
     }
 
     pub fn phone_menu_items(&mut self, ui: &mut egui::Ui, inst: &instance::Instance, phase: Phase) {
+        // its screen in a window of its own (simview); an open one is raised, not opened twice
+        if menu_row(ui, icon::APP_WINDOW, "Open in own window", "", phase != Phase::Off, false).on_disabled_hover_text("Start it first").clicked() {
+            match x86sim_core::sim::show_phone(inst) {
+                Ok(()) => self.say(format!("Opened {} in its own window", inst.name)),
+                Err(e) => self.say(format!("Couldn't open the window: {e:#}")),
+            }
+            ui.close();
+        }
         if menu_row(ui, icon::PENCIL_SIMPLE, "Rename…", "", true, false).clicked() {
             self.dialog = Some(crate::Dialog::Rename { id: inst.id.clone(), text: inst.name.clone() });
             ui.close();
         }
         let off = phase == Phase::Off;
         let can = off && !inst.is_default;
-        let r = menu_row(ui, icon::TRASH, "Remove phone…", "", can, true);
+        let r = menu_row(ui, icon::TRASH, "Remove device…", "", can, true);
         let r = if inst.is_default { r.on_disabled_hover_text("The main phone stays") } else if !off { r.on_disabled_hover_text("Stop it first") } else { r };
         if r.clicked() {
             let paths = instance::delete_plan(inst);
@@ -214,7 +256,7 @@ impl App {
                 let m = egui::Modal::new("rename-phone".into()).backdrop_color(egui::Color32::from_black_alpha(150)).frame(modal_frame()).show(ctx, |ui| {
                     ui.set_width(360.0);
                     ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.label(egui::RichText::new("Rename phone").size(T_TITLE + 1.0).family(semibold()).color(INK));
+                    ui.label(dialog_title("Rename device"));
                     ui.add_space(S3);
                     let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(ui.available_width()).margin(egui::Margin::symmetric(8, 6)));
                     if !r.has_focus() && !r.lost_focus() {
@@ -256,7 +298,7 @@ impl App {
                 let m = egui::Modal::new("delete-phone".into()).backdrop_color(egui::Color32::from_black_alpha(150)).frame(modal_frame()).show(ctx, |ui| {
                     ui.set_width(420.0);
                     ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.label(egui::RichText::new(format!("Remove {}?", inst.name)).size(T_TITLE + 1.0).family(semibold()).color(INK));
+                    ui.add(egui::Label::new(dialog_title(format!("Remove {}?", inst.name))).wrap());
                     ui.label(sub("Its apps, data and settings are deleted. This can't be undone."));
                     ui.add_space(S2);
                     let frees = match *size.lock().unwrap() {
@@ -302,80 +344,30 @@ impl App {
     }
 
     /// The tools, a vertical bar right of the screen: the hardware buttons Simulator has (Home, side button, volume,
-    /// Siri), Save Screen, the hinge of a two-screen phone, gesture help. Platforms 1: an Apple TV gets the Siri
-    /// Remote's buttons and a click pad, an Apple Watch the Digital Crown (press, turn) and the side button. Simulator's rotate and shake have no simhid
-    /// command (no orientation or motion events), so they are not offered.
+    /// Siri), Save Screen, the hinge of a two-screen phone, gesture help. Simulator's rotate and shake have no simhid
+    /// command (no orientation or motion events), so they are not offered. Platforms 1: an Apple TV gets a Siri Remote
+    /// and an Apple Watch its Digital Crown and side button (remote.rs), above the same Save Screen and help.
     fn screen_toolbar(&mut self, ui: &mut egui::Ui, id: &str, live: bool) {
         let name = self.inst(id).map(|i| i.name.clone()).unwrap_or_else(|| id.to_string());
         let hinge = self.inst(id).filter(|i| i.inner.is_some()).map(|i| i.inner_active());
         let platform = self.inst(id).map(|i| i.platform.clone()).unwrap_or_default();
-        egui::Frame::new().fill(CARD).stroke(egui::Stroke::new(1.0_f32, BORDER)).corner_radius(8).inner_margin(4).show(ui, |ui| {
-            ui.set_width(TOOLBAR_W - 10.0);
-            ui.vertical_centered(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                fn tool_btn(ui: &mut egui::Ui, live: bool, ic: &'static str, tip: &str) -> bool {
-                    ui.add_enabled(live, Btn::ghost("").icon(ic)).on_hover_text(tip).on_disabled_hover_text("Not running").clicked()
-                }
-                let tool = |ui: &mut egui::Ui, ic: &'static str, tip: &str| tool_btn(ui, live, ic, tip);
-                let sep = |ui: &mut egui::Ui| {
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(TOOLBAR_W - 10.0, 9.0), egui::Sense::hover());
-                    ui.painter().hline(r.x_range().shrink(6.0), r.center().y, egui::Stroke::new(1.0_f32, BORDER));
-                };
-                let mut press = None;
-                let mut key = None;
-                let mut crown = None;
-                match platform.as_str() {
-                    // Platforms 1: the Siri Remote: TV (consumer 0x60, PineBoard's home), Back (Menu, 0x40), play /
-                    // pause, volume, and the click pad as the keyboard's arrows and return. No power or Siri: the
-                    // power button held (which Siri was on an iPhone) puts the TV to sleep.
-                    "tvos" => {
-                        if tool(ui, icon::TELEVISION_SIMPLE, "TV: the home screen (F1)") {
-                            press = Some("tv");
-                        }
-                        if tool(ui, icon::ARROW_U_UP_LEFT, "Back (Esc)") {
-                            press = Some("menu");
-                        }
-                        if tool(ui, icon::PLAY_PAUSE, "Play / pause (F2)") {
-                            press = Some("playpause");
-                        }
-                        sep(ui);
-                        for (ic, tip, u) in [
-                            (icon::CARET_UP, "Up (arrow key)", 0x52),
-                            (icon::CARET_LEFT, "Left (arrow key)", 0x50),
-                            (icon::RADIO_BUTTON, "Select: a click on the screen, or Return", 0x28),
-                            (icon::CARET_RIGHT, "Right (arrow key)", 0x4f),
-                            (icon::CARET_DOWN, "Down (arrow key)", 0x51),
-                        ] {
-                            if tool(ui, ic, tip) {
-                                key = Some(u);
-                            }
-                        }
-                        sep(ui);
-                        if tool(ui, icon::SPEAKER_HIGH, "Volume up (F3)") {
-                            press = Some("volup");
-                        }
-                        if tool(ui, icon::SPEAKER_LOW, "Volume down (F4)") {
-                            press = Some("voldown");
-                        }
+        let w = toolbar_w(&platform);
+        ui.vertical(|ui| {
+            ui.set_width(w);
+            ui.spacing_mut().item_spacing.y = S2;
+            if platform == "tvos" {
+                ui.vertical_centered(|ui| self.tv_remote(ui, id, live));
+            }
+            // the tools stand beside the screen as a device's side buttons do: no box around them
+            {
+                ui.vertical_centered(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    fn tool_btn(ui: &mut egui::Ui, live: bool, ic: &'static str, tip: &str) -> bool {
+                        ui.add_enabled(live, Btn::ghost("").icon(ic)).on_hover_text(tip).on_disabled_hover_text("Not running").clicked()
                     }
-                    // Platforms 1: the Digital Crown (pressed: home / the app grid; turned: the mouse wheel) and the
-                    // side button. No volume buttons on a watch; the side button held is the power-off slider.
-                    "watchos" => {
-                        if tool(ui, icon::CROWN_SIMPLE, "Press the Digital Crown: watch face / apps (F1)") {
-                            press = Some("home");
-                        }
-                        if tool(ui, icon::CARET_UP, "Turn the crown up (or the mouse wheel)") {
-                            crown = Some(-120.0);
-                        }
-                        if tool(ui, icon::CARET_DOWN, "Turn the crown down (or the mouse wheel)") {
-                            crown = Some(120.0);
-                        }
-                        sep(ui);
-                        if tool(ui, icon::SIDEBAR_SIMPLE, "Side button: sleep / wake the screen (F2)") {
-                            press = Some("side");
-                        }
-                    }
-                    _ => {
+                    let tool = |ui: &mut egui::Ui, ic: &'static str, tip: &str| tool_btn(ui, live, ic, tip);
+                    if platform != "tvos" && platform != "watchos" {
+                        let mut press = None;
                         if tool(ui, icon::HOUSE, "Home (F1)") {
                             press = Some("home");
                         }
@@ -393,45 +385,109 @@ impl App {
                                 v.hold("lock", 2500);
                             }
                         }
+                        if let (Some(b), Some(v)) = (press, self.viewer(id)) {
+                            v.press(b);
+                        }
+                        // a gap, not a rule, between the device's buttons and the launcher's own tools
+                        ui.add_space(S3);
                     }
-                }
-                if let Some(v) = self.viewer(id) {
-                    if let Some(b) = press {
-                        v.press(b);
-                    }
-                    if let Some(u) = key {
-                        v.tap_key(u);
-                    }
-                    if let Some(d) = crown {
-                        v.crown(d);
-                    }
-                }
-                sep(ui);
-                if tool(ui, icon::CAMERA, "Save a screenshot to Pictures") {
-                    let r = self.viewer(id).map(|v| v.screenshot(&name));
-                    match r {
-                        Some(Ok(f)) => self.say(format!("Screenshot saved: {}", f.display())),
-                        Some(Err(e)) => self.say(format!("Couldn't save a screenshot: {e}")),
-                        None => {}
-                    }
-                }
-                // Models 2: a two-screen phone (iPhone Duo) opens and closes like one: the hinge
-                if let Some(open) = hinge {
-                    let (ic, tip) = if open { (icon::DEVICE_MOBILE, "Fold: close the phone, the outer screen") } else { (icon::BOOK_OPEN, "Unfold: open the phone flat, the inner screen") };
-                    if tool(ui, ic, tip) {
-                        if let Some(v) = self.viewer(id) {
-                            v.hinge(if open { 0.0 } else { 180.0 });
+                    if tool(ui, icon::CAMERA, "Save a screenshot to Pictures") {
+                        let r = self.viewer(id).map(|v| v.screenshot(&name));
+                        match r {
+                            Some(Ok(f)) => self.say(format!("Screenshot saved: {}", f.display())),
+                            Some(Err(e)) => self.say(format!("Couldn't save a screenshot: {e}")),
+                            None => {}
                         }
                     }
-                }
-                sep(ui);
-                ui.add(Btn::tool(icon::INFO)).on_hover_text(match platform.as_str() {
-                    "tvos" => GESTURES_TV,
-                    "watchos" => GESTURES_WATCH,
-                    _ => GESTURES,
+                    // Models 2: a two-screen phone (iPhone Duo) opens and closes like one: the hinge
+                    if let Some(open) = hinge {
+                        let (ic, tip) = if open { (icon::DEVICE_MOBILE, "Fold: close the phone, the outer screen") } else { (icon::BOOK_OPEN, "Unfold: open the phone flat, the inner screen") };
+                        if tool(ui, ic, tip) {
+                            if let Some(v) = self.viewer(id) {
+                                v.hinge(if open { 0.0 } else { 180.0 });
+                            }
+                        }
+                    }
+                    ui.add(Btn::tool(icon::INFO)).on_hover_text(match platform.as_str() {
+                        "tvos" => GESTURES_TV,
+                        "watchos" => GESTURES_WATCH,
+                        _ => GESTURES,
+                    });
                 });
-            });
+            }
         });
+    }
+
+    /// Platforms 1: the Siri Remote. Clickpad (arrows / select as the keyboard's keys, held keys repeat); Back
+    /// (consumer 0x46, Menu Escape: one level back; 0x40 closed the app), TV (0x60: the home screen), play / pause
+    /// (0xcd), mute (0xe2), the volume rocker. No power or Siri button: holding power put the TV to sleep, which the
+    /// simulator declines (WORKAROUNDS.md).
+    fn tv_remote(&mut self, ui: &mut egui::Ui, id: &str, live: bool) {
+        let (mut keys, mut press, mut usage, mut vol) = (vec![], None, None, None);
+        remote::body(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
+            keys = remote::clickpad(ui, 88.0, live);
+            let (d, gap_x, gap_y) = (38.0_f32, 12.0_f32, 10.0_f32);
+            let (grid, _) = ui.allocate_exact_size(egui::vec2(2.0 * d + gap_x, 3.0 * d + 2.0 * gap_y), egui::Sense::hover());
+            let cell = |col: f32, row: f32| egui::Rect::from_min_size(grid.min + egui::vec2(col * (d + gap_x), row * (d + gap_y)), egui::vec2(d, d));
+            let bid = egui::Id::new(("remote", id));
+            if remote::round_button(ui, cell(0.0, 0.0), bid.with("back"), icon::CARET_LEFT, "Back (Esc)", live) {
+                press = Some("menu");
+            }
+            if remote::round_button(ui, cell(1.0, 0.0), bid.with("tv"), icon::TELEVISION_SIMPLE, "TV: the home screen (F1)", live) {
+                press = Some("tv");
+            }
+            if remote::round_button(ui, cell(0.0, 1.0), bid.with("play"), icon::PLAY_PAUSE, "Play / pause (F2)", live) {
+                press = Some("playpause");
+            }
+            if remote::round_button(ui, cell(0.0, 2.0), bid.with("mute"), icon::SPEAKER_SLASH, "Mute", live) {
+                usage = Some(0xe2);
+            }
+            let rock = egui::Rect::from_min_max(cell(1.0, 1.0).min, cell(1.0, 2.0).max);
+            vol = remote::rocker(ui, rock, bid.with("vol"), live);
+        });
+        if let Some(v) = self.viewer(id) {
+            for (u, down) in keys {
+                v.key(down, u);
+            }
+            if let Some(b) = press {
+                v.press(b);
+            }
+            if let Some(u) = usage {
+                v.tap_usage(0x0c, u);
+            }
+            if let Some(up) = vol {
+                v.press(if up { "volup" } else { "voldown" });
+            }
+        }
+    }
+
+    /// Platforms 1: the watch's right edge, placed as on an Apple Watch: the Digital Crown in the upper part of the case
+    /// (drag / scroll to turn, click to press: the watch face or the app grid), the long side button below it (sleep /
+    /// wake). Sized from the case's height. No volume buttons on a watch.
+    fn watch_controls(&mut self, ui: &mut egui::Ui, id: &str, live: bool, case: egui::Rect) {
+        let h = case.height();
+        let x = case.right();
+        let crown_h = (h * 0.15).clamp(24.0, 72.0);
+        let crown_w = (h * 0.045).clamp(9.0, 22.0).min(WATCH_EDGE);
+        let crown_c = case.top() + h * 0.30;
+        let crown = egui::Rect::from_min_size(egui::pos2(x, crown_c - crown_h / 2.0), egui::vec2(crown_w, crown_h));
+        let side_h = (h * 0.27).clamp(36.0, 130.0);
+        let side_c = case.top() + h * 0.62;
+        let side = egui::Rect::from_min_size(egui::pos2(x - 1.0, side_c - side_h / 2.0), egui::vec2((crown_w * 0.45).max(5.0), side_h));
+        let bid = egui::Id::new(("watch-edge", id));
+        let ev = remote::crown(ui, crown, bid.with("crown"), live);
+        let pressed = remote::side_button(ui, side, bid.with("side"), live);
+        if let Some(v) = self.viewer(id) {
+            match ev {
+                Some(remote::CrownEvent::Turn(d)) => v.crown(d),
+                Some(remote::CrownEvent::Press) => v.press("home"),
+                None => {}
+            }
+            if pressed {
+                v.press("side");
+            }
+        }
     }
 
     fn side_panel(&mut self, ui: &mut egui::Ui, inst: &instance::Instance, st: Option<&instance::Status>) {
@@ -445,46 +501,56 @@ impl App {
                 ("CPU", format!("{:.0}%", st.map(|s| s.cpu_pct).unwrap_or(0.0)), ""),
                 ("Up for", st.and_then(|s| s.uptime_s).map(fmt_uptime).unwrap_or("–".into()), ""),
             ]);
+            // the GPU helper apart from the phone's own memory: one helper may serve several devices
+            if let Some(g) = st.and_then(|s| s.gpu.as_ref()) {
+                ui.add_space(S1);
+                let shared = if g.users > 1 { format!(", shared by {} devices", g.users) } else { String::new() };
+                ui.label(muted(format!("+ {} for the GPU helper{shared}", fmt_mb(g.pss_mb))))
+                    .on_hover_text("mtlvk runs every Metal call on Vulkan. It is not in this device's memory; the total in the sidebar counts it once.");
+            }
             ui.add_space(S3);
         }
         ui.spacing_mut().item_spacing.y = 2.0;
         let lw = 84.0;
-        kv_text(ui, lw, "Model", &inst.model);
-        kv_text(ui, lw, x86sim_core::sim::platform_name(&inst.platform), if inst.runtime_present { inst.ios.clone() } else { format!("{} · not installed", inst.ios) });
+        // model, version and state are the header's; here only what it doesn't show
         kv_text(ui, lw, "Screen", format!("{} × {} pixels", inst.screen.0, inst.screen.1));
         if let Some(s) = st.filter(|_| on) {
-            kv_text(ui, lw, "Processes", format!("{}{}", s.procs.len(), if s.mtlvk { " · GPU helper on" } else { "" }));
+            kv_text(ui, lw, "Processes", s.procs.len().to_string());
         }
         let prof = features::load(&inst.dir);
         let off: Vec<String> = features::defs().features.iter().filter(|f| !prof.enabled(&f.id)).map(|f| f.title.clone()).collect();
-        kv(ui, lw, "Features", |ui| {
-            let preset = features::preset_of(&prof).map(|p| match p.as_str() { "full" => "Full set", "lean" => "Lean set", "minimal" => "Minimal set", _ => "Custom" }.to_string());
-            let t = match (preset, off.len()) {
-                (Some(p), 0) => p,
-                (Some(p), n) => format!("{p} · {n} off"),
-                (None, 0) => "Everything on".to_string(),
-                (None, n) => format!("Custom · {n} off"),
-            };
-            let r = ui.label(egui::RichText::new(t).size(T_SMALL).color(INK));
-            if !off.is_empty() {
-                r.on_hover_text(format!("Off: {}", off.join(", ")));
-            }
-        });
+        // Platforms 1: the feature toggles are iPhone / iPad jobs (wallpaper, Search, Siri, Maps...): an Apple TV or
+        // Apple Watch runs its own job set, so neither the summary nor the section is shown for them
+        let ios = inst.platform == "ios";
         ui.spacing_mut().item_spacing.y = S2;
         ui.add_space(S3);
         hline(ui);
 
-        // ---- Features
-        let preset = features::preset_of(&prof).map(|p| match p.as_str() { "full" => "Full", "lean" => "Lean", "minimal" => "Minimal", _ => "Custom" }).unwrap_or("Custom");
-        if self.fold_section(ui, "features", "Features", preset) {
-            self.features_section(ui, inst, phase);
+        // ---- Features: the set in one place. Folded, the header says which set and how many are off (which ones on
+        // hover); open, the segment and the switches below say it themselves
+        if ios {
+            let preset = features::preset_of(&prof).map(|p| match p.as_str() { "full" => "Full set", "lean" => "Lean set", "minimal" => "Minimal set", _ => "Custom" });
+            let (summary, tip) = if self.open.contains("features") {
+                (String::new(), String::new())
+            } else {
+                let t = match (preset, off.len()) {
+                    (Some(p), 0) => p.to_string(),
+                    (Some(p), n) => format!("{p} · {n} off"),
+                    (None, 0) => "Everything on".to_string(),
+                    (None, n) => format!("Custom · {n} off"),
+                };
+                (t, if off.is_empty() { String::new() } else { format!("Off: {}", off.join(", ")) })
+            };
+            if self.fold_section(ui, "features", "Features", &summary, &tip) {
+                self.features_section(ui, inst, phase);
+            }
+            hline(ui);
         }
-        hline(ui);
 
         // ---- Logs
         let nlines = self.logs.as_ref().filter(|l| l.0 == id).map(|l| l.1.lines.len()).unwrap_or(0);
         let summary = if self.open.contains("logs") && nlines > 0 { format!("{nlines} lines") } else { String::new() };
-        if self.fold_section(ui, "logs", "Logs", &summary) {
+        if self.fold_section(ui, "logs", "Logs", &summary, "") {
             self.logs_section(ui, inst, st);
         } else {
             self.logs = None;
@@ -492,21 +558,21 @@ impl App {
         hline(ui);
 
         // ---- Performance
-        let summary = if on { format!("{} · {:.0}% CPU", fmt_mb(st.map(|s| s.pss_mb).unwrap_or(0.0)), st.map(|s| s.cpu_pct).unwrap_or(0.0)) } else { String::new() };
-        if self.fold_section(ui, "perf", "Performance", &summary) {
+        // no summary: memory and CPU are the tiles at the top
+        if self.fold_section(ui, "perf", "Performance", "", "") {
             self.perf_section(ui, &id, st);
         }
         hline(ui);
 
         // ---- Advanced
-        if self.fold_section(ui, "adv", "Advanced", "") {
+        if self.fold_section(ui, "adv", "Advanced", "", "") {
             self.advanced_section(ui, inst, st);
         }
     }
 
-    fn fold_section(&mut self, ui: &mut egui::Ui, key: &'static str, title_text: &str, summary: &str) -> bool {
+    fn fold_section(&mut self, ui: &mut egui::Ui, key: &'static str, title_text: &str, summary: &str, tip: &str) -> bool {
         let open = self.open.contains(key);
-        if fold(ui, title_text, summary, open) != open {
+        if fold(ui, title_text, summary, tip, open) != open {
             if open {
                 self.open.remove(key);
             } else {
@@ -615,7 +681,8 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             let rest = ui.available_width() - 116.0 - 2.0 * H_MD - 3.0 * 6.0 - 4.0;
-            search(ui, &mut self.log_filter, "Filter text or process", rest.max(80.0));
+            let rest = rest.max(80.0);
+            search(ui, &mut self.log_filter, if rest < 190.0 { "Filter" } else { "Filter text or process" }, rest).on_hover_text("Show only lines with this text, or from this process");
             let groups = self.logs.as_ref().map(|l| l.1.groups()).unwrap_or_default();
             egui::ComboBox::from_id_salt("logsrc")
                 .icon(caret)
@@ -629,7 +696,7 @@ impl App {
                             ui.selectable_value(&mut self.log_source, g.to_string(), g).on_hover_text(match g {
                                 "System" => "One log per system service and app",
                                 "Translator" => "The ARM translator, one log per process",
-                                "Boot" => "Starting the phone",
+                                "Boot" => "Starting the device",
                                 "Graphics" => "The GPU helper",
                                 _ => "Memory clean-up",
                             });
@@ -638,11 +705,11 @@ impl App {
                 })
                 .response
                 .on_hover_text("Which logs to show");
-            let (ic, tip) = if self.log_paused { (icon::PLAY, "Follow") } else { (icon::PAUSE, "Pause") };
+            let (ic, tip) = if self.log_paused { (icon::PLAY, "Follow new lines again") } else { (icon::PAUSE, "Pause: stop following new lines") };
             if ui.add(Btn::tool(ic)).on_hover_text(tip).clicked() {
                 self.log_paused = !self.log_paused;
             }
-            if ui.add(Btn::tool(icon::TRASH)).on_hover_text("Clear").clicked() {
+            if ui.add(Btn::tool(icon::TRASH)).on_hover_text("Clear the lines shown here (the log files stay)").clicked() {
                 if let Some((_, t)) = &mut self.logs {
                     t.lines.clear();
                 }
@@ -702,13 +769,13 @@ impl App {
 
     fn perf_section(&mut self, ui: &mut egui::Ui, id: &str, st: Option<&instance::Status>) {
         let Some(s) = st.filter(|s| s.phase != Phase::Off) else {
-            ui.label(muted("Start the phone to see what it uses."));
+            ui.label(muted("Start the device to see what it uses."));
             ui.add_space(S3);
             return;
         };
         let fps = self.viewers.get(id).map(|v| v.fps()).unwrap_or(0);
-        let (fv, fnote) = if fps > 0 { (fps.to_string(), "fps") } else { ("Idle".to_string(), "") };
-        stat_row(ui, CARD, &[("Processes", s.procs.len().to_string(), ""), ("Screen updates", fv, fnote)]);
+        // the process count is in the overview above; here only the screen's rate, then who uses what
+        kv_text(ui, 104.0, "Screen updates", if fps > 0 { format!("{fps} fps") } else { "Idle".to_string() });
         ui.add_space(S2);
         let top: Vec<_> = s.procs.iter().take(25).collect();
         let max = s.procs.first().map(|p| p.pss_mb).unwrap_or(1.0).max(1.0);
@@ -719,7 +786,7 @@ impl App {
             let (cpu_w, mem_w, bar_w) = (40.0, 58.0, 56.0);
             let name_w = w - cpu_w - mem_w - bar_w - 16.0;
             let (hr, _) = ui.allocate_exact_size(egui::vec2(w, 22.0), egui::Sense::hover());
-            let hf = font_sb(10.5);
+            let hf = table_head();
             let p = ui.painter();
             p.text(hr.left_center(), egui::Align2::LEFT_CENTER, "PROCESS", hf.clone(), INK_3);
             p.text(egui::pos2(hr.right() - cpu_w - 8.0, hr.center().y), egui::Align2::RIGHT_CENTER, "MEMORY", hf.clone(), INK_3);
@@ -742,6 +809,19 @@ impl App {
                 ui.add_space(6.0);
                 ui.label(muted(format!("and {} smaller ones", s.procs.len() - 25)));
             }
+            // the GPU helper: on its own line, not counted in the phone's memory (it may serve other phones too)
+            if let Some(g) = &s.gpu {
+                ui.add_space(4.0);
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 22.0), egui::Sense::hover());
+                let p = ui.painter();
+                p.hline(r.x_range(), r.top(), egui::Stroke::new(1.0_f32, BORDER_STRONG));
+                let name = if g.users > 1 { format!("GPU helper (mtlvk) · shared by {}", g.users) } else { "GPU helper (mtlvk)".to_string() };
+                let gl = galley_trunc(ui, &name, font(T_SMALL), INK_2, name_w + bar_w);
+                p.galley(egui::pos2(r.left(), r.center().y - gl.size().y / 2.0), gl, INK_2);
+                p.text(egui::pos2(r.right() - cpu_w - 8.0, r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.0} MB", g.pss_mb), font(T_SMALL), INK_3);
+                p.text(egui::pos2(r.right(), r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.0}%", g.cpu_pct), font(T_SMALL), INK_3);
+                resp.on_hover_text(format!("Runs every Metal call on Vulkan for the devices that share it (pid {}). Not part of this device's memory above.", g.pid));
+            }
         });
         ui.add_space(S3);
     }
@@ -757,7 +837,7 @@ impl App {
                 ui.label(egui::RichText::new(icon::INFO).size(12.0).color(INK_3)).on_hover_text(tip);
             });
         };
-        field(ui, "Screen scaling", "How the screen is shrunk when it is drawn smaller than the phone (a small window, the side panel). Smooth averages the pixels; Sharp keeps every nth one (least CPU, but text and edges shimmer); Full sends the whole frame and lets the GPU scale it. Applies at once.");
+        field(ui, "Screen scaling", "How the screen is shrunk when it is drawn smaller than the device (a small window, the side panel). Smooth averages the pixels; Sharp keeps every nth one (least CPU, but text and edges shimmer); Full sends the whole frame and lets the GPU scale it. Applies at once.");
         let opts = [("smooth", "Smooth"), ("sharp", "Sharp"), ("full", "Full resolution")];
         let sel = opts.iter().position(|o| o.0 == s.scaling);
         let mut scaled = false;
@@ -789,7 +869,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             ui.label(egui::RichText::new("Share the GPU helper").size(T_SMALL).family(medium()).color(INK_2));
-            ui.label(egui::RichText::new(icon::INFO).size(12.0).color(INK_3)).on_hover_text("A64_MTLVK_SOCKET: use one mtlvk for all running phones instead of starting another");
+            ui.label(egui::RichText::new(icon::INFO).size(12.0).color(INK_3)).on_hover_text("A64_MTLVK_SOCKET: use one mtlvk for all running devices instead of starting another");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if toggle(ui, &mut s.share_mtlvk).changed() {
                     save = true;
@@ -830,14 +910,8 @@ impl App {
         row(ui, "Model id", inst.model_id.clone());
         ui.spacing_mut().item_spacing.y = S2;
         ui.add_space(S3);
-        ui.horizontal(|ui| {
-            if ui.add(Btn::secondary("Own window").icon(icon::APP_WINDOW).small()).on_hover_text("This phone's screen in a separate window, with its buttons beside it (simview)").clicked() {
-                match x86sim_core::sim::show_phone(inst) {
-                    Ok(()) => self.say(format!("Opened {} in its own window", inst.name)),
-                    Err(e) => self.say(format!("Couldn't open the window: {e:#}")),
-                }
-            }
-            if ui.add(Btn::secondary("Pre-translate this version").icon(icon::LIGHTNING).small()).clicked() {
+        ui.horizontal_wrapped(|ui| {
+            if ui.add(Btn::secondary("Pre-translate this version").icon(icon::LIGHTNING).small()).on_hover_text("Open Pre-translate for this device's version and apps").clicked() {
                 self.aot.select(inst.runtime_root.clone(), Some(inst.dir.clone()));
                 self.view = View::Aot;
             }

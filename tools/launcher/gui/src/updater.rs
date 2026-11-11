@@ -96,7 +96,7 @@ impl App {
         }
         match self.updater.phase() {
             Phase::Available(rel) => {
-                if ui.add(Btn::primary(&format!("Update to {}", rel.tag)).icon(icon::DOWNLOAD_SIMPLE).small()).on_hover_text("Downloads the new AppImage and replaces this one; your phones and data stay").clicked() {
+                if ui.add(Btn::primary(format!("Update to {}", rel.tag)).icon(icon::DOWNLOAD_SIMPLE).small()).on_hover_text("Downloads the new AppImage and replaces this one; your devices and data stay").clicked() {
                     self.updater.download(ui.ctx(), rel);
                 }
                 ui.add_space(4.0);
@@ -109,8 +109,8 @@ impl App {
             }
             Phase::Ready(rel, path) => {
                 let running = self.status.values().any(|s| s.phase != x86sim_core::instance::Phase::Off);
-                let tip = if running { "Restarts x86Sim; running phones keep running" } else { "Restarts x86Sim" };
-                if ui.add(Btn::primary(&format!("Restart for {}", rel.tag)).icon(icon::ARROW_CLOCKWISE).small()).on_hover_text(tip).clicked() {
+                let tip = if running { "Restarts x86Sim; running devices keep running" } else { "Restarts x86Sim" };
+                if ui.add(Btn::primary(format!("Restart for {}", rel.tag)).icon(icon::ARROW_CLOCKWISE).small()).on_hover_text(tip).clicked() {
                     match update::relaunch(&path) {
                         Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
                         Err(e) => self.say(format!("Couldn't restart: {e:#}")),
@@ -165,11 +165,11 @@ impl App {
                 };
                 form_row(ui, "Version", &line, true, |ui| {
                     let busy = matches!(self.updater.phase(), Phase::Checking | Phase::Downloading(_));
-                    if ui.add_enabled(!busy, Btn::secondary("Check now")).clicked() {
+                    if ui.add_enabled(!busy, Btn::secondary("Check now")).on_hover_text("Look for a newer release now").on_disabled_hover_text("Already checking or updating").clicked() {
                         self.updater.check(ui.ctx(), true, &self.hub.channel);
                     }
                     if let Phase::Available(rel) = self.updater.phase() {
-                        if ui.add(Btn::primary("Update")).clicked() {
+                        if ui.add(Btn::primary("Update")).on_hover_text("Downloads the new AppImage and replaces this one; your devices and data stay").clicked() {
                             self.updater.download(ui.ctx(), rel);
                         }
                     }

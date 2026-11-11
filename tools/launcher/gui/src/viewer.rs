@@ -94,7 +94,7 @@ fn convert(f: &x86sim_core::ring::Frame, step: usize, rot: u32, smooth: bool) ->
             for sy in 0..step {
                 let row = &f.bgra[(y * step + sy) * stride..];
                 for (x, a) in acc.iter_mut().enumerate() {
-                    for p in row[x * step * 4..(x + 1) * step * 4].chunks_exact(4) {
+                    for p in row[x * step * 4..(x + 1) * step * 4].as_chunks::<4>().0 {
                         a[0] += p[2] as u32;
                         a[1] += p[1] as u32;
                         a[2] += p[0] as u32;
@@ -164,7 +164,7 @@ impl Viewer {
                             // then shrinks it by less than 2x, which linear filtering does well); sharp: at most as wide
                             let step = match sc {
                                 SCALE_FULL => 1,
-                                SCALE_SHARP => (src_w + tw - 1) / tw,
+                                SCALE_SHARP => src_w.div_ceil(tw),
                                 _ => src_w / tw,
                             }
                             .max(1);
@@ -387,7 +387,8 @@ impl Viewer {
         if live && self.crown {
             let (delta, hover) = ctx.input(|i| (i.raw_scroll_delta, i.pointer.hover_pos()));
             if delta.y != 0.0 && hover.is_some_and(|p| screen.contains(p)) {
-                self.hid.crown(-delta.y * 0.16);
+                // ~60 a notch: half a Settings row (a step of ~120 scrolls one; 0.16 a pixel barely moved)
+                self.hid.crown(-delta.y * 1.2);
             }
         }
         // mouse wheel / touchpad scroll over the screen: a finger dragging the content (lifted after a short pause)
@@ -546,22 +547,29 @@ impl Viewer {
         self.hid.hold(button, ms);
     }
 
-    /// Platforms 1: a key tapped (the TV remote's arrows and select are the keyboard's)
-    pub fn tap_key(&mut self, usage: u32) {
-        self.hid.key(true, usage);
-        self.hid.key(false, usage);
-    }
-
     /// Platforms 1: the Digital Crown turned by `delta` (host/simhid "crown"; positive scrolls towards the bottom)
     pub fn crown(&mut self, delta: f32) {
         self.hid.crown(delta);
+    }
+
+    /// Platforms 1: a keyboard key held (the TV remote's clickpad: arrows and select repeat while held, as on a remote)
+    pub fn key(&mut self, down: bool, usage: u32) {
+        self.hid.key(down, usage);
+    }
+
+    /// Platforms 1: a consumer-page button pressed and let go by its HID usage (host/simhid "usage"): the Siri Remote's
+    /// buttons simhid has no name for (mute 0xe2)
+    pub fn tap_usage(&mut self, page: u32, usage: u32) {
+        self.hid.usage(page, usage, true);
+        std::thread::sleep(std::time::Duration::from_millis(60));
+        self.hid.usage(page, usage, false);
     }
 
     /// Saves the screen at full resolution, upright, as Simulator's File > Save Screen does: "<name> <date> at
     /// <time>.png" in the Pictures folder (xdg-user-dir PICTURES, else ~/Pictures). Returns the file.
     pub fn screenshot(&self, name: &str) -> Result<std::path::PathBuf, String> {
         let path = self.shared.ring.lock().unwrap().clone();
-        let f = Ring::new(&path).latest().ok_or("no picture from the phone yet")?;
+        let f = Ring::new(&path).latest().ok_or("no picture from the device yet")?;
         let png = f.png(self.shared.rot.load(Ordering::Relaxed)).map_err(|e| e.to_string())?;
         let run = |c: &str, a: &[&str]| std::process::Command::new(c).args(a).output().ok().filter(|o| o.status.success()).map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|s| !s.is_empty());
         let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();

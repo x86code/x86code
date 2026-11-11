@@ -37,17 +37,12 @@ impl App {
 
     pub fn home(&mut self, ui: &mut egui::Ui) {
         let n = self.insts.len();
-        let running = self.insts.iter().filter(|i| self.phase(&i.id) != Phase::Off).count();
-        let subtitle = match (n, running) {
-            (0, _) => String::new(),
-            (n, 0) => format!("{n} phone{}", if n == 1 { "" } else { "s" }),
-            (n, r) => format!("{n} phone{} · {r} running", if n == 1 { "" } else { "s" }),
-        };
         let mut add = false;
         let sorts = [("name", "Name"), ("newest", "Newest first"), ("oldest", "Oldest first"), ("model", "Model"), ("ios", "Version")];
         let mut sort = self.hub.sort.clone();
-        page_header(ui, "Phones", &subtitle, |ui| {
-            add = ui.add(Btn::primary("Add phone").icon(icon::PLUS)).on_hover_text("Ctrl+N").clicked();
+        // no subtitle: the count is on the nav item, what runs in the sidebar's footer
+        page_header(ui, "Devices", "", |ui| {
+            add = ui.add(Btn::primary("Add device").icon(icon::PLUS)).on_hover_text("Add an iPhone, iPad, Apple TV or Apple Watch (Ctrl+N)").clicked();
             if n > 1 {
                 let cur = sorts.iter().find(|s| s.0 == sort).map(|s| s.1).unwrap_or("Name");
                 egui::ComboBox::from_id_salt("phonesort").icon(caret).width(150.0).selected_text(body(format!("{}  {cur}", icon::SORT_ASCENDING))).show_ui(ui, |ui| {
@@ -56,7 +51,9 @@ impl App {
                             sort = k.to_string();
                         }
                     }
-                });
+                })
+                .response
+                .on_hover_text("Sort the devices by");
             }
         });
         if sort != self.hub.sort {
@@ -69,8 +66,8 @@ impl App {
         }
         if self.insts.is_empty() {
             card(ui, |ui| {
-                empty_state(ui, icon::DEVICE_MOBILE, "No phones yet", "Add one to get started. Each phone has its own apps, data and settings.", |ui| {
-                    if ui.add(Btn::primary("Add phone").icon(icon::PLUS)).clicked() {
+                empty_state(ui, icon::DEVICE_MOBILE, "No devices yet", "Add an iPhone, iPad, Apple TV or Apple Watch to get started. Each has its own apps, data and settings.", |ui| {
+                    if ui.add(Btn::primary("Add device").icon(icon::PLUS)).clicked() {
                         add = true;
                     }
                 });
@@ -135,7 +132,7 @@ impl App {
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 1.0;
                             ui.label(strong(format!("{ios} isn't installed")));
-                            let need = format!("{} phone{} need{} it", ids.len(), if ids.len() == 1 { "" } else { "s" }, if ids.len() == 1 { "s" } else { "" });
+                            let need = format!("{} device{} need{} it", ids.len(), if ids.len() == 1 { "" } else { "s" }, if ids.len() == 1 { "s" } else { "" });
                             let line = if let Some(f) = &dl {
                                 fetch_line(f)
                             } else if let Some(gb) = gb {
@@ -167,7 +164,9 @@ impl App {
                     let name = galley_trunc(ui, &inst.name, font_m(T_BODY), INK, 220.0);
                     let nw = name.size().x;
                     p.galley(egui::pos2(x0 + 22.0, rect.center().y - name.size().y / 2.0), name, INK);
-                    p.text(egui::pos2(x0 + 22.0 + nw + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, &inst.model, font(T_SMALL), INK_3);
+                    if !same_name(&inst.name, &inst.model) {
+                        p.text(egui::pos2(x0 + 22.0 + nw + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, short_model(&inst.model), font(T_SMALL), INK_3);
+                    }
                     p.text(rect.right_center() - egui::vec2(20.0, 0.0), egui::Align2::RIGHT_CENTER, icon::CARET_RIGHT, font(13.0), if resp.hovered() { INK_2 } else { INK_3 });
                     if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                         open = Some(id.clone());
@@ -201,12 +200,8 @@ impl App {
             ui.painter().rect_filled(well.shrink(1.0), egui::CornerRadius { nw: R_LG - 1, ne: R_LG - 1, sw: 0, se: 0 }, rgb_well());
             ui.painter().hline(well.x_range(), well.bottom(), egui::Stroke::new(1.0_f32, BORDER));
             let live = matches!(phase, Phase::Running | Phase::Starting) && thumbs;
-            let placeholder = match phase {
-                Phase::Off => "Off",
-                Phase::Starting => "Starting…",
-                Phase::Stopping => "Stopping…",
-                Phase::Running => if thumbs { "" } else { "Running" },
-            };
+            // no state on the screen: the status line below says it once
+            let placeholder = "";
             let inner = well.shrink2(egui::vec2(S4, S4));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Center)));
             if let Some(v) = self.viewer(id) {
@@ -256,7 +251,7 @@ impl App {
                 ui.set_width(w - 28.0);
                 ui.spacing_mut().item_spacing.y = 3.0;
                 ui.add(egui::Label::new(title(&inst.name)).truncate());
-                ui.add(egui::Label::new(muted(format!("{} · {}", inst.model, inst.ios))).truncate());
+                ui.add(egui::Label::new(muted(device_line(&inst.name, &inst.model, &inst.ios))).truncate()).on_hover_text(format!("{} · {}", inst.model, inst.ios));
                 ui.add_space(4.0);
                 let (label, col) = phase_look(phase, true);
                 let line = match &st {
@@ -279,12 +274,12 @@ impl App {
                     let bw = ((ui.available_width() - S2) / 2.0).floor();
                     match phase {
                         Phase::Off => {
-                            if ui.add(Btn::primary("Start").icon(icon::PLAY).min_w(bw)).clicked() {
+                            if ui.add(Btn::primary("Start").icon(icon::PLAY).min_w(bw)).on_hover_text("Start this device").clicked() {
                                 self.start(id);
                             }
                         }
                         Phase::Running | Phase::Starting => {
-                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(CRIT_INK).min_w(bw)).clicked() {
+                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(CRIT_INK).min_w(bw)).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
                                 self.stop(id);
                             }
                         }
@@ -292,7 +287,7 @@ impl App {
                             ui.add_enabled(false, Btn::secondary("Stopping…").min_w(bw));
                         }
                     }
-                    if ui.add(Btn::secondary("Open").min_w(bw)).clicked() {
+                    if ui.add(Btn::secondary("Open").min_w(bw)).on_hover_text("Its screen, logs and settings").clicked() {
                         open = true;
                     }
                 });
@@ -317,7 +312,7 @@ impl App {
                 Ok(p) => {
                     self.refresh_instances();
                     let id = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                    self.say("Phone added");
+                    self.say("Device added");
                     self.view = View::Phone(id);
                     return;
                 }
@@ -330,7 +325,7 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_width(400.0);
                 ui.spacing_mut().item_spacing.y = 4.0;
-                ui.label(egui::RichText::new("Add a phone").size(T_TITLE + 1.0).family(semibold()).color(INK));
+                ui.label(dialog_title("Add a device"));
                 ui.label(sub("It gets its own apps, data and settings."));
                 ui.add_space(S5);
                 let fw = ui.available_width();
@@ -353,7 +348,7 @@ impl App {
                     d.last_model = d.model;
                     if let Some(i) = self.runtimes.iter().position(|r| r.present && r.platform == mp && r.restricted_to.contains(&mid)) {
                         d.runtime = i;
-                    } else if !self.runtimes.get(d.runtime).is_some_and(|r| fits(r)) {
+                    } else if !self.runtimes.get(d.runtime).is_some_and(fits) {
                         d.runtime = self.runtimes.iter().rposition(|r| r.present && r.platform == mp && r.restricted_to.is_empty()).unwrap_or(usize::MAX);
                     }
                 }
@@ -380,7 +375,7 @@ impl App {
                             ui.label(muted(format!("{what}: {}", fetch_line(f))));
                         } else {
                             ui.label(muted(format!("{pname} isn't installed yet.")));
-                            if ui.add(Btn::secondary(&format!("Download {what}")).icon(icon::DOWNLOAD_SIMPLE)).clicked() {
+                            if ui.add(Btn::secondary(format!("Download {what}")).icon(icon::DOWNLOAD_SIMPLE)).clicked() {
                                 self.download(build, &what);
                             }
                         }
@@ -388,13 +383,13 @@ impl App {
                 }
                 ui.add_space(S3);
                 ui.label(egui::RichText::new("Name").size(T_SMALL).family(medium()).color(INK_2));
-                let r = ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(egui::RichText::new("Optional, e.g. Test phone").color(INK_3)).desired_width(fw).margin(egui::Margin::symmetric(8, 6)));
+                let r = ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(egui::RichText::new("Optional, e.g. Test device").color(INK_3)).desired_width(fw).margin(egui::Margin::symmetric(8, 6)));
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && self.runtimes.get(d.runtime).is_some_and(|r| r.present && fits(r)) && !d.working {
                     create = true;
                 }
                 ui.add_space(S3);
                 ui.label(muted(format!("The first start takes a few minutes while {pname} sets itself up.")));
-                ui.add_space(S4);
+                ui.add_space(S5);
                 ui.horizontal(|ui| {
                     if d.working {
                         ui.spinner();
@@ -402,7 +397,7 @@ impl App {
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let ok = self.runtimes.get(d.runtime).is_some_and(|r| r.present && fits(r)) && !d.working;
-                        if ui.add_enabled(ok, Btn::primary("Add phone").min_w(96.0)).clicked() {
+                        if ui.add_enabled(ok, Btn::primary("Add device").min_w(96.0)).on_disabled_hover_text(if d.working { "Setting it up…" } else { "Pick an installed version first" }).clicked() {
                             create = true;
                         }
                         if ui.add_enabled(!d.working, Btn::secondary("Cancel").min_w(80.0)).clicked() {

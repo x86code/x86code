@@ -41,6 +41,7 @@ pub const T_SMALL: f32 = 12.0;
 pub const T_BODY: f32 = 13.0;
 pub const T_LG: f32 = 14.0;
 pub const T_TITLE: f32 = 16.0;
+pub const T_STAT: f32 = 18.0; // the value of a stat tile, nothing else
 pub const T_H1: f32 = 20.0;
 
 // ---- spacing, radii, control heights
@@ -92,7 +93,15 @@ pub fn muted(t: impl Into<String>) -> RichText {
     RichText::new(t).size(T_SMALL).color(INK_3)
 }
 pub fn overline(t: &str) -> RichText {
-    RichText::new(t.to_uppercase()).size(10.5).family(semibold()).color(INK_3).extra_letter_spacing(0.6)
+    RichText::new(t.to_uppercase()).size(T_CAPTION).family(semibold()).color(INK_3).extra_letter_spacing(0.6)
+}
+/// Column headings of a table (the uppercase caption).
+pub fn table_head() -> FontId {
+    font_sb(T_CAPTION)
+}
+/// The title of a modal dialog.
+pub fn dialog_title(t: impl Into<String>) -> RichText {
+    RichText::new(t).size(T_TITLE).family(semibold()).color(INK)
 }
 
 pub fn theme(ctx: &egui::Context) {
@@ -326,15 +335,30 @@ pub fn list_card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> 
 
 /// Page title row: title + optional subtitle on the left, actions on the right.
 pub fn page_header(ui: &mut egui::Ui, title: &str, sub_text: &str, actions: impl FnOnce(&mut egui::Ui)) {
+    // the text keeps clear of the actions (their width as last drawn): unbounded, a long subtitle ran under the
+    // button at narrow widths ("Check for updates" on Versions)
+    let aw_id = ui.id().with(("page-header-actions", title));
+    let aw: f32 = ui.data(|d| d.get_temp(aw_id)).unwrap_or(0.0);
     ui.horizontal(|ui| {
+        let tw = (ui.available_width() - aw - S4).max(160.0);
         ui.vertical(|ui| {
+            ui.set_max_width(tw);
             ui.spacing_mut().item_spacing.y = 2.0;
-            ui.label(h1(title));
+            ui.add(egui::Label::new(h1(title)).truncate());
             if !sub_text.is_empty() {
-                ui.label(sub(sub_text));
+                ui.add(egui::Label::new(sub(sub_text)).wrap());
             }
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), actions);
+        let w = ui
+            .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                actions(ui);
+                ui.min_rect().width()
+            })
+            .inner;
+        if (w - aw).abs() > 0.5 {
+            ui.data_mut(|d| d.insert_temp(aw_id, w));
+            ui.ctx().request_repaint();
+        }
     });
     ui.add_space(S5);
 }
@@ -389,7 +413,7 @@ pub fn stat(ui: &mut egui::Ui, w: f32, label: &str, value: &str, note: &str, fil
             ui.label(muted(label));
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                ui.label(RichText::new(value).size(18.0).family(semibold()).color(INK));
+                ui.label(RichText::new(value).size(T_STAT).family(semibold()).color(INK));
                 if !note.is_empty() {
                     ui.label(muted(note));
                 }
@@ -431,16 +455,31 @@ pub fn kv_text(ui: &mut egui::Ui, label_w: f32, label: &str, value: impl Into<St
 pub fn form_row(ui: &mut egui::Ui, label: &str, desc: &str, last: bool, control: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
         ui.set_width(ui.available_width());
+        // the description wraps to what the control leaves (its width as last drawn): unbounded, a long one ran under
+        // the control ("How much" on Pre-translate)
+        let cw_id = ui.id().with(("form-row-control", label));
+        let cw: f32 = ui.data(|d| d.get_temp(cw_id)).unwrap_or(160.0);
         ui.horizontal(|ui| {
             ui.set_min_height(H_MD);
+            let tw = (ui.available_width() - cw - S4).max(140.0);
             ui.vertical(|ui| {
+                ui.set_max_width(tw);
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(strong(label));
                 if !desc.is_empty() {
-                    ui.label(muted(desc));
+                    ui.add(egui::Label::new(muted(desc)).wrap());
                 }
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control);
+            let w = ui
+                .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    control(ui);
+                    ui.min_rect().width()
+                })
+                .inner;
+            if (w - cw).abs() > 0.5 {
+                ui.data_mut(|d| d.insert_temp(cw_id, w));
+                ui.ctx().request_repaint();
+            }
         });
     });
     if !last {
@@ -544,8 +583,9 @@ pub fn nav_item(ui: &mut egui::Ui, ic: &str, label: &str, on: bool, trailing: &s
     resp.clicked()
 }
 
-/// Fold-out section header: chevron, title, summary at the right. Returns the new open state.
-pub fn fold(ui: &mut egui::Ui, title_text: &str, summary: &str, open: bool) -> bool {
+/// Fold-out section header: chevron, title, summary at the right (`tip`: more about it on hover). Returns the new
+/// open state.
+pub fn fold(ui: &mut egui::Ui, title_text: &str, summary: &str, tip: &str, open: bool) -> bool {
     let w = ui.available_width();
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 40.0), Sense::click());
     let p = ui.painter();
@@ -558,7 +598,9 @@ pub fn fold(ui: &mut egui::Ui, title_text: &str, summary: &str, open: bool) -> b
     if !summary.is_empty() {
         p.text(rect.right_center() - egui::vec2(8.0, 0.0), egui::Align2::RIGHT_CENTER, summary, font(T_SMALL), INK_3);
     }
-    if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let resp = if tip.is_empty() { resp } else { resp.on_hover_text(tip) };
+    if resp.clicked() {
         !open
     } else {
         open
@@ -624,6 +666,33 @@ pub fn fmt_mb(mb: f64) -> String {
     }
 }
 
+/// A model's name for compact places (cards, the device header): without the output mode Apple appends
+/// ("Apple TV 4K (3rd generation) (at 1080p)" -> "Apple TV 4K (3rd gen)"). The full name stays in hover text.
+pub fn short_model(model: &str) -> String {
+    let mut s = model.to_string();
+    while let Some(a) = s.find(" (at ") {
+        match s[a..].find(')') {
+            Some(b) => s.replace_range(a..a + b + 1, ""),
+            None => break,
+        }
+    }
+    s.replace(" generation)", " gen)")
+}
+
+/// A device named after its model ("iPhone Duo") doesn't repeat the model next to its name.
+pub fn same_name(name: &str, model: &str) -> bool {
+    name.trim().eq_ignore_ascii_case(model.trim()) || name.trim().eq_ignore_ascii_case(short_model(model).trim())
+}
+
+/// "iPhone 17 · iOS 27.2": the line under (or beside) a device's name.
+pub fn device_line(name: &str, model: &str, version: &str) -> String {
+    if same_name(name, model) {
+        version.to_string()
+    } else {
+        format!("{} · {version}", short_model(model))
+    }
+}
+
 /// Label and colour of a phone's state.
 pub fn phase_look(phase: x86sim_core::instance::Phase, runtime_present: bool) -> (&'static str, Color32) {
     use x86sim_core::instance::Phase;
@@ -664,5 +733,19 @@ pub fn menu_row(ui: &mut egui::Ui, ic: &str, label: &str, hint: &str, enabled: b
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
         resp
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_model_names() {
+        assert_eq!(short_model("Apple TV 4K (3rd generation) (at 1080p)"), "Apple TV 4K (3rd gen)");
+        assert_eq!(short_model("Apple Watch Series 11 (46mm)"), "Apple Watch Series 11 (46mm)");
+        assert_eq!(short_model("iPhone 18 Pro"), "iPhone 18 Pro");
+        assert_eq!(device_line("apple-tv", "Apple TV 4K (3rd generation) (at 1080p)", "tvOS 27.2"), "Apple TV 4K (3rd gen) · tvOS 27.2");
+        assert_eq!(device_line("iPhone Duo", "iPhone Duo", "iOS 27.2"), "iOS 27.2");
     }
 }

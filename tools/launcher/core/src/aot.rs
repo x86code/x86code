@@ -508,7 +508,7 @@ fn trim_to_slab(chunks: &mut Vec<PlanChunk>) -> bool {
         fixed += c.want - c.est_hot - c.est_hot / 8;
         cand.extend(c.hot.iter().map(|h| (h.1, i, per * 9.0 / 8.0)));
     }
-    cand.sort_by(|a, b| b.0.cmp(&a.0));
+    cand.sort_by_key(|c| std::cmp::Reverse(c.0));
     let mut left = room.saturating_sub(fixed) as f64;
     let mut keep = vec![0usize; chunks.len()];
     let mut cut_rank = 0;
@@ -1448,10 +1448,7 @@ impl ChunkFile {
     }
     fn sect(&self, i: usize) -> (usize, usize) {
         let sz = [24usize, 8, 24, 16];
-        let mut o = HDR + 8;
-        for k in 0..i {
-            o += self.n[k] as usize * sz[k];
-        }
+        let o = HDR + 8 + self.n[..i].iter().zip(sz).map(|(n, s)| *n as usize * s).sum::<usize>();
         (o, self.n[i] as usize * sz[i])
     }
     fn code(&self) -> (usize, usize) {
@@ -1499,8 +1496,8 @@ pub fn assemble(p: &Paths, plan: &Plan, man: &mut Manifest) -> Result<Image> {
         }
         last_end = f.code_size;
         code_size = code_size.max(f.code_size);
-        for k in 0..4 {
-            n[k] += f.n[k];
+        for (a, b) in n.iter_mut().zip(f.n) {
+            *a += b;
         }
         let (co, cl) = f.code();
         let fp = &f.data[co + cl..co + cl + f.pool_used as usize];
@@ -1553,7 +1550,7 @@ pub fn assemble(p: &Paths, plan: &Plan, man: &mut Manifest) -> Result<Image> {
         let (co, cl) = f.code();
         let mut code = f.data[co..co + cl].to_vec();
         let (ro, rl) = f.sect(1);
-        for e in f.data[ro..ro + rl].chunks_exact(8) {
+        for e in f.data[ro..ro + rl].as_chunks::<8>().0 {
             let off = u32::from_le_bytes(e[..4].try_into().unwrap()) as u64;
             let kind = e[4] as usize;
             if kind >= NB || off < f.code_off || off + 8 > f.code_size {
@@ -1620,6 +1617,21 @@ fn near_hot_first(mut statics: Vec<u64>, hot: &[(u64, u32)]) -> Vec<u64> {
     statics
 }
 
+/// Platforms 1: the builder process (tests/arm64/icstress*.sim) must be built for the runtime's platform: dyld_sim
+/// refuses a main executable of another one ("built for platform iOS-simulator"), so a tvOS / watchOS image built
+/// nothing. The platform is the runtime's SystemVersion.plist ProductName, as mksimdevice.py reads it.
+fn builder_exe(runtime_root: &Path) -> &'static str {
+    let sv = std::fs::read(runtime_root.join("System/Library/CoreServices/SystemVersion.plist")).unwrap_or_default();
+    let sv = String::from_utf8_lossy(&sv);
+    if sv.contains("Apple TVOS") || sv.contains("tvOS") {
+        "tests/arm64/icstress-tvos.sim"
+    } else if sv.contains("Watch OS") || sv.contains("watchOS") {
+        "tests/arm64/icstress-watchos.sim"
+    } else {
+        "tests/arm64/icstress.sim"
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1642,20 +1654,5 @@ mod tests {
         // the prefix itself need not exist (Darling makes it), its directory must
         assert_eq!(c.test_prefix, scratch().join("a64testprefix"));
         let _ = std::fs::remove_dir_all(&t);
-    }
-}
-
-/// Platforms 1: the builder process (tests/arm64/icstress*.sim) must be built for the runtime's platform: dyld_sim
-/// refuses a main executable of another one ("built for platform iOS-simulator"), so a tvOS / watchOS image built
-/// nothing. The platform is the runtime's SystemVersion.plist ProductName, as mksimdevice.py reads it.
-fn builder_exe(runtime_root: &Path) -> &'static str {
-    let sv = std::fs::read(runtime_root.join("System/Library/CoreServices/SystemVersion.plist")).unwrap_or_default();
-    let sv = String::from_utf8_lossy(&sv);
-    if sv.contains("Apple TVOS") || sv.contains("tvOS") {
-        "tests/arm64/icstress-tvos.sim"
-    } else if sv.contains("Watch OS") || sv.contains("watchOS") {
-        "tests/arm64/icstress-watchos.sim"
-    } else {
-        "tests/arm64/icstress.sim"
     }
 }

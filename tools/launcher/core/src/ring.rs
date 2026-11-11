@@ -174,7 +174,7 @@ impl Ring {
         let addr = unsafe { fx.as_mut_ptr().add(32) } as *mut u32;
         let ts = libc::timespec { tv_sec: d.as_secs() as libc::time_t, tv_nsec: d.subsec_nanos() as libc::c_long };
         unsafe {
-            libc::syscall(libc::SYS_futex, addr, 0 as libc::c_int /* FUTEX_WAIT */, (seq & 0xffff_ffff) as u32, &ts as *const libc::timespec, std::ptr::null::<u32>(), 0 as u32);
+            libc::syscall(libc::SYS_futex, addr, 0 as libc::c_int /* FUTEX_WAIT */, (seq & 0xffff_ffff) as u32, &ts as *const libc::timespec, std::ptr::null::<u32>(), 0u32);
         }
         true
     }

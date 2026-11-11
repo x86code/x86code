@@ -246,6 +246,10 @@ pub struct Summary {
     pub state: String,
     pub home: bool,
     pub memory_mb: f64,
+    /// the GPU helper it renders through (not in memory_mb: one helper may serve several phones)
+    pub gpu_memory_mb: Option<f64>,
+    /// how many running phones share that helper
+    pub gpu_shared_by: Option<usize>,
     pub cpu_pct: f64,
     pub processes: usize,
     pub uptime_s: Option<f64>,
@@ -273,6 +277,8 @@ pub fn summaries(sample_ms: u64) -> Vec<Summary> {
             state: format!("{:?}", s.phase).to_lowercase(),
             home: s.home,
             memory_mb: (s.pss_mb * 10.0).round() / 10.0,
+            gpu_memory_mb: s.gpu.as_ref().map(|g| (g.pss_mb * 10.0).round() / 10.0),
+            gpu_shared_by: s.gpu.as_ref().map(|g| g.users),
             cpu_pct: s.cpu_pct.round(),
             processes: s.procs.len(),
             uptime_s: s.uptime_s.map(|u| u.round()),
@@ -328,6 +334,22 @@ pub struct Proc {
     pub pss_mb: f64,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct GpuHelper {
+    pub pid: u32,
+    pub pss_mb: f64,
+    pub cpu_pct: f64,
+    /// running phones rendering through it (1: this one only)
+    pub users: usize,
+}
+
+/// Memory of the running phones together: each phone's own processes plus every GPU helper once (a shared helper was
+/// added to every phone that used it when summed per phone)
+pub fn total_mb(sts: &[&Status]) -> f64 {
+    let gpus: HashMap<u32, f64> = sts.iter().filter_map(|s| s.gpu.as_ref()).map(|g| (g.pid, g.pss_mb)).collect();
+    sts.iter().map(|s| s.pss_mb).sum::<f64>() + gpus.values().sum::<f64>()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum Phase {
     Off,
@@ -351,7 +373,10 @@ pub struct Status {
     /// the dirs this boot really uses (a phone booted by hand with the default dirs)
     pub state_dir: PathBuf,
     pub prefix: PathBuf,
-    pub mtlvk: bool,
+    /// The GPU helper (mtlvk) this phone renders through, counted apart from the phone: one helper serves every phone
+    /// that shares it (BootSettings::share_mtlvk), so its memory is not any one phone's. `pss_mb` / `cpu_pct` above are
+    /// the phone's own processes only.
+    pub gpu: Option<GpuHelper>,
     pub launchd_pid: Option<u32>,
     /// this phone has never reached its home screen (no <device>/.home-reached): a fresh device's first boot can stall
     /// on LaunchServices; the second boot works
@@ -424,6 +449,24 @@ pub struct Monitor {
 }
 
 impl Monitor {
+    /// (CPU %, PSS MB) of `pid`: CPU since the last poll that saw it, PSS cached for PSS_EVERY
+    fn sample(&mut self, pid: u32, ticks: u64, now: std::time::Instant, hz: f64) -> (f64, f64) {
+        let cpu = match self.last.get(&pid) {
+            Some((t0, at)) if ticks >= *t0 => (ticks - t0) as f64 / hz / now.duration_since(*at).as_secs_f64().max(0.05) * 100.0,
+            _ => 0.0,
+        };
+        self.last.insert(pid, (ticks, now));
+        let pss = match self.pss.get(&pid) {
+            Some((v, at)) if now.duration_since(*at) < PSS_EVERY => *v,
+            _ => {
+                let v = pss_mb(pid);
+                self.pss.insert(pid, (v, now));
+                v
+            }
+        };
+        (cpu, pss)
+    }
+
     pub fn poll(&mut self, insts: &[Instance]) -> Vec<Status> {
         let procs = scan();
         let now = std::time::Instant::now();
@@ -435,11 +478,13 @@ impl Monitor {
         }
         let mut out = vec![];
         let mut seen_pids = std::collections::HashSet::new();
+        let mut gpu_seen: HashMap<u32, (f64, f64)> = HashMap::new();
         for inst in insts {
             let marker = format!("/Volumes/SystemRoot{}/data/var/run/launchd_bootstrap.plist", inst.dir.display());
             let launchd = procs.iter().find(|(_, r)| r.comm == "launchd_sim" && r.cmd.contains(&marker)).map(|(p, _)| *p);
             let mut pids = vec![];
             let mut prefix = inst.prefix.clone();
+            let mut dserver = None;
             if let Some(l) = launchd {
                 let mut work = vec![l];
                 while let Some(p) = work.pop() {
@@ -452,6 +497,7 @@ impl Monitor {
                     let Some(r) = procs.get(&p) else { break };
                     pids.push(p);
                     if r.comm == "darlingserver" {
+                        dserver = Some(p);
                         if let Some(pre) = r.cmd.split_whitespace().nth(1) {
                             prefix = PathBuf::from(pre);
                         }
@@ -468,16 +514,16 @@ impl Monitor {
                     state_dir = def;
                 }
             }
-            let mtlvk_pid: Option<u32> = read(&format!("{}/mtlvk.pid", state_dir.display())).trim().parse().ok();
-            let mtlvk = mtlvk_pid.is_some_and(|p| procs.get(&p).is_some_and(|r| r.comm == "mtlvk"));
-            if launchd.is_some() {
-                if let Some(p) = mtlvk_pid.filter(|_| mtlvk) {
-                    pids.push(p);
-                }
-            }
-            let booting = procs.values().any(|r| r.comm == "boot-a64.sh" && !r.cmd.is_empty() && {
+            // the GPU helper this boot renders through: the socket its darlingserver was given (its own state dir's, or a
+            // shared one from another phone's), not its own state dir's mtlvk.pid, which names no helper while sharing
+            // and a stale one after the phone that started it stopped
+            let gpu_pid = dserver.and_then(|d| {
+                let env = read(&format!("/proc/{d}/environ"));
+                let sock = env.split('\0').find_map(|kv| kv.strip_prefix("X86SIM_MTLVK_SOCKET="))?.to_string();
+                procs.iter().find(|(_, r)| r.comm == "mtlvk" && r.cmd.split_whitespace().any(|a| a == sock)).map(|(p, _)| *p)
+            });
+            let booting = procs.iter().any(|(pid, r)| r.comm == "boot-a64.sh" && !r.cmd.is_empty() && {
                 // few bash processes: reading their environ is cheap
-                let pid = procs.iter().find(|(_, x)| std::ptr::eq(*x, r)).map(|(p, _)| *p).unwrap_or(0);
                 read(&format!("/proc/{pid}/environ")).split('\0').any(|kv| kv == format!("A64_DEVICE={}", inst.dir.display()))
             });
             let mut plist = vec![];
@@ -487,24 +533,28 @@ impl Monitor {
                     continue;
                 }
                 let Some(r) = procs.get(p) else { continue };
-                let c = match self.last.get(p) {
-                    Some((t0, at)) if r.ticks >= *t0 => (r.ticks - t0) as f64 / hz / now.duration_since(*at).as_secs_f64().max(0.05) * 100.0,
-                    _ => 0.0,
-                };
-                self.last.insert(*p, (r.ticks, now));
-                let m = match self.pss.get(p) {
-                    Some((v, at)) if now.duration_since(*at) < PSS_EVERY => *v,
-                    _ => {
-                        let v = pss_mb(*p);
-                        self.pss.insert(*p, (v, now));
-                        v
-                    }
-                };
+                let (c, m) = self.sample(*p, r.ticks, now, hz);
                 cpu += c;
                 pss += m;
-                plist.push(Proc { pid: *p, comm: r.comm.clone(), cpu_pct: c, pss_mb: m });
+                // the kernel keeps 15 characters of a name ("TVSystemUIServi"): the full one from the command line
+                let comm = if r.comm.len() >= 15 {
+                    let cl = read(&format!("/proc/{p}/cmdline"));
+                    let a0 = cl.split('\0').next().unwrap_or("");
+                    let base = a0.rsplit('/').next().unwrap_or("");
+                    if base.starts_with(&r.comm) { base.to_string() } else { r.comm.clone() }
+                } else {
+                    r.comm.clone()
+                };
+                plist.push(Proc { pid: *p, comm, cpu_pct: c, pss_mb: m });
             }
             plist.sort_by(|a, b| b.pss_mb.partial_cmp(&a.pss_mb).unwrap_or(std::cmp::Ordering::Equal));
+            // a helper shared by several phones is sampled once a poll
+            let gpu = gpu_pid.and_then(|g| {
+                let r = procs.get(&g)?;
+                let (c, m) = *gpu_seen.entry(g).or_insert_with(|| self.sample(g, r.ticks, now, hz));
+                seen_pids.insert(g);
+                Some(GpuHelper { pid: g, pss_mb: m, cpu_pct: c, users: 0 })
+            });
             let boot_time = launchd.and_then(|l| procs.get(&l)).map(|r| bt + r.start_ticks as f64 / hz);
             let uptime_s = boot_time.map(|b| (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) - b).max(0.0));
             let home = match launchd {
@@ -536,7 +586,19 @@ impl Monitor {
                 self.stopping.remove(&inst.id);
                 Phase::Off
             };
-            out.push(Status { id: inst.id.clone(), phase, home, procs: plist, cpu_pct: cpu, pss_mb: pss, uptime_s, boot_time, state_dir, prefix, mtlvk, launchd_pid: launchd, fresh: !home_marker(&inst.dir).exists() });
+            out.push(Status { id: inst.id.clone(), phase, home, procs: plist, cpu_pct: cpu, pss_mb: pss, uptime_s, boot_time, state_dir, prefix, gpu, launchd_pid: launchd, fresh: !home_marker(&inst.dir).exists() });
+        }
+        // how many running phones each helper serves
+        let mut users: HashMap<u32, usize> = HashMap::new();
+        for s in &out {
+            if let Some(g) = &s.gpu {
+                *users.entry(g.pid).or_default() += 1;
+            }
+        }
+        for s in &mut out {
+            if let Some(g) = &mut s.gpu {
+                g.users = users[&g.pid];
+            }
         }
         self.last.retain(|p, _| seen_pids.contains(p));
         self.pss.retain(|p, _| seen_pids.contains(p));

@@ -43,7 +43,9 @@ pub fn codegen() -> u64 {
 
 pub fn codegen_info() -> (u64, CodegenSource) {
     use std::os::unix::fs::MetadataExt;
-    static CACHE: std::sync::Mutex<Option<((u64, i64, u64), u64, CodegenSource)>> = std::sync::Mutex::new(None);
+    /// the translator file's (size, mtime, inode) and what was read from it
+    type Cached = ((u64, i64, u64), u64, CodegenSource);
+    static CACHE: std::sync::Mutex<Option<Cached>> = std::sync::Mutex::new(None);
     let so = translator();
     let stamp = std::fs::metadata(&so).map(|m| (m.size(), m.mtime(), m.ino())).unwrap_or_default();
     let mut c = CACHE.lock().unwrap_or_else(|e| e.into_inner());

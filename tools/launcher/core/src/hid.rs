@@ -1,5 +1,5 @@
 //! Input to a phone: host/simhid's socket (<device>/data/simhid.sock), one text command per line (touch, touch2,
-//! key, button). Edge touches are marked as Apple's Simulator does (simview.py's rule: within 4% of the width of an
+//! key, button, crown, usage, hinge). Edge touches are marked as Apple's Simulator does (simview.py's rule: within 4% of the width of an
 //! edge; top and bottom win in the corners), so the home indicator and Control/Notification Center work.
 use std::io::Write;
 use std::os::unix::net::UnixStream;
@@ -99,6 +99,11 @@ impl Hid {
 
     pub fn key(&mut self, down: bool, usage: u32) {
         self.send(&format!("key {} {usage}", if down { "down" } else { "up" }));
+    }
+
+    /// Platforms 1: any page / usage on the buttons service (host/simhid "usage"), for buttons simhid has no name for
+    pub fn usage(&mut self, page: u32, usage: u32, down: bool) {
+        self.send(&format!("usage {page:#x} {usage:#x} {}", if down { "down" } else { "up" }));
     }
 
     pub fn button(&mut self, name: &str, down: bool) {

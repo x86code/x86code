@@ -264,7 +264,7 @@ impl App {
     pub fn ios_page(&mut self, ui: &mut egui::Ui) {
         let mut check = false;
         let checking = self.catalogue.lock().unwrap().is_none();
-        page_header(ui, "Versions", "Each phone runs one iOS version (an Apple TV tvOS, an Apple Watch watchOS). Download more here.", |ui| {
+        page_header(ui, "Versions", "Each device runs one version: iOS for iPhone and iPad, tvOS for Apple TV, watchOS for Apple Watch.", |ui| {
             check = ui.add_enabled(!checking, Btn::secondary(if checking { "Checking…" } else { "Check for updates" }).icon(icon::ARROW_CLOCKWISE)).on_hover_text("Ask Apple for its current list").clicked();
         });
         if check {
@@ -289,7 +289,7 @@ impl App {
         let mut aot_rt = None;
         list_card(ui, |ui| {
             if runtimes.is_empty() {
-                empty_state(ui, icon::STACK, "No version yet", "Download one below to start a phone.", |_| {});
+                empty_state(ui, icon::STACK, "No version yet", "Download one below to start a device.", |_| {});
             }
             for (k, r) in runtimes.iter().enumerate() {
                 if k > 0 {
@@ -299,19 +299,13 @@ impl App {
                 let partial = host::partial_download(r);
                 let n = phones_on(&r.dir);
                 let size = self.sizes.lock().unwrap().get(&r.jc).copied();
-                let mut line = format!("Build {} · {} phone{}", r.build, n, if n == 1 { "" } else { "s" });
+                let mut line = format!("Build {} · {} device{}", r.build, n, if n == 1 { "" } else { "s" });
                 if let Some(b) = size {
                     line += &format!(" · {:.1} GB translated code", b as f64 / 1e9);
                 }
-                let (st, col) = if fetching.is_some() {
-                    ("Downloading", ACCENT)
-                } else if r.present {
-                    ("Installed", GOOD)
-                } else if partial.is_some() {
-                    ("Stopped", WARN)
-                } else {
-                    ("Files missing", WARN)
-                };
+                // a badge only for what needs attention: the section says these are installed, the progress row below
+                // that one is downloading
+                let warn = if fetching.is_some() || r.present { None } else if partial.is_some() { Some("Stopped") } else { Some("Files missing") };
                 list_row(ui, icon::STACK, &r.label(), &line, |ui| {
                     if r.present {
                         if ui.add(Btn::secondary("Pre-translate").icon(icon::LIGHTNING)).on_hover_text("Get this version's apps ready ahead of time").clicked() {
@@ -323,16 +317,39 @@ impl App {
                             fetch = Some((r.build.clone(), r.label()));
                         }
                         if partial.is_some() && ui.add(Btn::ghost("Discard")).on_hover_text("Delete what was downloaded").clicked() {
-                            discard = Some(r.clone());
+                            self.confirm_discard = Some(r.build.clone());
                         }
                     }
-                    ui.add_space(S2);
-                    badge(ui, st, col);
+                    if let Some(w) = warn {
+                        ui.add_space(S2);
+                        badge(ui, w, WARN);
+                    }
                 });
                 if let Some(f) = &fetching {
                     if fetch_progress(ui, f) {
                         cancel = Some(f.clone());
                     }
+                } else if partial.is_some() && self.confirm_discard.as_deref() == Some(r.build.as_str()) {
+                    // deleting gigabytes of download asks first, in the row (as "Redo all" does on Pre-translate)
+                    egui::Frame::new().inner_margin(egui::Margin { left: 60, right: 16, top: 0, bottom: 12 }).show(ui, |ui| {
+                        egui::Frame::new().fill(RAISED).corner_radius(R_MD).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = S2;
+                                ui.label(egui::RichText::new(icon::WARNING_CIRCLE).size(15.0).color(WARN));
+                                ui.label(body(format!("Discard the {:.1} GB downloaded so far?", partial.unwrap_or(0) as f64 / 1e9)));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.add(Btn::danger("Discard").small()).clicked() {
+                                        self.confirm_discard = None;
+                                        discard = Some(r.clone());
+                                    }
+                                    if ui.add(Btn::secondary("Keep").small()).clicked() {
+                                        self.confirm_discard = None;
+                                    }
+                                });
+                            });
+                        });
+                    });
                 } else if let Some(b) = partial {
                     let total = cat.as_ref().and_then(|c| c.iter().find(|c| c.build == r.build)).map(|c| c.gb);
                     note(ui, &match total {
@@ -340,7 +357,7 @@ impl App {
                         None => format!("Download stopped at {:.1} GB. Resume picks up where it stopped.", b as f64 / 1e9),
                     });
                 } else if !r.present {
-                    note(ui, "Its files are missing. Download it again to start phones on this version.");
+                    note(ui, "Its files are missing. Download it again to start devices on this version.");
                 }
             }
         });
@@ -396,7 +413,7 @@ impl App {
                     let need = phones_need(&c.build);
                     let mut detail = format!("Build {} · {:.1} GB download", c.build, c.gb);
                     if need > 0 {
-                        detail += &format!(" · {need} phone{} need{} it", if need == 1 { "" } else { "s" }, if need == 1 { "s" } else { "" });
+                        detail += &format!(" · {need} device{} need{} it", if need == 1 { "" } else { "s" }, if need == 1 { "s" } else { "" });
                     }
                     list_row(ui, icon::CLOUD_ARROW_DOWN, &t, &detail, |ui| {
                         if fetching.is_none() {
@@ -404,8 +421,6 @@ impl App {
                             if ui.add(b.icon(icon::DOWNLOAD_SIMPLE)).clicked() {
                                 fetch = Some((c.build.clone(), t.clone()));
                             }
-                        } else {
-                            badge(ui, "Downloading", ACCENT);
                         }
                     });
                     if let Some(f) = &fetching {
@@ -434,8 +449,8 @@ impl App {
         }
         if let Some(r) = discard {
             match host::discard_download(&r) {
-                Ok(()) => self.say(format!("Removed the stopped {} download", r.label())),
-                Err(e) => self.say(format!("Couldn't remove it: {e:#}")),
+                Ok(()) => self.say(format!("Discarded the stopped {} download", r.label())),
+                Err(e) => self.say(format!("Couldn't discard it: {e:#}")),
             }
             self.runtimes = host::runtimes();
         }
@@ -455,17 +470,43 @@ impl App {
             return;
         }
         let building = self.aot.building();
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = S2;
-            let labels: Vec<String> = present.iter().map(|r| r.label()).collect();
+        let page_w = ui.available_width();
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(S2, S2);
+            // two versions with one label (iOS 27.2 and the iPhone Duo's 27.2 build) are told apart by their build
+            let labels: Vec<String> = present.iter().map(|r| {
+                if present.iter().filter(|o| o.label() == r.label()).count() > 1 { format!("{} ({})", r.label(), r.build) } else { r.label() }
+            }).collect();
             let sel = present.iter().position(|r| Some(&r.root) == self.aot.runtime_root.as_ref());
-            if let Some(i) = segmented(ui, &labels.iter().map(|s| s.as_str()).collect::<Vec<_>>(), sel, !building) {
+            // more versions than fit as segments (a narrow window, many versions): a list instead of a clipped row
+            let seg_w: f32 = labels.iter().map(|l| ui.painter().layout_no_wrap(l.clone(), font_m(T_SMALL), INK).size().x + 20.0).sum::<f32>() + 4.0;
+            let mut pick = None;
+            let as_segments = seg_w <= page_w;
+            if as_segments {
+                pick = segmented(ui, &labels.iter().map(|s| s.as_str()).collect::<Vec<_>>(), sel, !building);
+            } else {
+                ui.add_enabled_ui(!building, |ui| {
+                    egui::ComboBox::from_id_salt("aotver").icon(caret).width(220.0_f32.min(ui.available_width() - S2)).selected_text(body(sel.map(|i| labels[i].clone()).unwrap_or_default())).show_ui(ui, |ui| {
+                        for (i, l) in labels.iter().enumerate() {
+                            if ui.selectable_label(sel == Some(i), l).clicked() {
+                                pick = Some(i);
+                            }
+                        }
+                    });
+                });
+            }
+            if let Some(i) = pick {
                 self.aot.select(present[i].root.clone(), None);
             }
             if sel.is_none() {
                 self.aot.select(present[0].root.clone(), None);
             }
-            ui.add_space(S3);
+            // "Apps from" and its list move to a second row when the first has no room (a combo box doesn't wrap itself)
+            if page_w - if as_segments { seg_w } else { 250.0 } < 290.0 {
+                ui.end_row();
+            } else {
+                ui.add_space(S2);
+            }
             ui.label(sub("Apps from"));
             let phones: Vec<(String, PathBuf)> = self.insts.iter().filter(|i| Some(&i.runtime_root) == self.aot.runtime_root.as_ref()).map(|i| (i.name.clone(), i.dir.clone())).collect();
             let cur = phones.iter().find(|p| Some(&p.1) == self.aot.device.as_ref()).map(|p| p.0.clone()).unwrap_or("System only".into());
@@ -481,7 +522,7 @@ impl App {
                     }
                 })
                 .response
-                .on_hover_text("Which phone's apps and feature choices to follow");
+                .on_hover_text("Which device's apps and feature choices to follow");
         });
         ui.add_space(S4);
         let (status, busy) = {
@@ -500,7 +541,7 @@ impl App {
                         ACCENT,
                         self.aot.progress.as_ref().filter(|p| p.chunks_total > 0).map(|p| format!("{} of {} parts done", p.chunks_done, p.chunks_total)).unwrap_or_else(|| "Getting ready…".into()),
                     ),
-                    (Some(s), _) if s.total == 0 => ("Nothing to translate yet", INK_3, "Start a phone on this version first: it learns what's used.".to_string()),
+                    (Some(s), _) if s.total == 0 => ("Nothing to translate yet", INK_3, "Start a device on this version first: it learns what's used.".to_string()),
                     (Some(s), _) if s.image_current && need == 0 => ("Ready", GOOD, format!("All {} parts are ready", s.total)),
                     (Some(s), _) if need == 0 => ("Almost ready", WARN, "Every part is translated; it needs putting together".to_string()),
                     (Some(s), _) if s.image_present => ("Needs an update", WARN, format!("{need} of {} parts to redo", s.total)),
@@ -566,7 +607,7 @@ impl App {
                         ui.label(egui::RichText::new(icon::WARNING_CIRCLE).size(15.0).color(WARN));
                         ui.label(body(format!("Translate all {} parts again? This takes a while and uses {} cores.", st_ok.as_ref().map(|s| s.total).unwrap_or(0), self.aot.cores)));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(Btn::primary("Redo all").small()).clicked() {
+                            if ui.add(Btn::primary("Redo all").small()).on_hover_text("Start over now").clicked() {
                                 self.aot.confirm_redo = false;
                                 self.aot.start_build(true);
                             }
@@ -653,15 +694,12 @@ impl App {
             }
             Some(Ok(s)) if s.total == 0 => {}
             Some(Ok(s)) => {
-                stat_row(ui, CARD, &[
-                    ("Ready", format!("{}", s.up_to_date), &format!("of {}", s.total)),
-                    ("To update", need.to_string(), ""),
-                    ("Size", fmt_mb(s.chunks.iter().map(|c| c.slot_mb).sum::<f64>().max(0.0)), ""),
-                ]);
+                // how many are ready and how many to redo is the card's own line; only the size is new here
+                let mut t = format!("The translated code takes {}.", fmt_mb(s.chunks.iter().map(|c| c.slot_mb).sum::<f64>().max(0.0)));
                 if s.dropped > 0 {
-                    ui.add_space(S1);
-                    ui.label(muted(format!("{} more get ready the first time they're used.", s.dropped)));
+                    t += &format!(" {} more parts get ready the first time they're used.", s.dropped);
                 }
+                ui.label(muted(t));
             }
         }
         ui.add_space(S5);
@@ -669,7 +707,7 @@ impl App {
         // ---- options
         section(ui, "Options", |_| {});
         list_card(ui, |ui| {
-            form_row(ui, "How much", "Common and More follow what your phones use (until a phone has run, they cover everything); Everything covers every app and framework.", false, |ui| {
+            form_row(ui, "How much", "Common and More follow what your devices use (until one has run, they cover everything); Everything covers every app and framework.", false, |ui| {
                 let scopes = [("hot", "Common"), ("loaded", "More"), ("all", "Everything")];
                 let sel = scopes.iter().position(|s| self.aot.cfg.scope == s.0);
                 if let Some(i) = segmented(ui, &scopes.map(|s| s.1), sel, !building) {
@@ -682,7 +720,7 @@ impl App {
                 ui.label(sub(format!("{} cores", self.aot.cores)));
                 ui.add_enabled(!building, egui::Slider::new(&mut self.aot.cores, 1..=self.aot.max_cores).show_value(false));
             });
-            form_row(ui, "Skip turned-off features", "Leave out what the phone has turned off.", true, |ui| {
+            form_row(ui, "Skip turned-off features", "Leave out what the device has turned off.", true, |ui| {
                 let mut f = self.aot.cfg.follow_features;
                 if ui.add_enabled_ui(!building, |ui| toggle(ui, &mut f)).inner.changed() {
                     self.aot.cfg.follow_features = f;
@@ -709,7 +747,7 @@ impl App {
             let (st_w, size_w) = (110.0, 80.0);
             let name_w = ((w - st_w - size_w - 32.0) * 0.5).max(160.0);
             let (hr, _) = ui.allocate_exact_size(egui::vec2(w, 32.0), egui::Sense::hover());
-            let hf = font_sb(10.5);
+            let hf = table_head();
             let x0 = hr.left() + 16.0;
             ui.painter().text(egui::pos2(x0, hr.center().y), egui::Align2::LEFT_CENTER, "STATUS", hf.clone(), INK_3);
             ui.painter().text(egui::pos2(x0 + st_w, hr.center().y), egui::Align2::LEFT_CENTER, "NAME", hf.clone(), INK_3);
@@ -777,13 +815,13 @@ impl App {
         let mut save = false;
         section(ui, "Hub", |_| {});
         list_card(ui, |ui| {
-            form_row(ui, "Live previews", "Show each running phone's screen on the Phones page.", false, |ui| {
+            form_row(ui, "Live previews", "Show each running device's screen on the Devices page.", false, |ui| {
                 save |= toggle(ui, &mut self.hub.thumbnails).changed();
             });
-            form_row(ui, "Open a phone when it starts", "Jump to its screen after pressing Start.", false, |ui| {
+            form_row(ui, "Open a device when it starts", "Jump to its screen after pressing Start.", false, |ui| {
                 save |= toggle(ui, &mut self.hub.open_on_start).changed();
             });
-            form_row(ui, "Card size", "How large phones appear on the Phones page.", true, |ui| {
+            form_row(ui, "Card size", "How large devices appear on the Devices page.", true, |ui| {
                 save |= ui.add(egui::Slider::new(&mut self.hub.card_w, 200.0..=360.0).show_value(false)).drag_stopped();
             });
         });
@@ -793,21 +831,18 @@ impl App {
             let _ = host::save_hub(&self.hub);
         }
         ui.add_space(S5);
-        let (nrun, mb) = self.running_summary();
+        // what runs and the memory it takes are the sidebar's footer, on every page; here what only this page shows
         let gpu = self.gpu_helpers;
+        let free = if self.disk.free_gb >= 1000.0 { format!("{:.1} TB", self.disk.free_gb / 1000.0) } else { format!("{:.0} GB", self.disk.free_gb) };
         section(ui, "This computer", |_| {});
-        stat_row(ui, CARD, &[
-            ("Phones running", nrun.to_string(), ""),
-            ("Memory used", if nrun > 0 { fmt_mb(mb) } else { "–".into() }, ""),
-            ("GPU helpers", gpu.to_string(), ""),
-            ("Free disk", if self.disk.free_gb >= 1000.0 { format!("{:.1} TB", self.disk.free_gb / 1000.0) } else { format!("{:.0} GB", self.disk.free_gb) }, ""),
-        ]);
-        ui.add_space(S3);
         list_card(ui, |ui| {
             let sizes = self.sizes.lock().unwrap().clone();
             let last = sizes.is_empty();
-            form_row(ui, "Disk use", &format!("Caches and phone data live in {}", aot::scratch().display()), last, |ui| {
-                if ui.add_enabled(!self.measuring, Btn::secondary(if self.measuring { "Measuring…" } else { "Measure" }).icon(icon::HARD_DRIVES)).clicked() {
+            form_row(ui, "GPU helpers", "mtlvk runs the devices' Metal calls on Vulkan; one helper may serve several devices", false, |ui| {
+                ui.label(body(match gpu { 0 => "None running".to_string(), 1 => "1 running".to_string(), n => format!("{n} running") }));
+            });
+            form_row(ui, "Disk use", &format!("{free} free where caches and device data live, {}", aot::scratch().display()), last, |ui| {
+                if ui.add_enabled(!self.measuring, Btn::secondary(if self.measuring { "Measuring…" } else { "Measure" }).icon(icon::HARD_DRIVES)).on_hover_text("Add up what each cache and device takes on disk").on_disabled_hover_text("Adding up the folders…").clicked() {
                     self.measuring = true;
                     let sizes = self.sizes.clone();
                     let mut dirs: Vec<PathBuf> = self.runtimes.iter().map(|r| r.jc.clone()).collect();
@@ -831,43 +866,23 @@ impl App {
                 ui.add_space(4.0);
                 for (p, b) in v {
                     let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
-                    let what = if name.starts_with("jc-") || name == "jitcache" { "Translated code" } else if name.starts_with("a64prefix") { "Phone system files" } else { "Phone data" };
+                    let what = if name.starts_with("jc-") || name == "jitcache" { "Translated code" } else if name.starts_with("a64prefix") { "System files" } else { "Device data" };
                     let (r, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 28.0), egui::Sense::hover());
                     let pt = ui.painter();
                     let x0 = r.left() + 16.0;
-                    pt.text(egui::pos2(x0, r.center().y), egui::Align2::LEFT_CENTER, &name, font_m(T_SMALL), INK);
-                    pt.text(egui::pos2(x0 + 220.0, r.center().y), egui::Align2::LEFT_CENTER, what, font(T_SMALL), INK_3);
-                    let bar = egui::Rect::from_min_size(egui::pos2(x0 + 380.0, r.center().y - 2.0), egui::vec2((r.right() - 16.0 - 80.0 - x0 - 380.0).max(40.0), 4.0));
+                    let name_w = (r.width() * 0.3).clamp(130.0, 220.0);
+                    let what_w = (r.width() * 0.22).clamp(110.0, 160.0);
+                    let g = galley_trunc(ui, &name, font_m(T_SMALL), INK, name_w - S3);
+                    pt.galley(egui::pos2(x0, r.center().y - g.size().y / 2.0), g, INK);
+                    pt.text(egui::pos2(x0 + name_w, r.center().y), egui::Align2::LEFT_CENTER, what, font(T_SMALL), INK_3);
+                    let bx = x0 + name_w + what_w;
+                    let bar = egui::Rect::from_min_size(egui::pos2(bx, r.center().y - 2.0), egui::vec2((r.right() - 16.0 - 80.0 - bx).max(24.0), 4.0));
                     pt.rect_filled(bar, 2.0, RAISED);
                     pt.rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2((*b as f32 / max * bar.width()).max(2.0), 4.0)), 2.0, ACCENT);
                     pt.text(egui::pos2(r.right() - 16.0, r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB", *b as f64 / 1e9), font(T_SMALL), INK_2);
                     resp.on_hover_text(p.display().to_string());
                 }
                 ui.add_space(8.0);
-            }
-        });
-        ui.add_space(S5);
-        section(ui, "Separate windows", |_| {});
-        let running: Vec<x86sim_core::instance::Instance> = self.insts.iter().filter(|i| self.phase(&i.id) != x86sim_core::instance::Phase::Off).cloned().collect();
-        list_card(ui, |ui| {
-            if running.is_empty() {
-                egui::Frame::new().inner_margin(16).show(ui, |ui| {
-                    ui.label(sub("Start a phone to open its screen in a window of its own."));
-                });
-            }
-            for (k, inst) in running.iter().enumerate() {
-                let open = self.simview_open.contains(&inst.id);
-                form_row(ui, &inst.name, "Its screen and logs in a separate window (simview)", k + 1 == running.len(), |ui| {
-                    if ui.add_enabled(!open, Btn::secondary(if open { "Window is open" } else { "Open window" }).icon(icon::APP_WINDOW)).clicked() {
-                        match sim::show_phone(inst) {
-                            Ok(()) => {
-                                self.simview_open.insert(inst.id.clone());
-                                self.say(format!("Opened {} in its own window", inst.name));
-                            }
-                            Err(e) => self.say(format!("Couldn't open the window: {e:#}")),
-                        }
-                    }
-                });
             }
         });
         ui.add_space(S5);

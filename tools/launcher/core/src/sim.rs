@@ -127,15 +127,6 @@ pub fn jc_for(runtime_root: &Path) -> PathBuf {
     }
 }
 
-/// "iOS 27.2" (or "tvOS 27.2", "watchOS 27.2") for a RuntimeRoot
-pub fn runtime_short(runtime_root: &Path) -> String {
-    let dir = rt_dir(runtime_root);
-    match parse_runtime_dir(&dir) {
-        Some((p, ver, _)) => format!("{} {ver}", platform_name(p)),
-        None => dir,
-    }
-}
-
 /// "ios-27.2-24B8117-arm64" -> "iOS 27.2 (24B8117)"
 fn runtime_label(dir: &str) -> String {
     match parse_runtime_dir(dir) {
@@ -260,7 +251,7 @@ pub fn start(device: &Path) -> Result<u32> {
 
 pub fn stop(device: &Path) -> Result<()> {
     let inst = crate::instance::load(device);
-    let sts = crate::instance::Monitor::default().poll(&[inst.clone()]);
+    let sts = crate::instance::Monitor::default().poll(std::slice::from_ref(&inst));
     crate::instance::stop(&inst, sts.first())
 }
 

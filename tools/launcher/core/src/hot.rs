@@ -120,7 +120,7 @@ fn sample_counts(dirs: &[PathBuf], uuid: &str) -> HashMap<u64, u64> {
             if b.len() < 16 || &b[..8] != b"A64CNT1\0" {
                 continue;
             }
-            for r in b[16..].chunks_exact(16) {
+            for r in b[16..].as_chunks::<16>().0 {
                 let pc = u64::from_le_bytes(r[..8].try_into().unwrap());
                 *m.entry(pc).or_default() += u32::from_le_bytes(r[8..12].try_into().unwrap()) as u64;
             }

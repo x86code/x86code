@@ -5,6 +5,7 @@
 mod global;
 mod home;
 mod phone;
+mod remote;
 mod setup;
 mod theme;
 mod updater;
@@ -95,8 +96,9 @@ pub struct App {
     pub fetching: HashMap<String, host::Fetch>,
     pub fetch_started: HashMap<String, Instant>,
     pub hub_show_betas: bool,
-    /// phones whose separate viewer window is open, and the GPU helper count (checked every few seconds, not per frame)
-    pub simview_open: HashSet<String>,
+    /// the build whose stopped download "Discard" asked to confirm
+    pub confirm_discard: Option<String>,
+    /// the GPU helper count (checked every few seconds, not per frame)
     pub gpu_helpers: usize,
     pub sizes: Arc<Mutex<HashMap<std::path::PathBuf, u64>>>,
     pub measuring: bool,
@@ -126,7 +128,7 @@ impl App {
                     let mut g = sh.lock().unwrap();
                     let st = g.monitor.poll(&insts);
                     // downloads: every poll while one runs, else every third (another /proc scan)
-                    let fetches = if !g.fetches.is_empty() || n % 3 == 0 { host::fetches() } else { vec![] };
+                    let fetches = if !g.fetches.is_empty() || n.is_multiple_of(3) { host::fetches() } else { vec![] };
                     n += 1;
                     let mut h = x86sim_core::key::Fnv64::new();
                     for i in &insts {
@@ -141,6 +143,7 @@ impl App {
                         h.u64((s.cpu_pct / 5.0) as u64);
                         h.u64(s.uptime_s.map(|u| (u / 60.0) as u64 + 1).unwrap_or(0));
                         h.u64(s.procs.len() as u64);
+                        h.u64(s.gpu.as_ref().map(|g| (g.pss_mb / 64.0) as u64 + ((g.users as u64) << 32)).unwrap_or(u64::MAX));
                     }
                     for f in &fetches {
                         h.str(&f.build);
@@ -218,7 +221,7 @@ impl App {
             fetching: HashMap::new(),
             fetch_started: HashMap::new(),
             hub_show_betas: false,
-            simview_open: HashSet::new(),
+            confirm_discard: None,
             gpu_helpers: 0,
             sizes: Arc::new(Mutex::new(HashMap::new())),
             measuring: false,
@@ -328,7 +331,7 @@ impl App {
             // downloads: what runs, plus ones started in the last seconds that the poller hasn't seen yet
             let mut f: HashMap<String, host::Fetch> = g.fetches.iter().map(|f| (f.build.clone(), f.clone())).collect();
             self.fetch_started.retain(|_, t| t.elapsed() < Duration::from_secs(15));
-            for (b, _) in self.fetch_started.iter() {
+            for b in self.fetch_started.keys() {
                 f.entry(b.clone()).or_insert_with(|| host::Fetch { build: b.clone(), phase: "starting".into(), ..Default::default() });
             }
             let finished = self.fetching.keys().any(|b| !f.contains_key(b));
@@ -338,6 +341,14 @@ impl App {
                 self.insts = instance::list();
             }
         }
+    }
+
+    /// The Setup page, re-checked each time it opens (nav item, Ctrl+5)
+    fn open_setup(&mut self, ctx: &egui::Context) {
+        self.view = View::Setup;
+        self.setup.refresh(ctx);
+        self.setup_checking = true;
+        self.refresh_instances();
     }
 
     /// Hub shortcuts. Not while the phone's screen has the keyboard (keys go to the phone) or a text field is focused.
@@ -358,6 +369,8 @@ impl App {
         } else if sc(Modifiers::COMMAND, Key::Num4) {
             self.view = View::Settings;
             self.last_slow = Instant::now() - Duration::from_secs(60);
+        } else if sc(Modifiers::COMMAND, Key::Num5) {
+            self.open_setup(ctx);
         } else if sc(Modifiers::COMMAND, Key::N) {
             self.open_add_dialog();
         } else if let View::Phone(id) = self.view.clone() {
@@ -381,9 +394,9 @@ impl App {
     }
 
     fn running_summary(&self) -> (usize, f64) {
-        let n = self.status.values().filter(|s| s.phase != instance::Phase::Off).count();
-        let mb: f64 = self.status.values().map(|s| s.pss_mb).sum();
-        (n, mb)
+        // each phone's own processes, and every GPU helper once (a shared one serves several phones)
+        let sts: Vec<_> = self.status.values().filter(|s| s.phase != instance::Phase::Off).collect();
+        (sts.len(), instance::total_mb(&sts))
     }
 }
 
@@ -413,7 +426,6 @@ impl eframe::App for App {
             self.disk = host::disk(&x86sim_core::aot::scratch());
             if self.view == View::Settings {
                 self.gpu_helpers = host::mtlvk_pids().len();
-                self.simview_open = self.insts.iter().filter(|i| self.status.get(&i.id).is_some_and(|s| s.phase != instance::Phase::Off) && x86sim_core::sim::simview_running_for(i)).map(|i| i.id.clone()).collect();
             }
             if self.view == View::Ios {
                 self.runtimes = host::runtimes();
@@ -437,7 +449,7 @@ impl eframe::App for App {
             self.first_boot_retried.insert(id.clone());
             let name = self.inst(&id).map(|i| i.name.clone()).unwrap_or_default();
             self.restart(&id);
-            self.say(format!("{name}'s first start stalled while it set up its apps. Restarting it once (this is expected for a new phone)."));
+            self.say(format!("{name}'s first start stalled while it set up its apps. Restarting it once (this is expected for a new device)."));
         }
         // thumbnails and the open phone's screen only: everything else sleeps
         let open_id = if let View::Phone(id) = &self.view { Some(id.clone()) } else { None };
@@ -452,25 +464,13 @@ impl eframe::App for App {
         egui::SidePanel::left("nav")
             .resizable(false)
             .exact_width(212.0)
-            .frame(egui::Frame::new().fill(WINDOW).inner_margin(egui::Margin { left: 10, right: 10, top: 16, bottom: 14 }))
+            .frame(egui::Frame::new().fill(WINDOW).inner_margin(egui::Margin { left: 10, right: 10, top: 12, bottom: 14 }))
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-                    ui.painter().rect_filled(r, 7.0, ACCENT_FILL);
-                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, icon::DEVICE_MOBILE, font(17.0), egui::Color32::WHITE);
-                    ui.add_space(2.0);
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        ui.label(egui::RichText::new("x86Sim").size(T_LG).family(semibold()).color(INK));
-                        ui.label(muted("iPhone simulator").size(T_CAPTION));
-                    });
-                });
-                ui.add_space(S5);
+                // no brand block: the title bar above names the app
                 ui.spacing_mut().item_spacing.y = 2.0;
                 let n = self.insts.len();
                 let on_phones = matches!(self.view, View::Home | View::Phone(_));
-                if nav_item(ui, icon::SQUARES_FOUR, "Phones", on_phones, &if n > 0 { n.to_string() } else { String::new() }, "Ctrl+1") {
+                if nav_item(ui, icon::SQUARES_FOUR, "Devices", on_phones, &if n > 0 { n.to_string() } else { String::new() }, "Ctrl+1") {
                     self.view = View::Home;
                 }
                 if nav_item(ui, icon::DOWNLOAD_SIMPLE, "Versions", self.view == View::Ios, "", "Ctrl+2") {
@@ -484,19 +484,16 @@ impl eframe::App for App {
                     self.view = View::Settings;
                     self.last_slow = Instant::now() - Duration::from_secs(60);
                 }
-                if nav_item(ui, icon::WRENCH, "Setup", self.view == View::Setup, "", "") {
-                    self.view = View::Setup;
-                    self.setup.refresh(ui.ctx());
-                    self.setup_checking = true;
-                    self.refresh_instances();
+                if nav_item(ui, icon::WRENCH, "Setup", self.view == View::Setup, "", "Ctrl+5") {
+                    self.open_setup(ui.ctx());
                 }
-                // footer: host status, pinned to the bottom
+                // footer: what runs and what it takes, pinned to the bottom (free disk is on Settings, with disk use)
                 let upd_h = match self.updater.phase() {
                     updater::Phase::Available(_) | updater::Phase::Ready(..) => 34.0,
                     updater::Phase::Downloading(_) => 30.0,
                     _ => 0.0,
                 };
-                let footer_h = 40.0 + upd_h + if self.aot.building() { 30.0 } else { 0.0 };
+                let footer_h = 20.0 + upd_h + if self.aot.building() { 30.0 } else { 0.0 };
                 ui.add_space((ui.available_height() - footer_h).max(S4));
                 egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 0)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -513,7 +510,6 @@ impl eframe::App for App {
                     } else {
                         dot_label(ui, "Nothing running", INK_3);
                     }
-                    ui.label(muted(format!("{} free for caches", if self.disk.free_gb >= 1000.0 { format!("{:.1} TB", self.disk.free_gb / 1000.0) } else { format!("{:.0} GB", self.disk.free_gb) })));
                 });
             });
 
@@ -550,9 +546,10 @@ impl eframe::App for App {
                     .shadow(egui::Shadow { offset: [0, 6], blur: 20, spread: 0, color: egui::Color32::from_black_alpha(120) })
                     .inner_margin(egui::Margin::symmetric(14, 9))
                     .show(ui, |ui| {
+                        ui.set_max_width((ui.ctx().content_rect().width() - 212.0 - 2.0 * S6).clamp(240.0, 560.0));
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(icon::INFO).size(15.0).color(INK_2));
-                            ui.label(body(&self.message));
+                            ui.add(egui::Label::new(body(&self.message)).wrap());
                         });
                     });
             });
@@ -601,7 +598,7 @@ fn title_bar(ctx: &egui::Context) {
             // icons are drawn, not font glyphs (the UI font has no ✕ / ❐)
             #[derive(PartialEq, Clone, Copy)]
             enum Icon { Close, Max, Restore, Min }
-            let mut button = |icon: Icon, hover: egui::Color32, id: &str| -> bool {
+            let mut button = |icon: Icon, hover: egui::Color32, id: &str, tip: &str| -> bool {
                 x -= bw;
                 let r = egui::Rect::from_min_size(egui::pos2(x, rect.top()), egui::vec2(bw, rect.height()));
                 let resp = ui.interact(r, egui::Id::new(id), egui::Sense::click());
@@ -630,15 +627,15 @@ fn title_bar(ctx: &egui::Context) {
                         p.line_segment([c + egui::vec2(-h, 0.0), c + egui::vec2(h, 0.0)], st);
                     }
                 }
-                resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+                resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
             };
-            if button(Icon::Close, CRIT, "title-close") {
+            if button(Icon::Close, CRIT, "title-close", "Close the launcher (running devices keep running)") {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if button(if maximized { Icon::Restore } else { Icon::Max }, HOVER, "title-max") {
+            if button(if maximized { Icon::Restore } else { Icon::Max }, HOVER, "title-max", if maximized { "Restore" } else { "Maximize" }) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
             }
-            if button(Icon::Min, HOVER, "title-min") {
+            if button(Icon::Min, HOVER, "title-min", "Minimize") {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
         });

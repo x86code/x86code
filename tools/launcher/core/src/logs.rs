@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, UNIX_EPOCH};
 
 #[derive(Clone, Debug)]
 pub struct Line {
@@ -133,11 +133,6 @@ impl Tail {
     pub fn groups(&self) -> Vec<&'static str> {
         GROUPS.iter().copied().filter(|g| self.lines.iter().any(|l| l.group == *g)).collect()
     }
-}
-
-/// now as unix seconds
-pub fn now_s() -> f64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0)
 }
 
 /// "2026-11-01 07:54:40.355519 rest" -> (Some("07:54:40"), "rest"); also "[07:54:40] rest"
