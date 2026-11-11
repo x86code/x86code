@@ -489,14 +489,19 @@ stop_prefix
 # background apps that RunningBoard keeps suspended, as a device's memorystatus does. Without it every poster
 # extension PosterBoard updated at boot (12 of them, ~470 MB PSS) and every app opened stayed resident.
 # X86SIM_JETSAM=0: off. Scoped to this prefix's container (jetsam.container_ns).
-[ -f "$ST/jetsam.pid" ] && kill "$(cat "$ST/jetsam.pid")" 2>/dev/null
-rm -f "$ST/jetsam.pid"
-[ -f "$ST/mdns.pid" ] && kill "$(cat "$ST/mdns.pid")" 2>/dev/null
-# and one whose pidfile a later boot overwrote (two from the day before were still serving var/run-a64)
-pkill -f "mdnsresponder.py $ST/mDNSResponder\$" 2>/dev/null
-rm -f "$ST/mdns.pid" "$ST/mDNSResponder"
-[ -f "$ST/simaudio.pid" ] && kill "$(cat "$ST/simaudio.pid")" 2>/dev/null
-rm -f "$ST/simaudio.pid"
+# The boot's host helpers (jetsam, mDNS, simaudio): stopped before a boot and when a timed boot ends.
+stop_helpers() {
+	[ -f "$ST/jetsam.pid" ] && kill "$(cat "$ST/jetsam.pid")" 2>/dev/null
+	rm -f "$ST/jetsam.pid"
+	[ -f "$ST/mdns.pid" ] && kill "$(cat "$ST/mdns.pid")" 2>/dev/null
+	# and one whose pidfile a later boot overwrote (two from the day before were still serving var/run-a64); matched by
+	# the state dir's name so one started with a relative path (var/run-a64-<name>) is found too
+	pkill -f "mdnsresponder.py .*/$(basename "$ST")/mDNSResponder\$" 2>/dev/null
+	rm -f "$ST/mdns.pid" "$ST/mDNSResponder"
+	[ -f "$ST/simaudio.pid" ] && kill "$(cat "$ST/simaudio.pid")" 2>/dev/null
+	rm -f "$ST/simaudio.pid"
+}
+stop_helpers
 # Speed 10: A64_STOP_ONLY=1 stops this device: the container, and its mtlvk unless another phone renders through it
 # (A64_KEEP_MTLVK=1: the container only -- the launcher's restart keeps the GPU helper, its stop ends it itself)
 if [ "${A64_STOP_ONLY:-0}" = 1 ]; then
@@ -699,4 +704,5 @@ fi
 if [ "${A64_KEEP:-0}" != 1 ]; then
 	stop_prefix
 	stop_a64_mtlvk
+	stop_helpers   # the mDNS server outlived every timed boot (test devices left one each)
 fi
