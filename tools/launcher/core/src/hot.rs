@@ -183,30 +183,38 @@ fn varint(out: &mut Vec<u8>, mut x: u64) {
 /// Only .live files: each is what one program ran in its last sessions. Old .bin files include whole-slab dumps (every
 /// image block a process had registered), which made the set 6.7M blocks: past the budget, whole libraries went lazy
 /// (Settings 94% covered against 97% from .live alone).
-pub fn write_shipped(dirs: &[PathBuf], uuid: &str, out: &Path) -> Result<usize> {
+/// `merge`: earlier training files folded in (a block keeps the higher of the two program counts), so blocks
+/// programs ran on other machines or in older sessions stay in.
+pub fn write_shipped(dirs: &[PathBuf], uuid: &str, out: &Path, merge: &[PathBuf]) -> Result<usize> {
+    // each program's newest .live in each dir: a cache dir keeps one per translator build it ran under, and the old
+    // ones describe sessions long gone (all 22 builds of the dev cache: 6.3M blocks, against 3.6M for the current
+    // ones). Several dirs (machines, installs) each add their newest: merge_counts unions a program's blocks, counted once.
+    let mtime = |f: &PathBuf| std::fs::metadata(f).and_then(|m| m.modified()).ok();
     let mut files: Vec<PathBuf> = vec![];
     for d in dirs {
         let Ok(rd) = std::fs::read_dir(d) else { continue };
+        let mut newest: HashMap<String, PathBuf> = HashMap::new();
         for e in rd.flatten() {
             let n = e.file_name().to_string_lossy().into_owned();
             if n.starts_with(uuid) && n.ends_with(".live") {
-                files.push(e.path());
+                let (f, exe) = (e.path(), exe_of(&n).unwrap_or("?").to_string());
+                if newest.get(&exe).is_none_or(|g| mtime(&f) > mtime(g)) {
+                    newest.insert(exe, f);
+                }
             }
         }
+        files.extend(newest.into_values());
     }
-    // each program's newest .live only: a cache dir keeps one per translator build it ran under, and the old ones
-    // describe sessions long gone (all 22 builds of the dev cache: 6.3M blocks, against 3.6M for the current ones)
-    let mtime = |f: &PathBuf| std::fs::metadata(f).and_then(|m| m.modified()).ok();
-    let mut newest: HashMap<String, PathBuf> = HashMap::new();
-    for f in files {
-        let n = f.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
-        let exe = exe_of(&n).unwrap_or("?").to_string();
-        if newest.get(&exe).is_none_or(|g| mtime(&f) > mtime(g)) {
-            newest.insert(exe, f);
+    let mut m = merge_counts(&files);
+    for f in merge {
+        let old = read_shipped(f, uuid);
+        anyhow::ensure!(!old.is_empty(), "{}: no training for dyld cache {uuid}", f.display());
+        for (d, c) in old {
+            let e = m.entry(d).or_default();
+            *e = (*e).max(c);
         }
     }
-    let files: Vec<PathBuf> = newest.into_values().collect();
-    let mut v: Vec<(u64, u32)> = merge_counts(&files).into_iter().collect();
+    let mut v: Vec<(u64, u32)> = m.into_iter().collect();
     v.sort_unstable();
     let mut b = Vec::with_capacity(48 + v.len() * 3);
     b.extend_from_slice(TRN_MAGIC);

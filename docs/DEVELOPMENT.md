@@ -141,7 +141,10 @@ should be the LC_UUID, the code signature and clang's temp-object names in the d
 
 `cli/libexec/arm64/training-<build>.x86t` holds the code blocks each program ran (addresses and how many programs ran
 them; no code or content) on the machine that made the release. The planner counts it with the install's own profiles,
-so a new install's first image already holds what apps run. Refresh it after using the system apps on a dev build:
+so a new install's first image already holds what apps run. Refresh it after using the system apps on a dev build,
+adding to what it holds (`--merge`: a block keeps the higher program count) and any other cache dirs (an AppImage
+install's `~/.cache/x86sim/jc-<build>`; each dir adds every program's newest profile, a program's blocks counted once):
 
+    T=cli/libexec/arm64/training-24B8117.x86t
     tools/launcher/target/release/x86sim-aot --jc ~/scratch/x86sim/jc-24B8117 export-training \
-        --out cli/libexec/arm64/training-24B8117.x86t
+        --out $T --merge $T ~/.cache/x86sim/jc-24B8117

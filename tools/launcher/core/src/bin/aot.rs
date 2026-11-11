@@ -141,13 +141,18 @@ fn run() -> Result<()> {
                 bail!("{}: {}", r.state, r.message);
             }
         }
-        // export-training [--out FILE] [DIR...]: the shipped training file from this cache dir's profiles (and DIRs)
+        // export-training [--out FILE] [--merge FILE]... [DIR...]: the shipped training file from this cache dir's
+        // profiles (and DIRs), with earlier training files folded in
         "export-training" => {
             let out = take(&mut args, "--out").map(PathBuf::from).or_else(|| aot::shipped_training(&p)).context("no output path")?;
+            let mut merge = vec![];
+            while let Some(f) = take(&mut args, "--merge") {
+                merge.push(PathBuf::from(f));
+            }
             let mut dirs: Vec<PathBuf> = args.iter().map(PathBuf::from).collect();
             dirs.push(p.jc.clone());
             let uuid = x86sim_core::dyldcache::Cache::open(&cfg.runtime_root)?.uuid_hex();
-            let n = x86sim_core::hot::write_shipped(&dirs, &uuid, &out)?;
+            let n = x86sim_core::hot::write_shipped(&dirs, &uuid, &out, &merge)?;
             println!("{n} blocks -> {} ({:.1} MB)", out.display(), std::fs::metadata(&out)?.len() as f64 / 1e6);
             return Ok(());
         }
