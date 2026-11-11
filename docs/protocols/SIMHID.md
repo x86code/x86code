@@ -21,7 +21,10 @@ no-op under the A64 JIT).
 
 ```
 Socket: $SIMHID_SOCKET (default <SIMULATOR_SHARED_RESOURCES_DIRECTORY>/simhid.sock), stream, any number of
-clients, one text command per line:
+clients, one text command per line. If the path exceeds Darwin's 104-byte `sockaddr_un.sun_path` (e.g. a long
+home directory under Darling's `/Volumes/SystemRoot`), the socket binds to a short stable path
+(`/Volumes/SystemRoot/run/user/<uid>/x86sim-simhid-<hash>.sock`, or `/tmp/...`) and the desired path is
+symlinked to it (pointing at the host path; clients are host-side), so clients keep using the default path:
   touch down|move|up <x> <y>     x, y normalized to the display (0..1, origin top left)
   touch2 down|move|up <x1> <y1> <x2> <y2>   two fingers (pinch, two-finger pan): one hand event with two finger
                                  children, finger indexes 1 and 2 with their own identities

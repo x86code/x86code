@@ -11,7 +11,9 @@
 // fed by a Unix socket (simview / cli/libexec/simtouch.py on Linux) instead of Indigo messages.
 //
 // Socket: $SIMHID_SOCKET (default <SIMULATOR_SHARED_RESOURCES_DIRECTORY>/simhid.sock), stream, any number of
-// clients, one text command per line:
+// clients, one text command per line. If the path doesn't fit Darwin's 104-byte sockaddr_un.sun_path the
+// socket binds to a short stable path under /Volumes/SystemRoot/run/user/<uid> (or /tmp) and the desired
+// path is symlinked to it — pointing at the host path — so clients can keep using the default:
 //   touch down|move|up <x> <y> [edge]   x, y normalized to the display (0..1, origin top left); edge (on down, kept
 //                                  for the whole touch): none|top|left|bottom|right, a touch that begins at that screen
 //                                  edge (system gestures: home indicator, Control/Notification Center)
@@ -343,7 +345,9 @@ static void send_touch(const char* phase, double x, double y, int edge) {
 	// (a single-finger down while two fingers are down: the two-finger contact is lifted first, see send_touch2)
 	if (up) { if (!touching) return; touching = false; touch_up_ns = now_ns(); }
 	uint64_t ts = mach_absolute_time();
-	uint32_t mask = kDigitizerPosition | (down || up ? kDigitizerTouch | kDigitizerRange | kDigitizerIdentity : 0);
+	// Apple's SimulatorHID passes the same mask on every phase: a move without the contact bits
+	// reads as hover (range/touch clear) and SpringBoard's gesture recognizers never see the drag.
+	uint32_t mask = kDigitizerPosition | kDigitizerTouch | kDigitizerRange | kDigitizerIdentity;
 	mask |= edge_mask[touch_edge];
 	bool in = !up;
 	IOHIDEventRef hand = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, ts, kDigitizerTransducerHand, 0, 0, mask, 0,
@@ -373,8 +377,8 @@ static void send_touch2(const char* phase, double x1, double y1, double x2, doub
 	}
 	if (up) { if (!touching2) return; touching2 = false; }
 	uint64_t ts = mach_absolute_time();
-	uint32_t mask = kDigitizerPosition | (down || up ? kDigitizerTouch | kDigitizerRange | kDigitizerIdentity : 0);
-	mask |= edge_mask[0];
+	// see send_touch: the contact bits stay set on every phase, or moves read as hover
+	uint32_t mask = kDigitizerPosition | kDigitizerTouch | kDigitizerRange | kDigitizerIdentity | edge_mask[0];
 	bool in = !up;
 	IOHIDEventRef hand = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, ts, kDigitizerTransducerHand, 0, 0, mask, 0,
 		(x1 + x2) / 2, (y1 + y2) / 2, 0, in ? 1 : 0, 0, in, in, 0);
@@ -563,21 +567,66 @@ static void* client_thread(void* arg) {
 	return NULL;
 }
 
+// Darwin's sockaddr_un.sun_path is 104 bytes. The default path under Darling
+// (/Volumes/SystemRoot/<home>/.local/share/x86code/var/<device>/data/simhid.sock, any long home) can
+// exceed it; strlcpy truncated it silently — unlink removed the full path while bind bound a truncated
+// sibling, so the first boot listened on the wrong file and every later boot failed EADDRINUSE, and
+// host tools (which connect to the full path) never saw the socket at all. If the path doesn't fit,
+// bind a short stable path and symlink it to the desired one; host tools follow the symlink.
+static uint64_t xsim_path_hash(const char* s) {  // FNV-1a
+	uint64_t h = 1469598103934665603ull;
+	for (; *s; s++) { h ^= (uint8_t)*s; h *= 1099511628211ull; }
+	return h;
+}
+
 static void* listen_thread(void* arg) {
 	char path[256];
 	const char* env = getenv("SIMHID_SOCKET");
 	const char* dir = getenv("SIMULATOR_SHARED_RESOURCES_DIRECTORY") ?: getenv("HOME") ?: "/tmp";
 	if (env) snprintf(path, sizeof(path), "%s", env); else snprintf(path, sizeof(path), "%s/simhid.sock", dir);
+	struct sockaddr_un probe = { 0 };
+	const char* bind_path = path;
+	char short_path[108];
+	int linked = 0;
+	if (strlen(path) >= sizeof(probe.sun_path)) {
+		char hash[17];
+		snprintf(hash, sizeof(hash), "%016llx", (unsigned long long)xsim_path_hash(path));
+		const char* dv = "/Volumes/SystemRoot";
+		if (strncmp(path, dv, strlen(dv)) == 0)
+			// host-visible as /run/user/<uid>/x86sim-simhid-<hash>.sock (the frame ring lives there too)
+			snprintf(short_path, sizeof(short_path), "%s/run/user/%d/x86sim-simhid-%s.sock", dv, (int)getuid(), hash);
+		else
+			snprintf(short_path, sizeof(short_path), "/tmp/x86sim-simhid-%s.sock", hash);
+		bind_path = short_path;
+		linked = 1;
+	}
 	int s = socket(AF_UNIX, SOCK_STREAM, 0);
 	struct sockaddr_un a = { 0 };
 	a.sun_family = AF_UNIX;
-	strlcpy(a.sun_path, path, sizeof(a.sun_path));
-	unlink(path);
+	strlcpy(a.sun_path, bind_path, sizeof(a.sun_path));
+	unlink(bind_path);
 	if (bind(s, (struct sockaddr*)&a, sizeof(a)) != 0 || listen(s, 8) != 0) {
-		slog("cannot listen on %s: errno %d", path, errno);
+		slog("cannot listen on %s: errno %d", bind_path, errno);
 		return NULL;
 	}
-	slog("listening on %s", path);
+	if (linked) {
+		unlink(path);
+		// Clients are host-side Linux (simview, x86sim tap, the launcher): point the symlink at the
+		// host path, not the /Volumes/SystemRoot view (the guest never connects to the socket).
+		const char* link_target = bind_path;
+		char host_link[108];
+		const char* dv = "/Volumes/SystemRoot";
+		if (strncmp(bind_path, dv, strlen(dv)) == 0) {
+			snprintf(host_link, sizeof(host_link), "%s", bind_path + strlen(dv));
+			link_target = host_link;
+		}
+		if (symlink(link_target, path) != 0)
+			slog("cannot symlink %s -> %s: errno %d (use SIMHID_SOCKET=%s)", path, link_target, errno, link_target);
+		else
+			slog("listening on %s (via %s)", path, link_target);
+	} else {
+		slog("listening on %s", path);
+	}
 	for (;;) {
 		// x86Sim: Darling's accept() crashes with a NULL address (it converts the sockaddr back unconditionally)
 		struct sockaddr_un peer; socklen_t plen = sizeof(peer);
@@ -598,18 +647,23 @@ static void* listen_thread(void* arg) {
 @end
 
 @implementation SimHIDSystem
+// displayUUID must match SFBDisplayGetDisplayUID: BKIOHIDService _setUpInitialProperties copies
+// the HID property "displayUUID" into its ivar; without it, BKDisplayConvertCAScreenLocationToContext
+// gets a null UUID and drops every touch. BK also matches the digitizer by (UsagePage, Usage,
+// DisplayIntegrated) per display; the pair below is what the phone's simfb publishes.
+static NSDictionary* touch_extra(NSString* uuid) {
+	return @{
+		@"DisplayIntegrated": @YES,
+		@"SupportsInk": @NO,
+		@"displayUUID": uuid,
+	};
+}
+
 - (instancetype)initUsingHIDService:(IOHIDEventSystemRef_)system error:(NSError**)error {
 	if (!(self = [super init])) return nil;
 	if (!system) { if (error) *error = [NSError errorWithDomain:@"SimHID" code:1 userInfo:nil]; [self release]; return nil; }
-	// displayUUID must match SFBDisplayGetDisplayUID ("x86Sim-main-display"): BKIOHIDService
-	// _setUpInitialProperties copies the HID property "displayUUID" into its ivar; without it,
-	// BKDisplayConvertCAScreenLocationToContext gets a null UUID and drops every touch.
 	touch_svc = (VService){ "touchscreen", 0x7863000000000001ull,
-		make_props(@"com.apple.SimulatorHID.ScreenTouchService.x86Sim-main-display", 0x0d, 0x04, @{
-			@"DisplayIntegrated": @YES,
-			@"SupportsInk": @NO,
-			@"displayUUID": @"x86Sim-main-display",
-		}) };
+		make_props(@"com.apple.SimulatorHID.ScreenTouchService.x86Sim-main-display", 0x0d, 0x04, touch_extra(@"x86Sim-main-display")) };
 	buttons_svc = (VService){ "buttons", 0x7863000000000002ull, make_props(@"x86Sim buttons", 0x0c, 0x01, nil) };
 	keyboard_svc = (VService){ "keyboard", 0x7863000000000003ull, make_props(@"x86Sim keyboard", 0x01, 0x06, nil) };
 	add_service(system, &touch_svc);
@@ -628,8 +682,7 @@ static void* listen_thread(void* arg) {
 		if (n >= 2 && inner_display_id) {
 			NSString* uid = [NSString stringWithFormat:@"x86Sim-display-%u", inner_display_id];
 			inner_touch_svc = (VService){ "touchscreen-inner", 0x7863000000000004ull,
-				make_props([@"com.apple.SimulatorHID.ScreenTouchService." stringByAppendingString:uid], 0x0d, 0x04, @{
-					@"DisplayIntegrated": @YES, @"SupportsInk": @NO, @"displayUUID": uid }) };
+				make_props([@"com.apple.SimulatorHID.ScreenTouchService." stringByAppendingString:uid], 0x0d, 0x04, touch_extra(uid)) };
 			hinge_svc = (VService){ "hinge", 0x7863000000000005ull, make_props(@"x86Sim hinge", 0xff0c, 0x21, nil) };
 			const char* h = getenv("SIMHID_HINGE");
 			hinge_deg = h && *h ? atof(h) : 0;
