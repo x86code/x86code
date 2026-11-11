@@ -87,14 +87,15 @@ DYLD_INTERPOSE(shim_IOAllowPowerChange, IOAllowPowerChange)
 // buffer with ENOENT instead of ERANGE (Darling's csops syscall gets it right), so libxpc gives up on
 // any client whose entitlements exceed its first 0x408-byte guess (lsd: containermanagerd
 // then refuses it). Route those ops through csops; the audit token names the same pid.
-extern int syscall(int, ...);
+// Platforms 1: the same libSystem symbol under another name (tvOS/watchOS headers mark syscall() unavailable)
+extern int x86sim_syscall(int, ...) __asm("_syscall");
 extern int csops_audittoken(pid_t pid, unsigned int ops, void* useraddr, size_t usersize, audit_token_t* token);
 static int shim_csops_audittoken(pid_t pid, unsigned int ops, void* useraddr, size_t usersize, audit_token_t* token)
 {
 	if (ops == 7 /* CS_OPS_ENTITLEMENTS_BLOB */ || ops == 16 /* CS_OPS_DER_ENTITLEMENTS_BLOB */)
 	{
 		// the raw syscall: csops() in the simulator is libsystem_sim_kernel's own version
-		int r = syscall(169 /* SYS_csops */, pid, ops, useraddr, usersize);
+		int r = x86sim_syscall(169 /* SYS_csops */, pid, ops, useraddr, usersize);
 		if (getenv("X86SIM_SHIMLOG"))
 		{
 			char line[128];
@@ -116,7 +117,7 @@ extern int csops(pid_t pid, unsigned int ops, void* useraddr, size_t usersize);
 static int shim_csops(pid_t pid, unsigned int ops, void* useraddr, size_t usersize)
 {
 	if (ops == 7 /* CS_OPS_ENTITLEMENTS_BLOB */ || ops == 16 /* CS_OPS_DER_ENTITLEMENTS_BLOB */)
-		return syscall(169 /* SYS_csops */, pid, ops, useraddr, usersize);
+		return x86sim_syscall(169 /* SYS_csops */, pid, ops, useraddr, usersize);
 	return csops(pid, ops, useraddr, usersize);
 }
 DYLD_INTERPOSE(shim_csops, csops)

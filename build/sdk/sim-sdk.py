@@ -14,13 +14,24 @@ Xcode SDK's builds, the other host/ binaries identical apart from clang's random
 Not covered: UIKit / SwiftUI / Swift (iOS-only headers and Swift modules): tests/apps and the Swift probes still
 need Xcode's SDK.
 
-Usage: build/sdk/sim-sdk.py [--runtime runtimes/<dir>] [--mac-sdk sdks/MacOSX.sdk] [--out sdks/iPhoneSimulator.sdk]
-                            [--force]"""
+Platforms 1: the same for tvOS and watchOS (AppleTVSimulator.sdk / WatchSimulator.sdk), from a tvos-/watchos- runtime:
+--platform tvos|watchos, or the platform of --runtime's dir name.
+
+Usage: build/sdk/sim-sdk.py [--platform ios|tvos|watchos] [--runtime runtimes/<dir>] [--mac-sdk sdks/MacOSX.sdk]
+                            [--out sdks/<Platform>Simulator.sdk] [--force]"""
 import argparse, glob, json, mmap, os, plistlib, re, shutil, struct, sys
 
 ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), "../.."))
 DEFAULT_RT = "ios-27.2-24B8117-arm64"  # cli/libexec/arm64/device-a64.py
-TARGET = "arm64-ios-simulator"
+TARGET = "arm64-ios-simulator"  # set from PLATFORMS in main()
+# Platforms 1: key (the runtimes/<key>-... prefix) -> tbd target, SDK dir name, canonical name, display name,
+# triple sys, LC_BUILD_VERSION platform, clang runtime platform name
+PLATFORMS = {
+    "ios": ("arm64-ios-simulator", "iPhoneSimulator.sdk", "iphonesimulator", "iOS", "ios", "7", "iossim"),
+    "tvos": ("arm64-tvos-simulator", "AppleTVSimulator.sdk", "appletvsimulator", "tvOS", "tvos", "8", "tvossim"),
+    "watchos": ("arm64-watchos-simulator", "WatchSimulator.sdk", "watchsimulator", "watchOS", "watchos", "9",
+                "watchossim"),
+}
 
 # (header relative to the SDK, macOS text, iOS text): iOS headers that differ from macOS in a way our code sees
 IOS_PATCHES = [
@@ -230,18 +241,18 @@ def runtime_version(rt):
         with open(os.path.join(rt, "RuntimeRoot/System/Library/CoreServices/SystemVersion.plist"), "rb") as f:
             return plistlib.load(f)["ProductVersion"]
     except (OSError, KeyError):
-        m = re.search(r"ios-([0-9.]+)-", os.path.basename(rt.rstrip("/")))
+        m = re.search(r"(?:ios|tvos|watchos)-([0-9.]+)-", os.path.basename(rt.rstrip("/")))
         return m[1] if m else "0.0"
 
 
-def default_runtime():
+def default_runtime(plat="ios"):
     d = os.path.join(ROOT, "runtimes", DEFAULT_RT)
-    if os.path.isdir(d):
+    if plat == "ios" and os.path.isdir(d):
         return d
     # else the newest runtime not limited to particular models (device-a64.py restricted_to)
     found = []
     for e in os.listdir(os.path.join(ROOT, "runtimes")) if os.path.isdir(os.path.join(ROOT, "runtimes")) else []:
-        m = re.match(r"ios-([0-9.]+)-([0-9A-Za-z]+)-arm64$", e)
+        m = re.match(re.escape(plat) + r"-([0-9.]+)-([0-9A-Za-z]+)-arm64$", e)
         if not m:
             continue
         try:
@@ -252,24 +263,32 @@ def default_runtime():
             pass
         found.append(([int(x) for x in m[1].split(".")], e))
     if not found:
-        sys.exit("sim-sdk: no runtime in runtimes/ (download one first: x86sim runtime / runtime-fetch.py)")
+        sys.exit(f"sim-sdk: no {plat} runtime in runtimes/ (download one first: x86sim runtime / runtime-fetch.py)")
     return os.path.join(ROOT, "runtimes", max(found)[1])
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--platform", choices=sorted(PLATFORMS), help="default: --runtime's platform, else ios")
     ap.add_argument("--runtime", help="runtimes/<dir> (default: %s, else the newest unrestricted)" % DEFAULT_RT)
     ap.add_argument("--mac-sdk", default=os.path.join(ROOT, "sdks/MacOSX.sdk"))
-    ap.add_argument("--out", default=os.path.join(ROOT, "sdks/iPhoneSimulator.sdk"))
+    ap.add_argument("--out", help="default: sdks/<Platform>Simulator.sdk")
     ap.add_argument("--force", action="store_true", help="replace an existing --out")
     a = ap.parse_args()
-    out, mac = os.path.abspath(a.out), os.path.realpath(a.mac_sdk)
+    plat = a.platform
+    if not plat and a.runtime:
+        plat = next((k for k in PLATFORMS if os.path.basename(a.runtime.rstrip("/")).startswith(k + "-")), None)
+    plat = plat or "ios"
+    global TARGET
+    TARGET, sdkdir, canon, disp, sysname, platid, rtname = PLATFORMS[plat]
+    out = os.path.abspath(a.out or os.path.join(ROOT, "sdks", sdkdir))
+    mac = os.path.realpath(a.mac_sdk)
     if os.path.lexists(out) and not a.force:
         print(f"sim-sdk: {out} exists (--force replaces it)", file=sys.stderr)
         return
     if not os.path.isdir(os.path.join(mac, "usr/include")):
         sys.exit(f"sim-sdk: no macOS SDK at {mac} (build/sdk/macos-sdk.py fetches one)")
-    rt = os.path.realpath(a.runtime or default_runtime())
+    rt = os.path.realpath(a.runtime or default_runtime(plat))
     caches = glob.glob(os.path.join(rt, "RuntimeRoot/System/Library/Caches/com.apple.dyld/dyld_sim_shared_cache_arm64"))
     if not caches:
         sys.exit(f"sim-sdk: no dyld_sim_shared_cache_arm64 in {rt}")
@@ -279,14 +298,21 @@ def main():
     os.makedirs(tmp)
     write_stubs(caches[0], tmp)
     link_headers(mac, tmp)
+    # Platforms 1: frameworks that are private on this platform but public on macOS (watchOS: SystemConfiguration; the
+    # runtime's Frameworks/X.framework is a link to PrivateFrameworks/X.framework): -framework X finds the private stub
+    for fw in glob.glob(os.path.join(tmp, "System/Library/Frameworks/*.framework")):
+        n = os.path.basename(fw)[:-len(".framework")]
+        priv = os.path.join(tmp, "System/Library/PrivateFrameworks", n + ".framework", n + ".tbd")
+        if not os.path.lexists(os.path.join(fw, n + ".tbd")) and os.path.exists(priv):
+            os.symlink(os.path.relpath(priv, fw), os.path.join(fw, n + ".tbd"))
     settings = {
-        "CanonicalName": f"iphonesimulator{ver}", "DisplayName": f"Simulator - iOS {ver} (x86Sim substitute)",
+        "CanonicalName": f"{canon}{ver}", "DisplayName": f"Simulator - {disp} {ver} (x86Sim substitute)",
         "Version": ver, "MaximumDeploymentTarget": f"{ver}.99", "DefaultDeploymentTarget": ver, "IsBaseSDK": "YES",
         "x86SimSubstitute": {"runtime": os.path.basename(rt), "macSDK": os.path.basename(mac)},
-        "SupportedTargets": {"iphonesimulator": {
-            "Archs": ["arm64"], "LLVMTargetTripleVendor": "apple", "LLVMTargetTripleSys": "ios",
-            "LLVMTargetTripleEnvironment": "simulator", "BuildVersionPlatformID": "7",
-            "ClangRuntimeLibraryPlatformName": "iossim", "PlatformFamilyName": "iOS",
+        "SupportedTargets": {canon: {
+            "Archs": ["arm64"], "LLVMTargetTripleVendor": "apple", "LLVMTargetTripleSys": sysname,
+            "LLVMTargetTripleEnvironment": "simulator", "BuildVersionPlatformID": platid,
+            "ClangRuntimeLibraryPlatformName": rtname, "PlatformFamilyName": disp,
             "MinimumDeploymentTarget": "12.0", "MaximumDeploymentTarget": f"{ver}.99", "DefaultDeploymentTarget": ver}},
     }
     with open(os.path.join(tmp, "SDKSettings.json"), "w") as f:
@@ -294,7 +320,7 @@ def main():
     if os.path.lexists(out):
         shutil.rmtree(out) if os.path.isdir(out) and not os.path.islink(out) else os.unlink(out)
     os.rename(tmp, out)
-    print(f"sim-sdk: iOS {ver} substitute SDK ({os.path.basename(rt)} + {os.path.basename(mac)}) -> {out}",
+    print(f"sim-sdk: {disp} {ver} substitute SDK ({os.path.basename(rt)} + {os.path.basename(mac)}) -> {out}",
           file=sys.stderr)
 
 

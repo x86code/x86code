@@ -530,8 +530,10 @@ static void render_tests(id<MTLDevice> dev, id<MTLCommandQueue> q) {
 		_NSGetExecutablePath(path, &psize);
 		char* args[] = { path, "readsurface", idbuf, NULL };
 		extern char** environ;
+		// Platforms 1: libSystem's posix_spawn under another name (tvOS/watchOS headers mark it unavailable)
+		extern int x86sim_posix_spawn(pid_t*, const char*, const void*, const void*, char* const[], char* const[]) __asm("_posix_spawn");
 		pid_t pid = 0;
-		int rc = posix_spawn(&pid, path, NULL, NULL, args, environ), status = -1;
+		int rc = x86sim_posix_spawn(&pid, path, NULL, NULL, args, environ), status = -1;
 		if (rc == 0) waitpid(pid, &status, 0);
 		CHECK(rc == 0 && WIFEXITED(status) && WEXITSTATUS(status) == 0, "process %d looked IOSurface %s up and read the rendered pixels (exit %d, spawn %d)",
 			pid, idbuf, WIFEXITED(status) ? WEXITSTATUS(status) : -1, rc);

@@ -77,6 +77,15 @@ core.[0-9]*
 !/host/simfb/arm64/SimFramebuffer.framework/
 !/host/simhid/SimulatorHID.framework/
 !/host/simhid/arm64/SimulatorHID.framework/
+# Platforms 1: the tvOS and watchOS builds of the same (X86SIM_PLATFORM=tvos|watchos build/mac-build-arm64-shims.sh)
+!/host/simaudio/arm64-tvos/libsimaudio.dylib
+!/host/simaudio/arm64-watchos/libsimaudio.dylib
+!/host/simshim/arm64-tvos/compat/libsimshim.dylib
+!/host/simshim/arm64-watchos/compat/libsimshim.dylib
+!/host/simfb/arm64-tvos/SimFramebuffer.framework/
+!/host/simfb/arm64-watchos/SimFramebuffer.framework/
+!/host/simhid/arm64-tvos/SimulatorHID.framework/
+!/host/simhid/arm64-watchos/SimulatorHID.framework/
 /build/metal-research/toolchain/
 # release build outputs (build/release/build.sh, appimage.sh)
 /build/release/out/
