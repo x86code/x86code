@@ -139,6 +139,8 @@ MIN="com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.appl
 # assetsd (on demand): the photo library; without it Photos throws in its library view's viewDidLoad.
 # geod + navd (Speed 15, on demand): Maps' GeoServices and navigation services. Without them Maps retried both lookups
 # without backoff (~85% CPU backgrounded); Speed 14 no-op patched the retry instead, which turned the features off.
+# mapssyncd (on demand): Maps' synced places (com.apple.Maps.MapsSync.store, a Core Data store over XPC). Without it
+# navd's store lookups failed every 3 s ("Connection init failed at lookup with error 3 - No such process").
 # campo (Speed 16): the Siri UI (Campo.app LaunchAngel, launched by RunningBoard as osservice<com.apple.campo> on the
 # Siri tap; mksimdevice puts angels where launchd_sim classifies them as angels, see there).
 # PosterBoard (Speed 17, on-demand angel): the wallpaper. On a device without a poster store, SpringBoard asks for it and
@@ -176,7 +178,7 @@ MIN="com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.appl
 # nanotimekitcompaniond (on demand: its Mach services start it) renders the Watch app's faces: without it Face Gallery's
 # previews stayed empty (com.apple.nanotimekit.facesnapshotserver: no such process).
 UI="com.apple.installcoordinationd com.apple.mobiletimerd com.apple.backboardd com.apple.SpringBoard com.apple.sleepd com.apple.TextInput.kbd com.apple.FileCoordination
-	com.apple.usernotificationsd com.apple.InputUI com.apple.assistantd com.apple.assetsd com.apple.geod com.apple.navd
+	com.apple.usernotificationsd com.apple.InputUI com.apple.assistantd com.apple.assetsd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd
 	com.apple.campo com.apple.FileProvider com.apple.DesktopServicesHelper com.apple.PosterBoard com.apple.financed
 	com.apple.passd com.apple.finhealthd com.apple.healthd com.apple.healthappd com.apple.medialibraryd
 	com.apple.StatusKitAgent com.apple.mobileassetd com.apple.assetsubscriptiond com.apple.corespeechd com.apple.sirittsd
