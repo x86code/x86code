@@ -5,6 +5,13 @@
 set -e
 LLVM_VERSION=${LLVM_VERSION:-23}
 export DEBIAN_FRONTEND=noninteractive
+# a stalled mirror (GitHub's runners fetch through a mirror list; on 2026-11-11 one stopped answering mid-download and
+# apt-get waited for 20+ minutes) times out after 30 s and is retried / the next mirror is tried, instead of hanging
+cat > /etc/apt/apt.conf.d/80x86sim-retries <<'APT'
+Acquire::Retries "5";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+APT
 apt-get update -q
 # Darling's own list (external/darling/debian/control), minus i386 (TARGET_i386=OFF), plus what our pieces and the
 # AppImage need (boost for dynarmic, squashfs/zsync for packing, file/desktop-file-utils for appimagetool's checks)

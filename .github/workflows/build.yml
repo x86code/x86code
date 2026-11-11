@@ -49,6 +49,7 @@ jobs:
           du -sh external/*
 
       - name: Packages
+        timeout-minutes: 15   # ~1 min normally; a hung mirror fails the run instead of holding it for hours
         run: sudo build/release/deps-ubuntu.sh
 
       - name: Rust
