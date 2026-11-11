@@ -1,6 +1,6 @@
 // VKMTL wire protocol: metalhostd (Darling, our MTLDevice classes) <-> mtlvk (native Linux, Vulkan).
 // One AF_UNIX stream connection per metalhostd process. All integers little-endian, fields naturally
-// aligned, no padding beyond what is written here. mtlvk/src/proto.rs mirrors this file.
+// aligned, no padding beyond what is written here. linux/mtlvk/src/proto.rs mirrors this file.
 //
 // Every message: vkmtl_hdr + `size` payload bytes. Requests that expect a reply carry a nonzero seq;
 // the reply has op | VKMTL_REPLY and the same seq. Messages without reply are processed in order, so a

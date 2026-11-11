@@ -123,7 +123,7 @@ static void* vk_reader(void* arg) {
 		vkmtl_hdr h;
 		if (read_all(g_sock, &h, sizeof(h)) < 0) break;
 		void* data = h.size ? malloc(h.size) : NULL;
-		if (h.size && read_all(g_sock, data, h.size) < 0) break;
+		if (h.size && read_all(g_sock, data, h.size) < 0) { free(data); break; }
 		if (h.op & VKMTL_REPLY) {
 			pthread_mutex_lock(&g_plock);
 			for (pending* p = g_pending; p; p = p->next) if (p->seq == h.seq) { p->data = data; p->size = h.size; p->done = 1; data = NULL; break; }
@@ -154,15 +154,20 @@ static void* vk_reader(void* arg) {
 	return NULL;
 }
 
-static int vk_connect(void) {
+// mtlvk's socket ($X86SIM_MTLVK_SOCKET, a Linux path) as seen from Darling.
+void VKMTLSocketAddress(struct sockaddr_un* a) {
 	const char* path = getenv("X86SIM_MTLVK_SOCKET");
-	char full[200];
-	snprintf(full, sizeof(full), "/Volumes/SystemRoot%s", path ? path : VKMTL_SOCKET_DEFAULT);
+	memset(a, 0, sizeof(*a));
+	a->sun_family = AF_UNIX;
+	snprintf(a->sun_path, sizeof(a->sun_path), "/Volumes/SystemRoot%s", path ? path : VKMTL_SOCKET_DEFAULT);
+}
+
+static int vk_connect(void) {
+	struct sockaddr_un a;
+	VKMTLSocketAddress(&a);
+	const char* full = a.sun_path;
 	for (int attempt = 0; attempt < 50; attempt++) {
 		int s = socket(AF_UNIX, SOCK_STREAM, 0);
-		struct sockaddr_un a = { 0 };
-		a.sun_family = AF_UNIX;
-		strlcpy(a.sun_path, full, sizeof(a.sun_path));
 		if (connect(s, (struct sockaddr*)&a, sizeof(a)) == 0) {
 			g_sock = s;
 			pthread_t t;
@@ -204,6 +209,7 @@ static const char* const kProtocols[] = { "MTLDevice", "MTLBuffer", "MTLTexture"
 
 @implementation VKMTLObject
 @synthesize label = _label;
+- (void)dealloc { [_label release]; [super dealloc]; }
 - (NSMethodSignature*)methodSignatureForSelector:(SEL)sel {
 	NSMethodSignature* s = [super methodSignatureForSelector:sel];
 	if (s) return s;
@@ -267,8 +273,7 @@ static VKMTLDevice* g_device;
 - (uint64_t)uniqueIdentifier { return _vkid; }
 - (BOOL)isPurgeable { return NO; }
 - (void)dealloc {
-	vk_send(VKMTL_OBJ_DEL, &_vkid, 8);
-	[_label release];
+	if (_vkid) vk_send(VKMTL_OBJ_DEL, &_vkid, 8);  // VKMTLBuffer/VKMTLTexture sent it already (and cleared _vkid)
 	[super dealloc];
 }
 @end
@@ -425,9 +430,13 @@ static size_t vk_region_bytes(MTLPixelFormat f, MTLRegion r, NSUInteger bpr, NSU
 }
 @end
 
+static uint32_t vk_swizzle_bits(MTLTextureSwizzleChannels s) {
+	return (uint32_t)s.red | (uint32_t)s.green << 8 | (uint32_t)s.blue << 16 | (uint32_t)s.alpha << 24;
+}
+
 @implementation VKMTLTexture
-- (instancetype)initWithDescriptor:(MTLTextureDescriptor*)d {
-	self = [super init];
+// A new texture's fields from its descriptor, and the descriptor as TEX_NEW / TEX_NEW_BUF send it.
+- (vkmtl_texdesc)vk_takeDescriptor:(MTLTextureDescriptor*)d {
 	_vkid = vk_new_id();
 	_type = d.textureType; _format = d.pixelFormat;
 	_width = d.width; _height = d.height; _depth = d.depth; _mips = d.mipmapLevelCount;
@@ -435,9 +444,12 @@ static size_t vk_region_bytes(MTLPixelFormat f, MTLRegion r, NSUInteger bpr, NSU
 	_options = d.resourceOptions;
 	_allowOpt = d.allowGPUOptimizedContents;
 	_swizzle = d.swizzle;
-	vkmtl_texdesc td = { (uint32_t)_type, (uint32_t)_format, _width, _height, _depth, (uint32_t)_mips, (uint32_t)_samples, _array,
-		_options, _usage, (uint32_t)_swizzle.red | (uint32_t)_swizzle.green << 8 | (uint32_t)_swizzle.blue << 16 | (uint32_t)_swizzle.alpha << 24,
-		_allowOpt };
+	return (vkmtl_texdesc){ (uint32_t)_type, (uint32_t)_format, _width, _height, _depth, (uint32_t)_mips, (uint32_t)_samples, _array,
+		_options, _usage, vk_swizzle_bits(_swizzle), _allowOpt };
+}
+- (instancetype)initWithDescriptor:(MTLTextureDescriptor*)d {
+	self = [super init];
+	vkmtl_texdesc td = [self vk_takeDescriptor:d];
 	wbuf b = { 0 };
 	wb_u64(&b, _vkid); wb_put(&b, &td, sizeof(td));
 	uint32_t rs = 0;
@@ -496,7 +508,7 @@ static size_t vk_region_bytes(MTLPixelFormat f, MTLRegion r, NSUInteger bpr, NSU
 	wb_u64(&b, v->_vkid); wb_u64(&b, _vkid); wb_u32(&b, (uint32_t)pf); wb_u32(&b, (uint32_t)tt);
 	wb_u64(&b, levels.location); wb_u64(&b, levels.length); wb_u64(&b, slices.location); wb_u64(&b, slices.length);
 	wb_u32(&b, swz != NULL);
-	wb_u32(&b, swz ? ((uint32_t)swz->red | (uint32_t)swz->green << 8 | (uint32_t)swz->blue << 16 | (uint32_t)swz->alpha << 24) : 0);
+	wb_u32(&b, swz ? vk_swizzle_bits(*swz) : 0);
 	uint32_t rs = 0;
 	int32_t* r = vk_call(VKMTL_TEX_VIEW, b.p, (uint32_t)b.n, &rs);
 	free(b.p);
@@ -510,7 +522,7 @@ static size_t vk_region_bytes(MTLPixelFormat f, MTLRegion r, NSUInteger bpr, NSU
 	}
 	free(r);
 	VKTRACE("texture %llu: view of %llu format %lu", v->_vkid, _vkid, (unsigned long)pf);
-	return v;
+	return (id<MTLTexture>)v;
 }
 - (id<MTLTexture>)newTextureViewWithPixelFormat:(MTLPixelFormat)pf {
 	NSUInteger slices = (_type == MTLTextureTypeCube || _type == MTLTextureTypeCubeArray) ? _array * 6 : _array;
@@ -538,18 +550,9 @@ static size_t vk_region_bytes(MTLPixelFormat f, MTLRegion r, NSUInteger bpr, NSU
 - (instancetype)initWithDescriptor:(MTLTextureDescriptor*)d buffer:(id)buffer offset:(NSUInteger)offset bytesPerRow:(NSUInteger)bpr
 	iosurface:(IOSurfaceRef)surface plane:(NSUInteger)plane planar:(BOOL)planar {
 	self = [super init];
-	_vkid = vk_new_id();
-	_type = d.textureType; _format = d.pixelFormat;
-	_width = d.width; _height = d.height; _depth = d.depth; _mips = d.mipmapLevelCount;
-	_array = d.arrayLength; _samples = d.sampleCount; _usage = d.usage;
-	_options = d.resourceOptions;
-	_allowOpt = d.allowGPUOptimizedContents;
-	_swizzle = d.swizzle;
+	vkmtl_texdesc td = [self vk_takeDescriptor:d];
 	_buffer = [buffer retain]; _bufOffset = offset; _bufBPR = bpr; _plane = plane;
 	if (surface) _iosurface = (IOSurfaceRef)CFRetain(surface);
-	vkmtl_texdesc td = { (uint32_t)_type, (uint32_t)_format, _width, _height, _depth, (uint32_t)_mips, (uint32_t)_samples, _array,
-		_options, _usage, (uint32_t)_swizzle.red | (uint32_t)_swizzle.green << 8 | (uint32_t)_swizzle.blue << 16 | (uint32_t)_swizzle.alpha << 24,
-		_allowOpt };
 	wbuf b = { 0 };
 	wb_u64(&b, _vkid); wb_u64(&b, ((VKMTLObject*)buffer)->_vkid); wb_put(&b, &td, sizeof(td));
 	wb_u64(&b, offset); wb_u64(&b, bpr); wb_u32(&b, surface != NULL); wb_u32(&b, planar);
@@ -641,7 +644,6 @@ static pthread_mutex_t g_events_lock = PTHREAD_MUTEX_INITIALIZER;
 	pthread_mutex_unlock(&g_events_lock);
 	vk_send(VKMTL_OBJ_DEL, &_vkid, 8);
 	[_listeners release];
-	[_label release];
 	[super dealloc];
 }
 - (id<MTLDevice>)device { return (id<MTLDevice>)g_device; }
@@ -763,7 +765,7 @@ static dispatch_queue_t g_completion_queue;
 - (void)updateFence:(id<MTLFence>)f afterStages:(MTLRenderStages)s { (void)f; (void)s; }
 - (void)waitForFence:(id<MTLFence>)f beforeStages:(MTLRenderStages)s { (void)f; (void)s; }
 - (void)barrierAfterQueueStages:(NSUInteger)a beforeStages:(NSUInteger)b { (void)a; (void)b; }
-- (void)dealloc { [_cb release]; [_label release]; [super dealloc]; }
+- (void)dealloc { [_cb release]; [super dealloc]; }
 @end
 
 @interface VKMTLBlitCommandEncoder : VKMTLEncoder
@@ -900,7 +902,7 @@ static NSError* vk_reply_error(NSString* domain, NSInteger code, const char* r, 
 - (NSArray*)stageInputAttributes { return nil; }
 - (NSDictionary*)functionConstantsDictionary { return @{}; }
 - (NSString*)description { return [NSString stringWithFormat:@"<VKMTLFunction %@ type %lu>", _name, (unsigned long)_type]; }
-- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_library release]; [_name release]; [_label release]; [super dealloc]; }
+- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_library release]; [_name release]; [super dealloc]; }
 @end
 
 static int g_dump_libs;
@@ -950,7 +952,7 @@ static _Atomic int g_dump_n;
 	VKTRACE("library %llu: %zu bytes, functions %s", _vkid, n, [_names componentsJoinedByString:@","].UTF8String);
 	return self;
 }
-- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_names release]; [_types release]; [_overrideTriple release]; [_label release]; [super dealloc]; }
+- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_names release]; [_types release]; [_overrideTriple release]; [super dealloc]; }
 - (id<MTLDevice>)device { return (id<MTLDevice>)g_device; }
 - (NSArray<NSString*>*)functionNames { return _names; }
 - (MTLLibraryType)type { return MTLLibraryTypeExecutable; }
@@ -1111,7 +1113,7 @@ uint32_t vk_constant_values(MTLFunctionConstantValues* cv, wbuf* out) {
 - (MTLSize)recommendedPersistentThreadgroupsPerGridForThreadsPerThreadgroup:(MTLSize)tpt {
 	(void)tpt; return MTLSizeMake(0, 0, 0);
 }
-- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_label release]; [super dealloc]; }
+- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [super dealloc]; }
 @end
 
 @interface VKMTLSamplerState : VKMTLObject {
@@ -1122,7 +1124,7 @@ uint32_t vk_constant_values(MTLFunctionConstantValues* cv, wbuf* out) {
 @implementation VKMTLSamplerState
 - (id<MTLDevice>)device { return (id<MTLDevice>)g_device; }
 - (MTLResourceID)gpuResourceID { MTLResourceID r; r._impl = _rid; return r; }
-- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_label release]; [super dealloc]; }
+- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [super dealloc]; }
 @end
 
 @interface VKMTLComputeCommandEncoder : VKMTLEncoder {
@@ -1236,7 +1238,7 @@ uint32_t vk_constant_values(MTLFunctionConstantValues* cv, wbuf* out) {
 - (MTLShaderValidation)shaderValidation { return MTLShaderValidationDefault; }
 - (uint64_t)uniqueIdentifier { return _vkid; }
 - (NSUInteger)imageblockMemoryLengthForDimensions:(MTLSize)d { (void)d; return 0; }
-- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_label release]; [super dealloc]; }
+- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [super dealloc]; }
 @end
 
 @interface VKMTLDepthStencilState : VKMTLObject
@@ -1244,7 +1246,7 @@ uint32_t vk_constant_values(MTLFunctionConstantValues* cv, wbuf* out) {
 @implementation VKMTLDepthStencilState
 - (id<MTLDevice>)device { return (id<MTLDevice>)g_device; }
 - (MTLResourceID)gpuResourceID { MTLResourceID r; r._impl = _vkid; return r; }
-- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_label release]; [super dealloc]; }
+- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [super dealloc]; }
 @end
 
 // The encoder records into its own list; endEncoding sends the pass (with the store actions known by then), the
@@ -1495,7 +1497,7 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 }
 - (void)dealloc {
 	free(_cmds.p);
-	[_queue release]; [_scheduled release]; [_completed release]; [_keep release]; [_error release]; [_label release];
+	[_queue release]; [_scheduled release]; [_completed release]; [_keep release]; [_error release];
 	pthread_mutex_destroy(&_lock); pthread_cond_destroy(&_cond);
 	[super dealloc];
 }
@@ -1650,7 +1652,7 @@ static void vk_cb_done(uint64_t cbid, uint32_t status, uint32_t error, double st
 - (void)insertDebugCaptureBoundary {}
 - (void)setMaxCommandBufferCount:(NSUInteger)n { _max = n; }
 - (NSUInteger)maxCommandBufferCount { return _max; }
-- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [_label release]; [super dealloc]; }
+- (void)dealloc { vk_send(VKMTL_OBJ_DEL, &_vkid, 8); [super dealloc]; }
 @end
 
 // ---------------------------------------------------------------------------------------------------------

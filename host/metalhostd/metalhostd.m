@@ -20,7 +20,6 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <libkern/OSCacheControl.h>
-#include "vkmtl_proto.h"
 
 // marked unavailable on iOS in the SDK, but libxpc in the simulator runtime has it (MTLSimDriverHost's peer
 // listener API needs the XPC-service bootstrap we don't have)
@@ -30,6 +29,7 @@ extern xpc_connection_t x86_xpc_connection_create_mach_service(const char* name,
 extern id<MTLDevice> VKMTLCreateSystemDefaultDevice(void);
 extern NSArray* VKMTLCopyAllDevices(void);
 extern int VKMTLRebind(const char* image_name_part, void* real, void* ours);
+extern void VKMTLSocketAddress(struct sockaddr_un* a);
 
 #define RT_MTLSIMIMPL "/System/Library/PrivateFrameworks/MTLSimImplementation.framework/MTLSimImplementation"
 
@@ -62,9 +62,7 @@ static void guarded_set_event_handler(xpc_connection_t c, xpc_handler_t h) {
 				x86_xpc_connection_get_pid(r), xpc_dictionary_get_int64(e, "connectionType"), xpc_dictionary_get_uint64(e, "processRef"));
 	});
 }
-#endif
 
-#if defined(__arm64__)
 // x86Sim Platforms 1: tvOS / watchOS have MTLSimImplementation and MetalSerializer in the dyld shared cache, where their
 // calls into Metal branch straight to it: no GOT entry for VKMTLRebind, which found 0. Their device then came from the
 // real MTLCreateSystemDefaultDevice: MTLSimDriver connecting to com.apple.metal.simulator, i.e. to this process, which
@@ -110,13 +108,13 @@ int main(int argc, char** argv) {
 			n = patch_entry(real_create, (void*)VKMTLCreateSystemDefaultDevice) + patch_entry(real_all, (void*)VKMTLCopyAllDevices);
 			fprintf(stderr, "metalhostd: %d device entry points patched (MTLSimImplementation in the shared cache)\n", n);
 		}
-#endif
-#if defined(__arm64__)
 		real_set_event_handler = dlsym(RTLD_DEFAULT, "xpc_connection_set_event_handler");
 		fprintf(stderr, "metalhostd: %d connection handler guards\n",
 			VKMTLRebind("MTLSimImplementation", real_set_event_handler, (void*)guarded_set_event_handler));
 #endif
 
+		const char* names_env = getenv("X86SIM_METAL_NAMES");
+		NSArray* names = [@(names_env ?: "com.apple.metal.simulator") componentsSeparatedByString:@","];
 		id<MTLDevice> dev = VKMTLCreateSystemDefaultDevice();
 		if (!dev) {
 			// x86Sim: no mtlvk (not started, or it died): keep the service names but cancel every client connection
@@ -124,8 +122,7 @@ int main(int argc, char** argv) {
 			// waiting on a service that never answers. mtlvk is looked for again every 10 s; when it is back we exit
 			// and launchd starts a serving metalhostd on the next lookup (processes already running stay software).
 			fprintf(stderr, "metalhostd: no device (is mtlvk running?): refusing clients\n");
-			const char* names = getenv("X86SIM_METAL_NAMES");
-			for (NSString* name in [@(names ?: "com.apple.metal.simulator") componentsSeparatedByString:@","]) {
+			for (NSString* name in names) {
 				if (!name.length) continue;
 				xpc_connection_t l = x86_xpc_connection_create_mach_service(name.UTF8String, dispatch_get_main_queue(), XPC_CONNECTION_MACH_SERVICE_LISTENER);
 				if (!l) continue;
@@ -141,13 +138,9 @@ int main(int argc, char** argv) {
 			dispatch_source_t t = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
 			dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC), 10 * NSEC_PER_SEC, NSEC_PER_SEC);
 			dispatch_source_set_event_handler(t, ^{
-				char path[256];
-				const char* sp = getenv("X86SIM_MTLVK_SOCKET");
-				snprintf(path, sizeof(path), "/Volumes/SystemRoot%s", sp ? sp : VKMTL_SOCKET_DEFAULT);
+				struct sockaddr_un a;
+				VKMTLSocketAddress(&a);
 				int s = socket(AF_UNIX, SOCK_STREAM, 0);
-				struct sockaddr_un a = { 0 };
-				a.sun_family = AF_UNIX;
-				strlcpy(a.sun_path, path, sizeof(a.sun_path));
 				if (connect(s, (struct sockaddr*)&a, sizeof(a)) == 0) { fprintf(stderr, "metalhostd: mtlvk is back, restarting\n"); _exit(0); }
 				close(s);
 			});
@@ -158,9 +151,7 @@ int main(int argc, char** argv) {
 		}
 		uint64_t registryID = dev.registryID;
 
-		const char* names = getenv("X86SIM_METAL_NAMES");
-		NSArray* list = [@(names ?: "com.apple.metal.simulator") componentsSeparatedByString:@","];
-		for (NSString* name in list) {
+		for (NSString* name in names) {
 			if (!name.length) continue;
 			xpc_connection_t l = x86_xpc_connection_create_mach_service(name.UTF8String, dispatch_get_main_queue(), XPC_CONNECTION_MACH_SERVICE_LISTENER);
 			if (!l) { fprintf(stderr, "metalhostd: cannot listen on %s\n", name.UTF8String); continue; }

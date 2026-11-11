@@ -2,7 +2,7 @@
 //!
 //! metalhostd (a Darling process running Apple's MTLSimImplementation over our MTLDevice classes) connects
 //! here over a Unix socket and forwards Metal objects and command buffers in the VKMTL protocol
-//! (../vkmtl_proto.h). mtlvk executes them on Vulkan through metal2vulkan-runtime. Buffer memory is
+//! (host/metalhostd/vkmtl_proto.h). mtlvk executes them on Vulkan through metal2vulkan-runtime. Buffer memory is
 //! shared without copying: metalhostd passes the memfd behind each MTLBuffer (Darling syscall 599) and
 //! mtlvk maps it and imports the pages into Vulkan (VK_EXT_external_memory_host).
 //!
@@ -75,24 +75,24 @@ fn start_trim(device: Device) {
             }
             let (pools, descriptors) = device.trim_idle(std::time::Duration::from_secs_f64(idle));
             // x86Sim RAM 8: pipelines nothing used for MTLVK_PIPELINE_IDLE s (default 300; 0 = never): graphics
-            // pipeline libraries no new key claimed, and the VkPipelines kept for released variants
-            let (libraries, kept) = match pipeline_idle {
+            // pipeline libraries no new key claimed, the VkPipelines kept for released variants and those of idle variants
+            let (libraries, pipelines) = match pipeline_idle {
                 Some(idle) => device.trim_idle_pipelines(idle),
                 None => (0, 0),
             };
-            if log && (libraries > 0 || kept > 0) {
-                eprintln!("mtlvk trim: {libraries} pipeline libraries, {kept} kept pipelines destroyed");
+            if log && (libraries > 0 || pipelines > 0) {
+                eprintln!("mtlvk trim: {libraries} pipeline libraries, {pipelines} pipelines destroyed");
             }
-            let pools = pools + libraries + kept;
+            let freed = pools + libraries + pipelines;
             // glibc keeps freed pages of its arenas (an app's pipelines and command logs, gone with it); give back
             // the whole free pages after a quiet trim and at least every minute.
-            let malloc = (pools > 0 || descriptors > 0 || last_malloc_trim.elapsed().as_secs() >= 60) && {
+            let malloc = (freed > 0 || descriptors > 0 || last_malloc_trim.elapsed().as_secs() >= 60) && {
                 last_malloc_trim = std::time::Instant::now();
                 // SAFETY: plain libc call.
                 unsafe { libc::malloc_trim(0) != 0 }
             };
-            if log && (pools > 0 || descriptors > 0) {
-                eprintln!("mtlvk trim: {pools} command pools (and recorder logs), {descriptors} descriptor pools released, malloc_trim {malloc}");
+            if log && (freed > 0 || descriptors > 0) {
+                eprintln!("mtlvk trim: {pools} command pools, {descriptors} descriptor pools released, malloc_trim {malloc}");
             }
         }
     });
@@ -190,7 +190,8 @@ fn tune_malloc() {
 fn main() {
     tune_malloc();
     // x86Sim Speed 7: SIGUSR1 -> per-connection object counts on stderr (next request)
-    unsafe { libc::signal(libc::SIGUSR1, on_usr1 as libc::sighandler_t) };
+    // SAFETY: the handler only bumps an atomic.
+    unsafe { libc::signal(libc::SIGUSR1, on_usr1 as extern "C" fn(libc::c_int) as libc::sighandler_t) };
     let arg = std::env::args().nth(1);
     // x86Sim RAM 2: the device as the phone needs it (see device_options).
     let device = match Device::system_default_with(&device_options()) {

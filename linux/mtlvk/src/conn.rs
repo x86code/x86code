@@ -23,7 +23,7 @@ use metal2vulkan_runtime::{
 };
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::ptr::NonNull;
 use std::sync::{Arc, Mutex};
@@ -54,7 +54,8 @@ impl Drop for Mapping {
 #[derive(Clone)]
 struct Mirror {
     buffer: Buffer,
-    map: Arc<Mapping>,
+    /// keeps `ptr..ptr + len` mapped
+    _map: Arc<Mapping>,
     ptr: usize,
     len: usize,
 }
@@ -71,7 +72,6 @@ impl Mirror {
             // SAFETY: as above.
             unsafe { std::ptr::copy_nonoverlapping(c.as_ptr(), self.ptr as *mut u8, self.len) };
         }
-        let _ = &self.map;
     }
 }
 
@@ -115,6 +115,9 @@ impl Enc {
     }
 }
 
+/// A VRAM render target's surface: memfd (dev, inode, offset of the plane), bytes per row, width, height, pixel format.
+type VramKey = (u64, u64, u64, u64, u64, u64, u32);
+
 pub type Sink = Arc<dyn Fn(u32, u64, Vec<u8>) + Send + Sync>;
 
 pub struct State {
@@ -139,10 +142,10 @@ pub struct State {
     vram_targets: bool,
     proxies: HashMap<u64, Texture>,
     proxy_views: HashMap<u64, u64>,
-    shared_vram: HashMap<(u64, u64, u64, u64, u64, u64, u32), Texture>,
+    shared_vram: HashMap<VramKey, Texture>,
     /// x86Sim RAM 2: the `shared_vram` key of each proxied texture: the VRAM texture goes with the last proxy of its
     /// surface (it was kept for good: 8 full-screen surfaces, ~100 MB of VRAM, after Settings and Maps).
-    proxy_keys: HashMap<u64, (u64, u64, u64, u64, u64, u64, u32)>,
+    proxy_keys: HashMap<u64, VramKey>,
     buf_keys: HashMap<u64, (u64, u64, u64)>,
     written: std::cell::RefCell<std::collections::BTreeSet<u64>>,
     stats_seen: u32,
@@ -197,10 +200,9 @@ impl State {
                 Obj::Event(_) => 3,
                 Obj::Lib(_) => 4,
                 Obj::Func(_) => 5,
-                Obj::Pso(_) => 6,
+                Obj::Pso(_) | Obj::PsoFailed => 6,
                 Obj::Sampler(_) => 7,
                 Obj::Rps(_) | Obj::RpsFailed => 8,
-                Obj::PsoFailed => 6,
                 Obj::Dss(_) => 9,
             };
             n[k] += 1;
@@ -329,10 +331,12 @@ impl State {
         }
     }
 
-    /// Handles one request. Returns the reply payload for requests that have one.
-    pub fn handle(&mut self, op: u32, p: &[u8], fd: Option<RawFd>) -> Option<Vec<u8>> {
-        if STATS_REQ.load(std::sync::atomic::Ordering::Relaxed) != self.stats_seen {
-            self.stats_seen = STATS_REQ.load(std::sync::atomic::Ordering::Relaxed);
+    /// Handles one request. Returns the reply payload for requests that have one. `fd` (the SCM_RIGHTS fd that
+    /// came with the message) is closed when the request is done with it.
+    pub fn handle(&mut self, op: u32, p: &[u8], fd: Option<OwnedFd>) -> Option<Vec<u8>> {
+        let stats_req = STATS_REQ.load(std::sync::atomic::Ordering::Relaxed);
+        if stats_req != self.stats_seen {
+            self.stats_seen = stats_req;
             self.print_stats();
         }
         let mut r = Rd::new(p);
@@ -457,8 +461,8 @@ impl State {
                 let (id, off, len) = (r.u64(), r.u64(), r.u64());
                 let data = r.rest();
                 if let Ok(b) = self.buf(id) {
-                    if let Some(c) = b.contents() {
-                        let n = (len as usize).min(data.len()).min((b.length().saturating_sub(off)) as usize);
+                    if let (Some(c), true) = (b.contents(), off < b.length()) {
+                        let n = (len as usize).min(data.len()).min((b.length() - off) as usize);
                         // SAFETY: n bytes inside the buffer's contents.
                         unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), c.as_ptr().add(off as usize), n) };
                     }
@@ -468,7 +472,7 @@ impl State {
             BUF_READ => {
                 let (id, off, len) = (r.u64(), r.u64(), r.u64());
                 match self.buf(id).ok().and_then(|b| b.contents().map(|c| (c, b.length()))) {
-                    Some((c, blen)) if off + len <= blen => {
+                    Some((c, blen)) if off.checked_add(len).is_some_and(|end| end <= blen) => {
                         w.i32(0).u32(0);
                         // SAFETY: inside the buffer.
                         w.bytes(unsafe { std::slice::from_raw_parts(c.as_ptr().add(off as usize), len as usize) });
@@ -604,7 +608,7 @@ impl State {
     }
 
     /// Returns whether the buffer is a copy (metalhostd must BUF_WRITE/BUF_READ it).
-    fn buf_new(&mut self, id: u64, length: u64, options: u64, off: u64, fd: Option<RawFd>, shared: bool) -> Res<bool> {
+    fn buf_new(&mut self, id: u64, length: u64, options: u64, off: u64, fd: Option<OwnedFd>, shared: bool) -> Res<bool> {
         // storage mode bits (4..8) cleared: Shared. Pages from metalhostd are host memory whatever the
         // app asked for (Private buffers too, for now).
         let shared_opts = ResourceOptions::from_raw(options & !0xf0).map_err(err("options"))?;
@@ -617,7 +621,7 @@ impl State {
         if self.vram_targets {
             // SAFETY: fstat of the fd we were given.
             let mut st: libc::stat = unsafe { std::mem::zeroed() };
-            if unsafe { libc::fstat(fd, &mut st) } == 0 {
+            if unsafe { libc::fstat(fd.as_raw_fd(), &mut st) } == 0 {
                 self.buf_keys.insert(id, (st.st_dev as u64, st.st_ino as u64, off));
             }
         }
@@ -625,9 +629,8 @@ impl State {
         let delta = off - map_off;
         let map_len = ((delta + length.max(1) + PAGE - 1) & !(PAGE - 1)) as usize;
         // SAFETY: mapping a memfd we were given.
-        let base = unsafe { libc::mmap(std::ptr::null_mut(), map_len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, map_off as libc::off_t) };
-        // SAFETY: our copy of the fd.
-        unsafe { libc::close(fd) };
+        let base = unsafe { libc::mmap(std::ptr::null_mut(), map_len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd.as_raw_fd(), map_off as libc::off_t) };
+        drop(fd);
         if base == libc::MAP_FAILED {
             return Err(format!("mmap {map_len} at {map_off}: {}", std::io::Error::last_os_error()));
         }
@@ -658,7 +661,7 @@ impl State {
             }
         }
         let b = self.device.new_buffer(length.max(1), shared_opts).map_err(err("new_buffer"))?;
-        let m = Mirror { buffer: b.clone(), map, ptr: ptr as usize, len: length as usize };
+        let m = Mirror { buffer: b.clone(), _map: map, ptr: ptr as usize, len: length as usize };
         m.to_gpu();
         self.objs.insert(id, Obj::Buf(b));
         self.kinds.insert(id, (if shared { Kind::BufMirror } else { Kind::BufCopy }, length));
@@ -1093,7 +1096,6 @@ impl State {
                 }
                 C_CS_END => {
                     enc.end()?;
-                    enc = Enc::None;
                     // x86Sim: MTLVK_DUMP_PASSES also dumps the textures a compute encoder bound (every level)
                     if dump_dir.is_some() && !dump_targets.is_empty() && DUMPED.load(std::sync::atomic::Ordering::Relaxed) < 400 {
                         let ts: Vec<Texture> = dump_targets.drain(..).map(|(t, _)| t).collect();
@@ -1107,44 +1109,10 @@ impl State {
                     }
                     dump_targets.clear();
                 }
-                C_CS_PIPELINE..=C_CS_USE | C_CS_BUFFER_OFFSET if (kind == C_CS_BUFFER || kind == C_CS_BUFFER_OFFSET || kind == C_CS_DISPATCH) && dump_dir.is_some() && {
-                    let mut c2 = Rd::new(body);
-                    if kind == C_CS_DISPATCH {
-                        let (k, _) = (c2.u32(), c2.u32());
-                        let g = [c2.u64(), c2.u64(), c2.u64(), c2.u64(), c2.u64(), c2.u64()];
-                        eprintln!("mtlvk: cb {id:#x} dispatch kind {k} {g:?}");
-                    } else {
-                        let b = if kind == C_CS_BUFFER { c2.u64() } else { 0 };
-                        let (off, index) = (c2.u64(), c2.u32());
-                        let mut head = String::new();
-                        if let Ok(buf) = self.buf(b) {
-                            if let Some(c) = buf.contents() {
-                                let n = (buf.length().saturating_sub(off)).min(64) as usize;
-                                // SAFETY: within the buffer.
-                                let bytes = unsafe { std::slice::from_raw_parts(c.as_ptr().add(off as usize), n) };
-                                let words: Vec<u32> = bytes.chunks_exact(4).map(|w| u32::from_le_bytes(w.try_into().unwrap())).collect();
-                                head = format!("len {} {words:?}", buf.length());
-                            }
-                        }
-                        eprintln!("mtlvk: cb {id:#x} compute buffer [{index}] {b:#x} +{off} {head}");
-                    }
-                    false
-                } => unreachable!(),
-                C_CS_PIPELINE..=C_CS_USE | C_CS_BUFFER_OFFSET if kind == C_CS_BYTES && dump_dir.is_some() && {
-                    let mut c2 = Rd::new(body);
-                    let (index, len) = (c2.u32(), c2.u32());
-                    let b = c2.bytes(len as usize);
-                    let words: Vec<u32> = b.chunks(4).map(|w| { let mut a = [0u8; 4]; a[..w.len()].copy_from_slice(w); u32::from_le_bytes(a) }).collect();
-                    eprintln!("mtlvk: cb {id:#x} compute bytes [{index}]: {words:?}");
-                    false
-                } => unreachable!(),
-                C_CS_PIPELINE..=C_CS_USE | C_CS_BUFFER_OFFSET if kind == C_CS_TEXTURE && dump_dir.is_some() && {
-                    let mut c2 = Rd::new(body);
-                    let t = c2.u64();
-                    if let Ok(t) = self.tex(t) { dump_targets.push((t.clone(), 0)); }
-                    false
-                } => unreachable!(),
                 C_CS_PIPELINE..=C_CS_USE | C_CS_BUFFER_OFFSET => {
+                    if dump_dir.is_some() {
+                        self.dump_compute_command(id, kind, body, &mut dump_targets);
+                    }
                     let Enc::Compute(ce) = &mut enc else {
                         return Err(format!("compute command {kind} outside a compute encoder"));
                     };
@@ -1164,7 +1132,6 @@ impl State {
                 }
                 C_RE_END => {
                     enc.end()?;
-                    enc = Enc::None;
                     if let Some(dir) = &dump_dir {
                         let n = DUMPED.load(std::sync::atomic::Ordering::Relaxed);
                         let max: u32 = std::env::var("MTLVK_DUMP_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
@@ -1247,6 +1214,48 @@ impl State {
         Ok(())
     }
 
+    /// x86Sim: MTLVK_DUMP_PASSES: log a compute command's buffer bindings, bytes and dispatches, and collect its
+    /// textures for the dump at C_CS_END.
+    fn dump_compute_command(&self, id: u64, kind: u32, body: &[u8], dump_targets: &mut Vec<(Texture, u64)>) {
+        let mut c = Rd::new(body);
+        match kind {
+            C_CS_DISPATCH => {
+                let (k, _) = (c.u32(), c.u32());
+                let g = [c.u64(), c.u64(), c.u64(), c.u64(), c.u64(), c.u64()];
+                eprintln!("mtlvk: cb {id:#x} dispatch kind {k} {g:?}");
+            }
+            C_CS_BUFFER | C_CS_BUFFER_OFFSET => {
+                let b = if kind == C_CS_BUFFER { c.u64() } else { 0 };
+                let (off, index) = (c.u64(), c.u32());
+                let mut head = String::new();
+                if let Ok(buf) = self.buf(b) {
+                    if let (Some(p), true) = (buf.contents(), off < buf.length()) {
+                        let n = (buf.length() - off).min(64) as usize;
+                        // SAFETY: within the buffer.
+                        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().add(off as usize), n) };
+                        let words: Vec<u32> = bytes.chunks_exact(4).map(|w| u32::from_le_bytes(w.try_into().unwrap())).collect();
+                        head = format!("len {} {words:?}", buf.length());
+                    }
+                }
+                eprintln!("mtlvk: cb {id:#x} compute buffer [{index}] {b:#x} +{off} {head}");
+            }
+            C_CS_BYTES => {
+                let (index, len) = (c.u32(), c.u32());
+                let words: Vec<u32> = c.bytes(len as usize).chunks(4).map(|w| {
+                    let mut a = [0u8; 4];
+                    a[..w.len()].copy_from_slice(w);
+                    u32::from_le_bytes(a)
+                }).collect();
+                eprintln!("mtlvk: cb {id:#x} compute bytes [{index}]: {words:?}");
+            }
+            C_CS_TEXTURE => {
+                if let Ok(t) = self.tex(c.u64()) {
+                    dump_targets.push((t.clone(), 0));
+                }
+            }
+            _ => {}
+        }
+    }
 
     /// x86Sim: MTLVK_DUMP_PASSES: copy `targets` (texture, level) into new buffers at this point of `cb`.
     #[allow(clippy::too_many_arguments)]
@@ -1657,11 +1666,8 @@ pub fn serve(n: usize, device: Device, stream: UnixStream) {
         if state.log {
             eprintln!("mtlvk: conn{n}: op {op} size {size} seq {seq}{}", if passed.is_some() { " +fd" } else { "" });
         }
-        let reply = state.handle(op, &payload, passed);
-        if passed.is_some() && op != BUF_NEW {
-            // SAFETY: an fd nobody uses
-            unsafe { libc::close(passed.unwrap()) };
-        }
+        // SAFETY: recvmsg gave us this fd; nothing else owns it.
+        let reply = state.handle(op, &payload, passed.map(|f| unsafe { OwnedFd::from_raw_fd(f) }));
         if let Some(reply) = reply {
             if seq != 0 {
                 out(op | REPLY, seq, reply);
@@ -1695,7 +1701,7 @@ pub fn selftest(device: &Device) -> Res<()> {
     }
     let mut w = Wr::default();
     w.u64(1).u64((2 * LEN) as u64).u64(0).u64(0).u32(1).u32(1);
-    let rep = s.handle(BUF_NEW, &w.0, Some(unsafe { libc::dup(memfd) })).unwrap();
+    let rep = s.handle(BUF_NEW, &w.0, Some(unsafe { OwnedFd::from_raw_fd(libc::dup(memfd)) })).unwrap();
     let mut r = Rd::new(&rep);
     let (st, copied) = (r.u32() as i32, r.u32());
     println!("buffer: status {st} copied {copied} mirrored {}", s.mirrors.contains_key(&1));
@@ -1750,7 +1756,8 @@ pub fn selftest(device: &Device) -> Res<()> {
     }
     let px = &app[LEN..LEN + 4];
     println!("cleared texel via memfd: {px:?}");
-    if px != [64, 128, 191, 255] && px != [64, 128, 192, 255] {
+    // the device rounds the clear colour its own way (metal2vulkan-degrade-device-color-conversion): +-1 per channel
+    if px.iter().zip([64u8, 128, 191, 255]).any(|(&g, w)| g.abs_diff(w) > 1) {
         return Err(format!("texel {px:?}"));
     }
     if app[LEN - 16..LEN] != app[0..16] {
@@ -1806,7 +1813,7 @@ pub fn selftest(device: &Device) -> Res<()> {
         surf.fill(0xCD);
         let mut w = Wr::default();
         w.u64(0x101).u64(bytes as u64).u64(0).u64(0).u32(1).u32(1);
-        let rep = s.handle(BUF_NEW, &w.0, Some(unsafe { libc::dup(memfd) })).unwrap();
+        let rep = s.handle(BUF_NEW, &w.0, Some(unsafe { OwnedFd::from_raw_fd(libc::dup(memfd)) })).unwrap();
         if Rd::new(&rep).u32() != 0 {
             return Err("stride BUF_NEW failed".into());
         }
@@ -1971,7 +1978,7 @@ pub fn selftest_compute(device: &Device, metallib: &[u8]) -> Res<()> {
         }
         let mut w = Wr::default();
         w.u64(id).u64((N * 4) as u64).u64(0).u64(0).u32(1).u32(1);
-        let rep = s.handle(BUF_NEW, &w.0, Some(fd)).unwrap();
+        let rep = s.handle(BUF_NEW, &w.0, Some(unsafe { OwnedFd::from_raw_fd(fd) })).unwrap();
         if rep[0..4] != [0, 0, 0, 0] {
             return Err("BUF_NEW".into());
         }

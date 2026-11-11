@@ -1,4 +1,4 @@
-//! Mirror of ../vkmtl_proto.h (the VKMTL wire protocol). Keep the two in step.
+//! Mirror of host/metalhostd/vkmtl_proto.h (the VKMTL wire protocol). Keep the two in step.
 #![allow(dead_code)]
 
 pub const VERSION: u32 = 1;
@@ -88,7 +88,8 @@ impl<'a> Rd<'a> {
         Rd { b, at: 0, short: false }
     }
     pub fn bytes(&mut self, n: usize) -> &'a [u8] {
-        if self.at + n > self.b.len() {
+        // (n comes from the wire: compared so that a huge n cannot overflow)
+        if n > self.b.len() - self.at {
             self.short = true;
             self.at = self.b.len();
             return &[];
