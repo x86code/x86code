@@ -17,6 +17,9 @@
 #import <dlfcn.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/mman.h>
+#include <errno.h>
+#include <libkern/OSCacheControl.h>
 #include "vkmtl_proto.h"
 
 // marked unavailable on iOS in the SDK, but libxpc in the simulator runtime has it (MTLSimDriverHost's peer
@@ -61,6 +64,29 @@ static void guarded_set_event_handler(xpc_connection_t c, xpc_handler_t h) {
 }
 #endif
 
+#if defined(__arm64__)
+// x86Sim Platforms 1: tvOS / watchOS have MTLSimImplementation and MetalSerializer in the dyld shared cache, where their
+// calls into Metal branch straight to it: no GOT entry for VKMTLRebind, which found 0. Their device then came from the
+// real MTLCreateSystemDefaultDevice: MTLSimDriver connecting to com.apple.metal.simulator, i.e. to this process, which
+// waited on itself (and backboardd's CoreAnimation on it: no frame ever). Here the entry points themselves become a jump
+// to ours ("ldr x16, #8; br x16; .quad ours"), in this process only (the cache's text is a private mapping).
+static int patch_entry(void* fn, void* ours) {
+	if (!fn || !ours) return 0;
+	uintptr_t page = (uintptr_t)fn & ~(uintptr_t)4095;
+	if (mprotect((void*)page, 8192, PROT_READ | PROT_WRITE) != 0) {
+		fprintf(stderr, "metalhostd: cannot make %p writable: %d\n", fn, errno);
+		return 0;
+	}
+	uint32_t* w = (uint32_t*)fn;
+	w[0] = 0x58000050u;  // ldr x16, #8
+	w[1] = 0xd61f0200u;  // br x16
+	memcpy(&w[2], &ours, sizeof(ours));
+	mprotect((void*)page, 8192, PROT_READ | PROT_EXEC);
+	sys_icache_invalidate(fn, 16);
+	return 1;
+}
+#endif
+
 int main(int argc, char** argv) {
 	(void)argc; (void)argv;
 	setvbuf(stderr, NULL, _IOLBF, 0);
@@ -79,6 +105,12 @@ int main(int argc, char** argv) {
 			n += VKMTLRebind(images[i], real_all, (void*)VKMTLCopyAllDevices);
 		}
 		fprintf(stderr, "metalhostd: %d device entry points rebound\n", n);
+#if defined(__arm64__)
+		if (n == 0) {  // Platforms 1: cache-resident MTLSimImplementation (tvOS / watchOS), see patch_entry
+			n = patch_entry(real_create, (void*)VKMTLCreateSystemDefaultDevice) + patch_entry(real_all, (void*)VKMTLCopyAllDevices);
+			fprintf(stderr, "metalhostd: %d device entry points patched (MTLSimImplementation in the shared cache)\n", n);
+		}
+#endif
 #if defined(__arm64__)
 		real_set_event_handler = dlsym(RTLD_DEFAULT, "xpc_connection_set_event_handler");
 		fprintf(stderr, "metalhostd: %d connection handler guards\n",

@@ -32,7 +32,8 @@
 static int g_verbose;
 #define VKTRACE(...) do { if (g_verbose) VKLOG(__VA_ARGS__); } while (0)
 
-extern int syscall(int, ...);
+// Platforms 1: the same libSystem symbol under another name (tvOS/watchOS headers mark syscall() unavailable)
+extern int x86sim_syscall(int, ...) __asm("_syscall");
 #define SYS_X86SIM_MEMFD_FOR_REGION 599
 
 // ---------------------------------------------------------------------------------------------------------
@@ -295,7 +296,7 @@ static pthread_mutex_t g_copied_lock = PTHREAD_MUTEX_INITIALIZER;
 	_vkid = vk_new_id();
 	_contents = p; _length = len; _options = opts; _ownedLen = owned;
 	uint64_t off = 0; uint32_t shared = 0;
-	int fd = syscall(SYS_X86SIM_MEMFD_FOR_REGION, (uint64_t)(uintptr_t)p, (uint64_t)(len ? len : 1), &off, &shared);
+	int fd = x86sim_syscall(SYS_X86SIM_MEMFD_FOR_REGION, (uint64_t)(uintptr_t)p, (uint64_t)(len ? len : 1), &off, &shared);
 	if (fd < 0) VKLOG("buffer %llu: no memfd for %p+%lu (errno %d): mtlvk keeps a copy", _vkid, p, (unsigned long)len, errno);
 	wbuf b = { 0 };
 	wb_u64(&b, _vkid); wb_u64(&b, len); wb_u64(&b, opts); wb_u64(&b, off);
