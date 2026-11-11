@@ -11,7 +11,7 @@ to the simulator's hardware keyboard (host/simhid). F1 or Ctrl+H = home button, 
 up/down. Input goes through <device data>/simhid.sock (backboardd's SimulatorHID stand-in).
 Right of the screen, a column of the launcher's tools: Home, Lock (side button), volume, Siri, Save Screenshot (to
 Pictures), gesture help. The phone's logs are in the launcher (Logs)."""
-import glob, os, threading, socket, struct, sys, time
+import os, threading, socket, struct, sys, time
 import gi
 # x86Sim: GTK's GPU renderers (vulkan, the default, and gl) upload the whole frame texture for every
 # frame, and on the NVIDIA driver ~75% of that CPU time is kernel time inside the driver's ioctls: 46% of a core at

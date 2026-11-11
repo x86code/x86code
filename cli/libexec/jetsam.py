@@ -134,7 +134,7 @@ def _park_list():
     v = os.environ.get("X86SIM_A64_SLIM_PARK")
     if v is None:
         try:
-            v = open(os.path.join(os.environ.get("X86SIM_SCRATCH", os.path.expanduser("~/scratch/x86sim")), "a64-slim-park")).read()
+            v = open(os.path.join(x86config.get("X86SIM_SCRATCH"), "a64-slim-park")).read()
         except OSError:
             v = ""
     return tuple(k for k in v.strip().split(",") if k)
@@ -432,13 +432,10 @@ def sweep(verbose=False, status=False):
                 st["uisvc"] = True
             apps.append((since, lpid, dpid, exe, st))
             continue
-        if any(k in exe for k in UISVC):
-            st.pop("bg", None)
-            st["fg_seen"] = now
-            continue
         st.pop("bg", None)
         st["fg_seen"] = now
-        fg_app = True
+        if not any(k in exe for k in UISVC):
+            fg_app = True
     # most recently backgrounded first; UI services last (their own grace, they never take an app's longer one)
     apps.sort(key=lambda a: (not a[4].get("uisvc"), a[0]), reverse=True)
     due = []

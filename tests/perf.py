@@ -12,7 +12,7 @@ Frame times come from simfb's ring (each slot's publish time, CLOCK_REALTIME), l
 touch-moved line is written to simhid's socket to the publish time of the first frame after it (the viewer's own
 presentation is not included). CPU: utime+stime from /proc for Darling processes (grouped by program), darlingserver,
 mtlvk, the viewer and the stream."""
-import os, socket, struct, subprocess, sys, time
+import os, struct, subprocess, sys, time
 L = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cli", "libexec")
 sys.path.insert(0, L)
 import fbring  # noqa: E402
@@ -234,11 +234,9 @@ def idle(secs=10):
 
 
 def scroll(secs=8):
-    W, H = simtouch.W, simtouch.H
     s = simtouch.connect()
     f = Frames()
     lat = []
-    allt = []
     gestures = []
     end = time.monotonic() + secs
     with CPU() as c:

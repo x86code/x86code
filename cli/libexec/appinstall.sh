@@ -1,9 +1,8 @@
 #!/bin/bash
-# x86Sim: `x86sim install|uninstall|launch`, as `xcrun simctl install|uninstall|launch` on a Mac.
+# x86Sim: `x86sim install|uninstall`, as `xcrun simctl install|uninstall` on a Mac (`x86sim launch`: simctl.py).
 #   install <path.app>             copy the bundle into the device and have installd install it (through
 #                                  LaunchServices -> InstallCoordination -> installd, in host/openurl inside the device)
 #   uninstall <bundle id>
-#   launch <bundle id> [args...]   open through FrontBoard (as simctl launch), arguments passed to the app
 # An optional first argument names the device, as simctl's <device>: a device dir, or an arm64 phone's name / folder
 # (var/device-a64-<name>, as `x86sim device list` shows; "booted" = the default). Else X86SIM_DEVICE.
 # Each waits for the helper's answer in <device>/data/var/log/x86sim-openurl.log and prints it.
@@ -77,9 +76,5 @@ uninstall)
 			fi
 		fi
 	fi ;;
-launch)
-	[ -n "$1" ] || { echo "usage: x86sim launch <bundle id> [args...]" >&2; exit 2; }
-	line="app $(IFS=$'\t'; echo "$*")"
-	request "$line" "^openurl $1 -> " 40 ;;
-*) echo "appinstall.sh install|uninstall|launch" >&2; exit 2 ;;
+*) echo "appinstall.sh install|uninstall" >&2; exit 2 ;;
 esac

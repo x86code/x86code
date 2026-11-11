@@ -14,7 +14,7 @@ those by version or build (--os is the same option).
 A new device gets a copy (reflinks) of var/device-a64's data/ when that has booted once (apps registered, setup
 done), so its first boot is a normal boot (device-repath.py moves its absolute paths to the new device); mksimdevice.py writes the model's screen, identifiers and capabilities.
 Speed 24: --ios picks the runtime (default 27.2); <device>/runtime names its runtimes/ dir and boot-a64.sh boots the
-device on it. Only a 27.0 device gets the copy (another version's data has its own first boot).
+device on it. Only a device on var/device-a64's runtime gets the copy (another version's data has its own first boot).
 Boot one with A64_DEVICE=var/device-a64-<name> cli/libexec/arm64/boot-a64.sh (or the launcher).
 """
 import json

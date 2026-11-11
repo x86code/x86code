@@ -10,7 +10,7 @@
 # started by a darling shell *outside* the scope — the TZ link — so guests inherited that foreign cgroup). Real
 # Shared boot sum VmRSS at home is ~8.4–9.4 GB (PSS/cgroup ~4.6 GB). Default 12G so MemoryMax does not
 # OOM on the sum-RSS guests (6–8G is too low for that accounting). Override with X86SIM_MEM_MAX.
-# Usage: SECS=120 cli/libexec/arm64/boot-a64.sh [extra jobs...]   (A64_JOBS=min|std: the job list)
+# Usage: SECS=120 cli/libexec/arm64/boot-a64.sh [extra jobs...]   (A64_JOBS=min|slim|std|full: the job list)
 #        X86SIM_METAL=0|1|backboardd|all  (default 0 = software; needs host/metalhostd/arm64/metalhostd)
 X86SIM_ROOT=${X86SIM_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 export X86SIM_ARCH=arm64
@@ -43,7 +43,7 @@ export DPREFIX=${A64_DPREFIX:-$X86SIM_SCRATCH/a64prefix}
 export X86SIM_DPREFIX=$DPREFIX
 export X86SIM_METAL=${X86SIM_METAL-0}
 export X86SIM_MEM_MAX=${X86SIM_MEM_MAX-12G}
-X=$X86SIM_ROOT; cd "$X"
+X=$X86SIM_ROOT; cd "$X" || exit 1
 D=$X86SIM_DEVICE; ST=$X86SIM_STATE; SECS=${SECS:-90}
 mkdir -p "$D" "$ST"
 # Speed 22: the booted device, for simview (input socket, logs) and the launcher
@@ -285,17 +285,25 @@ PY
 JOBS="$JOBS $FEAT_ADD"
 [ "$FEAT_KEEPW" = 1 ] && A64_KEEP_WIDGETS=${A64_KEEP_WIDGETS:-1}
 [ -n "$FEAT_PARK" ] && A64_PARK_EXTRA=${A64_PARK_EXTRA:+$A64_PARK_EXTRA,}$FEAT_PARK
-# A64_DROP="label ...": leave these jobs out (experiments). Matches a label or a label=executable entry.
-for j in ${A64_DROP:-} $FEAT_DROP; do JOBS=$(echo " $JOBS " | sed "s/[[:space:]]$j\(=[^[:space:]]*\)\?[[:space:]]/ /"); done
+# drop_job LABEL: leave a job out of JOBS, as a label or a label=executable entry. (A sed over the multi-line lists
+# missed every job at the end of a line: the wallet, siri and maps features' financed, sirittsd and mapssyncd stayed.)
+drop_job() {
+	local j out=
+	for j in $JOBS; do
+		case $j in "$1"|"$1"=*) ;; *) out="$out $j" ;; esac
+	done
+	JOBS=$out
+}
+# A64_DROP="label ...": leave these jobs out (experiments)
+for j in ${A64_DROP:-} $FEAT_DROP; do drop_job "$j"; done
 # Platforms 1: the shared lists name iOS jobs a tvOS / watchOS runtime doesn't ship (cfprefsd's system daemon,
 # containermanagerd.system, fontservicesd, appprotectiond, ...): those are left out there
 if [ "$A64_PLATFORM" != ios ]; then
-	JOBS=$(echo $JOBS)  # one line: sed below works line by line
 	left=
 	for j in $JOBS; do
 		case $j in *=*) continue ;; esac
 		[ -f "$X86SIM_RUNTIME/System/Library/LaunchDaemons/$j.plist" ] || [ -f "$X86SIM_RUNTIME/System/Library/LaunchAngels/$j.plist" ] && continue
-		JOBS=$(echo " $JOBS " | sed "s/[[:space:]]$j[[:space:]]/ /"); left="$left $j"
+		drop_job "$j"; left="$left $j"
 	done
 	[ -n "$left" ] && echo "  not in this $A64_PLATFORM runtime:$left"
 fi
@@ -413,10 +421,9 @@ if [ "${A64_SLIM:-1}" = 1 ] && [ "${A64_JOBS:-std}" != full ]; then
 		echo "X86SIM_A64_SLIM_PARK=$PARK_LIST" >>"$D/sim.env"
 	fi
 	# File fallback: launchd does not pass sim.env into job environ; arm64host reads this path.
-	mkdir -p "${X86SIM_SCRATCH:-$HOME/scratch/x86sim}"
-	echo "$PARK_LIST" > "${X86SIM_SCRATCH:-$HOME/scratch/x86sim}/a64-slim-park"
+	echo "$PARK_LIST" > "$X86SIM_SCRATCH/a64-slim-park"
 else
-	rm -f "${X86SIM_SCRATCH:-$HOME/scratch/x86sim}/a64-slim-park"
+	rm -f "$X86SIM_SCRATCH/a64-slim-park"
 fi
 ENVS=$(sed 's/^/"/; s/$/"/' "$D/sim.env" | tr '\n' ' ')
 ENVS="$ENVS ${A64_ENV:-}"   # A64_ENV: extra K=V for launchd_sim (e.g. X86SIM_A64_TRACE=1)
@@ -572,9 +579,9 @@ CMDEOF
 
 # Speed 14: fixed placement of non-cache Mach-Os (libarm64jit; mkplacement.py): the jitcache dir gets the committed
 # table when it has none (the table is part of the JIT cache key: the AOT image must be built with the same one)
-JCD=${X86SIM_A64_JITCACHE_DIR:-$X86SIM_SCRATCH/jitcache}
-mkdir -p "$JCD"
-[ -f "$JCD/placement.txt" ] || cp "$X/cli/libexec/arm64/placement-${A64_BUILD:-24A434}.txt" "$JCD/placement.txt" 2>/dev/null
+JC=${X86SIM_A64_JITCACHE_DIR:-$X86SIM_SCRATCH/jitcache}
+mkdir -p "$JC"
+[ -f "$JC/placement.txt" ] || cp "$X/cli/libexec/arm64/placement-${A64_BUILD:-24A434}.txt" "$JC/placement.txt" 2>/dev/null
 # Speed 14: the early set (pages in first-touch order up to ~home) is read in that order here, outside the IO-capped
 # scope: ~1-2 s of sequential reads instead of ~10-20 s at 40 MB/s, competing with the boot's own faults. The rest
 # (prefetch.hot) stays a capped WILLNEED inside the scope. A64_PREFETCH_EARLY_CAPPED=1: the early set capped too.
@@ -597,15 +604,14 @@ fi
 # offers the rebuild; X86SIM_AOT_AUTOUPDATE=1 runs `x86sim-aot update` (2 builders, nice 19, idle IO) right away.
 AOTBIN=$X/tools/launcher/target/release/x86sim-aot
 if [ -x "$AOTBIN" ]; then
-	(sleep 90; nice -n 19 ionice -c 3 "$AOTBIN" --jc "${X86SIM_A64_JITCACHE_DIR:-$X86SIM_SCRATCH/jitcache}" --device "$D" status > "$ST/aot-status.txt" 2>&1
+	(sleep 90; nice -n 19 ionice -c 3 "$AOTBIN" --jc "$JC" --device "$D" status > "$ST/aot-status.txt" 2>&1
 	 if [ "${X86SIM_AOT_AUTOUPDATE:-0}" = 1 ] && grep -q "need rebuilding" "$ST/aot-status.txt"; then
-		"$AOTBIN" --jc "${X86SIM_A64_JITCACHE_DIR:-$X86SIM_SCRATCH/jitcache}" --device "$D" update --workers 2 > "$ST/aot-update.log" 2>&1
+		"$AOTBIN" --jc "$JC" --device "$D" update --workers 2 > "$ST/aot-update.log" 2>&1
 	 fi) < /dev/null > /dev/null 2>&1 &
 fi
 # Speed 11: 60 s in (home is up), record which ranges of the dyld cache and the AOT image this boot's processes
 # have mapped in; the next boot prefetches them (boot-inner.sh). A64_PREFETCH=0: neither.
 if [ "${A64_PREFETCH:-1}" != 0 ]; then
-	JC=${X86SIM_A64_JITCACHE_DIR:-$X86SIM_SCRATCH/jitcache}
 	# Speed 14: prefetch.early = the pages present up to A64_PREFETCH_EARLY_SECS (default 24, ~home), snapshotted
 	# every 3 s and saved by first-touch time; prefetch.hot = everything mapped 60 s in (read after, capped)
 	# (nullglob: before the image's first load there is no .map yet, and a literal "*.map" crashed the recording)
@@ -660,9 +666,9 @@ if [ -n "$SCOPE" ]; then
 	done
 	echo "guests IN=$in ($((in_rss/1024)) MB) OUT=$out ($((out_rss/1024)) MB)"
 fi
-# A64_SLIM=1 (default): report parked helpers (X86SIM_A64_SLIM_PARK). The old slim-reaper.sh
-# kill loop is gone — SpringBoard holds RunningBoard assertions and relaunches within ~1 s,
-# which burned a core in xpcproxy_sim and never saved memory.
+# A64_SLIM=1 (default): report parked helpers (X86SIM_A64_SLIM_PARK). Parking replaced a kill loop (slim-reaper.sh):
+# SpringBoard holds RunningBoard assertions and relaunched them within ~1 s, which burned a core in xpcproxy_sim and
+# never saved memory.
 if [ "${A64_SLIM:-1}" = 1 ]; then
 	echo "== slim park status"
 	parked=""
@@ -688,17 +694,9 @@ if [ "${A64_SLIM:-1}" = 1 ]; then
 		esac
 	done
 	echo "  parked:$parked"
-	# Ensure no leftover reaper from an older boot
-	if [ -f "$ST/slim-reaper.pid" ]; then
-		old=$(cat "$ST/slim-reaper.pid" 2>/dev/null || true)
-		[ -n "$old" ] && [ -d "/proc/$old" ] && kill "$old" 2>/dev/null || true
-		rm -f "$ST/slim-reaper.pid"
-	fi
 fi
 # A64_KEEP=1: leave the device running (the container outlives the launcher's timeout); else stop this prefix
-if [ "${A64_KEEP:-0}" = 1 ]; then
-	:
-else
+if [ "${A64_KEEP:-0}" != 1 ]; then
 	stop_prefix
 	stop_a64_mtlvk
 fi

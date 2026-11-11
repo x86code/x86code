@@ -119,7 +119,7 @@ def render(src, out, tlog=None, fps=60, label=None, t0=None):
     p = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "%dx%d" % (w2, h2),
                           "-r", str(fps), "-i", "-", "-vf", vf,
                           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "23", out], stdin=subprocess.PIPE)
-    i, k = 0, 0
+    k = 0
     n = int((stop - start) / 1e9 * fps)
     for j in range(n):
         t = start + int(j * 1e9 / fps)

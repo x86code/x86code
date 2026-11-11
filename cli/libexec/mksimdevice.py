@@ -303,7 +303,7 @@ def main():
     # was false: CFBundle found no executable for cache-only frameworks and WebKit's WebContent/Networking/GPU services
     # exited at once ("Unable to find entry point in WebKit.framework"): Safari never loaded a page.
     rt, home = darling(os.path.realpath(RUNTIME)), darling(data)
-    # x86Sim: iPhone 16 (iPhone17,3) device type capabilities, as JSON in cli/lib, written as a plist for MobileGestalt
+    # x86Sim: the device type's capabilities (cli/lib/devicetype-<model>.json), written as a plist for MobileGestalt
     capabilities = device + "/capabilities.plist"
     dt = device_type(device)
     with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", dt["json"])) as f:
@@ -350,8 +350,8 @@ def main():
                            "RunAtLoad": True, "StandardOutPath": log, "StandardErrorPath": log}, f)
 
     # x86Sim: the Metal stand-in (host/metalhostd): metalhostd serves the simulator's Metal transport on mtlvk
-    # (Vulkan, a Linux process; cli/libexec/arm64/boot-a64.sh starts it and sets X86SIM_METAL=all unless told otherwise).
-    # Here (mksimdevice alone) it is opt-in: X86SIM_METAL=1 registers
+    # (Vulkan, a Linux process started by cli/libexec/arm64/boot-a64.sh; the launcher passes X86SIM_METAL=all).
+    # Opt-in: X86SIM_METAL=1 registers
     # it for the test client (process "mtlprobe"), X86SIM_METAL=name,name for those processes,
     # X86SIM_METAL=all also under the generic com.apple.metal.simulator, which hands a device to every process
     # (CoreAnimation, the wallpaper poster, apps).
@@ -410,7 +410,6 @@ def main():
             plistlib.dump({"Label": "com.x86sim.bootstrap-system",
                            "ProgramArguments": ["/bin/launchctl", "bootstrap", "system", darling(daemons)],
                            "RunAtLoad": True, "StandardOutPath": log, "StandardErrorPath": log}, f)
-    # Darling's libkqueue for processes on the runtime's libSystem
     child_defaults = {
         # X86SIM_INSERT: extra ':'-separated dylibs (host paths) for diagnostics
         # simshim: stand-ins for host services (host/simshim/compat/simshim.c)
@@ -435,26 +434,25 @@ def main():
         "PATH": ":".join(rt + p for p in ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]),
         "SIMULATOR_ARCHS": DEVTYPE["arch"],
         # x86Sim: libarm64jit's log (guest crashes, unimplemented thunks) per process, inside the container
-        **({"X86SIM_A64_LOG": "/private/var/tmp/x86sim-a64"}),
+        "X86SIM_A64_LOG": "/private/var/tmp/x86sim-a64",
         # x86Sim: glibc malloc of libarm64jit/dynarmic (the ELF side): one arena per thread kept tens of MB of freed
         # JIT metadata resident per thread; two arenas for the process
         # RAM 1: A64_GLIBC_TUNABLES_EXTRA appends tunables (e.g. glibc.mem.decorate_maps=1 names arenas/stacks in smaps)
-        **({"GLIBC_TUNABLES": ":".join(filter(None, ["glibc.malloc.arena_max=2:glibc.malloc.trim_threshold=1048576",
-                                                     os.environ.get("A64_GLIBC_TUNABLES_EXTRA", "")]))}),
+        "GLIBC_TUNABLES": ":".join(filter(None, ["glibc.malloc.arena_max=2:glibc.malloc.trim_threshold=1048576",
+                                                 os.environ.get("A64_GLIBC_TUNABLES_EXTRA", "")])),
         # Speed 8: in /run/user/<uid> (the arm64 container's /dev/shm is private, X86SIM_PRIVATE_SHM); boot-a64.sh links
         # /dev/shm/x86sim-a64-simfb.ring to it for the host's viewers
         # one ring per phone, named like the launcher's ring_for (instance.rs): device-a64 -> x86sim-a64-simfb.ring,
         # device-a64-<name> -> x86sim-a64-<name>-simfb.ring. A shared default let a second phone's boot recreate the
         # main phone's ring, freezing its screen while its apps ran on.
-        **({"SIMFB_RING": os.environ.get("SIMFB_RING") or "/Volumes/SystemRoot/run/user/%d/x86sim-%s-simfb.ring" % (
-            os.getuid(), os.path.basename(device.rstrip("/")).removeprefix("device-"))}),
+        "SIMFB_RING": os.environ.get("SIMFB_RING") or "/Volumes/SystemRoot/run/user/%d/x86sim-%s-simfb.ring" % (
+            os.getuid(), os.path.basename(device.rstrip("/")).removeprefix("device-")),
         # Speed 3: launchd jobs only see Bootstrap.Child, so the JIT flags must be copied here to reach backboardd and
         # SpringBoard. Speed 6: every X86SIM_A64_* flag (was a list that missed new ones, e.g. PERFMAP). X86SIM_SCRATCH: the
         # JIT's scratch dir (a64-penv, a64-slim-park, gbt, crash dumps); without it the JIT falls back to the home of its
         # uid, which in a user-namespace phone (the AppImage's) is 0: /root/scratch, unreadable, and all of those were off.
-        **({k: v for k, v in os.environ.items()
-            if (k.startswith("X86SIM_A64_") and k not in ("X86SIM_A64_EXE", "X86SIM_A64_LOG")) or k in ("SIMFB_HZ", "X86SIM_SCRATCH")}
-          ),
+        **{k: v for k, v in os.environ.items()
+           if (k.startswith("X86SIM_A64_") and k not in ("X86SIM_A64_EXE", "X86SIM_A64_LOG")) or k in ("SIMFB_HZ", "X86SIM_SCRATCH")},
         "SIMULATOR_UDID": udid,
         "SIMULATOR_DEVICE_NAME": dt.get("name", "x86sim"),
         "SIMULATOR_RUNTIME_VERSION": dt["version"],
