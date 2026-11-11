@@ -175,27 +175,80 @@ def on_activate(app):
     dw, dh = state["size"]
     pic.set_size_request(dw // div, dh // div)
     pic.set_can_shrink(True)
-    # the launcher's tools, floating in a column right of the screen (tools/launcher/gui/src/phone.rs screen_toolbar)
-    box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-    for m in ("start", "end", "top", "bottom"):
-        getattr(box, "set_margin_" + m)(10)
-    # the phone keeps its shape in any window size (a tiling window manager picks the size), against the tools;
-    # touches are normalized to the picture, which the frame sizes to the screen's aspect
-    frame = Gtk.AspectFrame(ratio=dw / dh, obey_child=False, xalign=1.0, yalign=0.5, hexpand=True, vexpand=True)
-    frame.set_child(pic)
-    box.append(frame)
-    bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, valign=Gtk.Align.CENTER)
-    bar.add_css_class("toolbar")
-    bar.add_css_class("osd")
+    # The screen and, to its right, the launcher's tools (tools/launcher/gui/src/phone.rs screen_toolbar, theme.rs):
+    # the same panel, buttons, icons (Phosphor) and colours, the bar 12 px from the screen at its top, the two centred
+    # together on the launcher's page colour. The pair keeps the phone's shape in any window size (a tiling window
+    # manager picks it): its aspect is set from the height on every resize. Touches are normalized to the picture.
     css = Gtk.CssProvider()
-    rule = ".x86tools { border-radius: 10px; padding: 4px; }"
+    rule = """
+        window.x86view { background: #18191b; }
+        .x86bar { background: #1e1f22; border: 1px solid #2a2b30; border-radius: 8px; padding: 4px; }
+        .x86bar button { min-width: 28px; min-height: 28px; padding: 0; margin: 0; border: none; border-radius: 6px;
+                         background: transparent; box-shadow: none; color: #a5a6ad; outline: none; }
+        .x86bar button:hover { background: #26272b; color: #ededf0; }
+        .x86bar button:active { background: #35363c; color: #ededf0; }
+        .x86bar button:disabled { color: rgba(139, 140, 148, 0.7); }
+        .x86bar label { font-family: Phosphor; font-size: 15px; }
+        .x86sep { min-height: 1px; background: #2a2b30; margin: 4px 6px; }
+        .x86bezel { background: #050506; border: 1px solid #393a40; padding: 9px; }
+    """
     css.load_from_string(rule) if hasattr(css, "load_from_string") else css.load_from_data(rule.encode())
     Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-    bar.add_css_class("x86tools")
+    win.add_css_class("x86view")
+    GAP, PAD, BEZEL = 12, 12, 10
+    row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=GAP)
+    pic.set_hexpand(True)
+    pic.set_vexpand(True)
+    pic.set_overflow(Gtk.Overflow.HIDDEN)
+    pic.add_css_class("x86screen")
+    # the phone's bezel as the launcher draws it (viewer.rs show: 10 px, BEZEL fill, BORDER_STRONG rim, the screen's
+    # corners 11% of its width); the radii follow the size (fit)
+    bezel = Gtk.Box(css_classes=["x86bezel"], hexpand=True, vexpand=True)
+    bezel.append(pic)
+    row.append(bezel)
+    shape = Gtk.CssProvider()
+    Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), shape, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+    bar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, valign=Gtk.Align.START)
+    bar.add_css_class("x86bar")
+    try:   # the launcher's icon font, from the checkout / install (cli/libexec/fonts)
+        gi.require_version("PangoCairo", "1.0")
+        from gi.repository import PangoCairo
+        fm = PangoCairo.FontMap.new()
+        fm.add_font_file(os.path.join(here, "fonts", "Phosphor.ttf"))
+        bar.set_font_map(fm)
+    except (ValueError, ImportError, AttributeError, GLib.Error) as e:
+        print("simview: no icon font: %s" % e, flush=True)
+    row.append(bar)
+    stage = Gtk.AspectFrame(ratio=1.0, obey_child=False, xalign=0.5, yalign=0.5)
+    for m in ("start", "end", "top", "bottom"):
+        getattr(row, "set_margin_" + m)(PAD)
+    stage.set_child(row)
+    win.set_child(stage)
 
-    def tool(icon, tip, act):
-        b = Gtk.Button(icon_name=icon, tooltip_text=tip, focus_on_click=False)
-        b.add_css_class("flat")
+    def fit(*_):
+        h, bw = stage.get_height(), bar.get_width()
+        if h > 2 * (PAD + BEZEL) and bw:
+            w, hh = state["size"]
+            r = ((h - 2 * (PAD + BEZEL)) * w / hh + 2 * BEZEL + GAP + bw + 2 * PAD) / h
+            if abs(stage.get_ratio() - r) > 1e-4:
+                stage.set_ratio(r)
+        sw = pic.get_width()
+        if sw and abs(sw - state.get("shape_w", 0)) > 1:
+            state["shape_w"] = sw
+            rad = max(sw * 0.11, 4)
+            rule = ".x86screen { border-radius: %dpx; } .x86bezel { border-radius: %dpx; }" % (rad, rad + BEZEL * 0.7)
+            shape.load_from_string(rule) if hasattr(shape, "load_from_string") else shape.load_from_data(rule.encode())
+        return GLib.SOURCE_CONTINUE
+
+    stage.add_tick_callback(lambda *_: fit() or True)
+
+    live_tools = []   # disabled while there is no screen ("Not running"), as in the launcher; the help stays
+
+    def tool(glyph, tip, act, live=True):
+        b = Gtk.Button(child=Gtk.Label(label=glyph), tooltip_text=tip, focus_on_click=False)
+        if live:
+            live_tools.append(b)
+        b.set_cursor(Gdk.Cursor.new_from_name("pointer"))
         b.connect("clicked", lambda _b: act())
         bar.append(b)
 
@@ -208,24 +261,22 @@ def on_activate(app):
         GLib.timeout_add(2500, lambda: send("button lock up") and False)
 
     def sep():
-        bar.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL, margin_top=4, margin_bottom=4))
+        bar.append(Gtk.Box(css_classes=["x86sep"]))
 
-    tool("go-home-symbolic", "Home (F1)", lambda: press("home"))
-    tool("system-lock-screen-symbolic", "Lock: the side button (F2)", lambda: press("lock"))
-    tool("audio-volume-high-symbolic", "Volume up (F3)", lambda: press("volup"))
-    tool("audio-volume-low-symbolic", "Volume down (F4)", lambda: press("voldown"))
-    tool("audio-input-microphone-symbolic", "Siri: holds the side button", siri)
+    # egui_phosphor::regular: HOUSE, LOCK, SPEAKER_HIGH, SPEAKER_LOW, MICROPHONE, CAMERA, INFO
+    tool("\ue2c2", "Home (F1)", lambda: press("home"))
+    tool("\ue2fa", "Lock: the side button (F2)", lambda: press("lock"))
+    tool("\ue44a", "Volume up (F3)", lambda: press("volup"))
+    tool("\ue44c", "Volume down (F4)", lambda: press("voldown"))
+    tool("\ue326", "Siri: holds the side button", siri)
     sep()
-    tool("camera-photo-symbolic", "Save a screenshot to Pictures", lambda: screenshot())
+    tool("\ue10e", "Save a screenshot to Pictures", lambda: screenshot())
     sep()
-    help_ = Gtk.Image(icon_name="help-about-symbolic", margin_top=6, margin_bottom=6,
-                      tooltip_text="Click or drag: touch. Ctrl+drag: pinch. Shift+drag: two-finger pan.\n"
-                                   "Typing goes to the phone's keyboard. F1 home, F2 lock, F3/F4 volume.")
-    bar.append(help_)
-    box.append(bar)
-    win.set_child(box)
-    TOOLS_W = 76   # the column and the margins around it
-    win.set_default_size(dw // div + TOOLS_W, dh // div + 20)
+    tool("\ue2ce", "Click the screen to tap, drag to swipe.\nDrag in from an edge for system gestures (Home, Control "
+         "Center, back).\nCtrl + drag to pinch, Shift + drag to scroll with two fingers.\nF1 Home · F2 Lock · F3/F4 volume",
+         lambda: None, live=False)
+    TOOLS_W = 2 * BEZEL + GAP + 46 + 2 * PAD   # the bezel, the gap, the bar (the launcher's TOOLBAR_W), the margins
+    win.set_default_size(dw // div + TOOLS_W, dh // div + 2 * (PAD + BEZEL))
 
     def screenshot():
         tex = state.get("tex")
@@ -308,13 +359,13 @@ def on_activate(app):
         tex = Gdk.MemoryTexture.new(w, h, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED, GLib.Bytes.new(px), stride)
         pic.set_paintable(tex)
         state["tex"] = tex
+        [b.set_sensitive(True) for b in live_tools]
         if state["size"] != (w, h):
             # Speed 22: another phone model booted: size the window to its screen
             print("simview: screen %dx%d" % (w, h), flush=True)
             state["size"] = (w, h)
             pic.set_size_request(w // div, h // div)
-            frame.set_ratio(w / h)
-            win.set_default_size(w // div + TOOLS_W, h // div + 20)
+            win.set_default_size(w // div + TOOLS_W, h // div + 2 * (PAD + BEZEL))
         state["size"] = (w, h)
         now = time.monotonic()
         state["frame_at"] = now
@@ -341,6 +392,7 @@ def on_activate(app):
         pic.set_paintable(Gdk.MemoryTexture.new(w, h, Gdk.MemoryFormat.B8G8R8A8_PREMULTIPLIED,
                                                 GLib.Bytes.new(bytes(w * h * 4)), w * 4))
         state["frame_t"] = None
+        [b.set_sensitive(False) for b in live_tools]
         win.set_title("%s — %s" % (phone_name(), why))
 
     def watch():
