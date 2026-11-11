@@ -334,7 +334,8 @@ static void send_touch(const char* phase, double x, double y, int edge) {
 	// (a single-finger down while two fingers are down: the two-finger contact is lifted first, see send_touch2)
 	if (up) { if (!touching) return; touching = false; touch_up_ns = now_ns(); }
 	uint64_t ts = mach_absolute_time();
-	uint32_t mask = kDigitizerPosition | (down || up ? kDigitizerTouch | kDigitizerRange | kDigitizerIdentity : 0);
+	// Apple's SimulatorHID passes the same mask on every phase: moves keep the contact bits too (Prathamesh913, #1)
+	uint32_t mask = kDigitizerPosition | kDigitizerTouch | kDigitizerRange | kDigitizerIdentity;
 	mask |= edge_mask[touch_edge];
 	bool in = !up;
 	IOHIDEventRef hand = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, ts, kDigitizerTransducerHand, 0, 0, mask, 0,
@@ -350,7 +351,7 @@ static void send_touch(const char* phase, double x, double y, int edge) {
 }
 
 // x86Sim: two fingers in one hand event, as a multi-touch digitizer reports them (the hand carries the centroid; a
-// finger child per contact with its own index and identity; range/touch/identity bits on the down and up events).
+// finger child per contact with its own index and identity; range/touch/identity bits on every event).
 static bool touching2;
 static uint32_t touch2_identity = 1000;
 static void send_touch2(const char* phase, double x1, double y1, double x2, double y2) {
@@ -364,7 +365,8 @@ static void send_touch2(const char* phase, double x1, double y1, double x2, doub
 	}
 	if (up) { if (!touching2) return; touching2 = false; }
 	uint64_t ts = mach_absolute_time();
-	uint32_t mask = kDigitizerPosition | (down || up ? kDigitizerTouch | kDigitizerRange | kDigitizerIdentity : 0);
+	// Apple's SimulatorHID passes the same mask on every phase: moves keep the contact bits too (Prathamesh913, #1)
+	uint32_t mask = kDigitizerPosition | kDigitizerTouch | kDigitizerRange | kDigitizerIdentity;
 	mask |= edge_mask[0];
 	bool in = !up;
 	IOHIDEventRef hand = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, ts, kDigitizerTransducerHand, 0, 0, mask, 0,
