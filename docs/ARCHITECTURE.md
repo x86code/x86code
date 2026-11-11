@@ -127,16 +127,21 @@ The same pieces run Apple's tvOS 27 and watchOS 27 simulator runtimes (`runtimes
 - **The cache holds MTLSimImplementation**, whose calls into Metal can't be rebound: metalhostd patches the two
   device entry points in its own process (WORKAROUNDS.md).
 - **Libraries built like device ones**: libdispatch receives large messages with `mach_msg2` and an aux buffer
-  (Darling's `mach_msg2_internal` counts receive vectors), and libobjc's `_collecting_in_critical` is found by its
-  code, not an iOS address (objc.cpp).
+  (Darling's `mach_msg2_internal` counts receive vectors). The translator's patches into Apple code find their
+  targets by the code around them, not iOS offsets: libobjc's `_collecting_in_critical` and BackBoardServices' UI
+  sensor connect (objc.cpp), dyld_sim's `matchesPath` install-name call (dyldsim.cpp).
+- **Placement and training**: `placement-24K150.txt` / `placement-24S118.txt` place every non-cache Mach-O the
+  runtime ships (small enough to fit the window whole); `training-<build>.x86t` as for iOS.
 - **Input**: Apple TV has no touchscreen; tvOS takes the hardware keyboard as the remote (arrows, return = select,
-  escape = back). An Apple Watch gets simhid's Digital Crown service (`crown <delta> y`; the mouse wheel in
+  escape = back) and the Siri Remote's buttons as consumer usages on simhid's buttons service (0x40 Back, 0x60 TV,
+  0xcd play / pause). PineBoard's system sleep is declined (simshim; WORKAROUNDS.md): there is no HDMI / CEC sink to
+  answer it, and a half-finished sleep left a TV that never woke. An Apple Watch gets simhid's Digital Crown service (`crown <delta> y`; the mouse wheel in
   simview).
 - **Device types**: `devicetypes-a64.json` entries with `"platform": "tvos"` / `"watchos"` (`x86sim device create
   --model "Apple TV 4K (3rd generation)"` takes the newest tvOS runtime). Apple TV's capabilities name its display
   `TVOut`; simfb serves it as the main display (`LCD`) all the same.
 - Not yet: pairing a watch with a phone (both devices' `ids_simd` must reach each other's Mach ports, which live in
-  different Darling containers), pre-translation training for these runtimes.
+  different Darling containers).
 
 ## simshim (host/simshim)
 
