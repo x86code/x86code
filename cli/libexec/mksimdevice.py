@@ -168,6 +168,11 @@ def main():
               "Library/Application Support/Simulator", "Library/LaunchDaemons"]:
         os.makedirs(os.path.join(data, d), exist_ok=True)
     open(data + "/var/run/memory_warning_simulation", "a").close()
+    # Platforms 1: the photo library's folder. On iOS assetsd makes it; tvOS / watchOS run no photos daemon, and the
+    # watch's nanotimekitd (the Photos face) opened Media/PhotoData/Photos.sqlite at every start and threw ("Error
+    # validating url for store": CoreData could not statfs the missing folder).
+    if PLATFORM != "ios":
+        os.makedirs(os.path.join(data, "Media/PhotoData"), exist_ok=True)
 
     # x86Sim: Siri's session language, as a Mac's simulator device has it (assistantd sets it there; it doesn't run
     # here). Without it AFPreferences logs "No language code saved, but Assistant is enabled" and recomputes the

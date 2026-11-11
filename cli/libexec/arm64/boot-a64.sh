@@ -207,19 +207,26 @@ OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl
 # (angel) draws the system overlays (volume, Control Center). No sleepd, InputUI or nanoregistryd on tvOS.
 TV_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd
 	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.TVSystemUIService
-	com.apple.PosterBoard com.apple.campo com.apple.splashboardd com.apple.MediaRemoteUI"
+	com.apple.PosterBoard com.apple.campo com.apple.splashboardd com.apple.MediaRemoteUI com.apple.assetsubscriptiond
+	com.apple.mobileassetd com.apple.tvremoted"
 TV_UI_SLIM="com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd com.apple.FileCoordination"
 # Platforms 1: watchOS. Carousel is watchOS's SpringBoard (the watch face, the app grid, notifications); the watch face
 # itself comes from nanotimekitd. nanoregistryd (+ its launch helper) holds the pairing state, unpaired for a watch booted
 # on its own. No PosterBoard on watchOS.
+# Both: assetsubscriptiond (+ mobileassetd) as on iOS: it makes data/private/var/db/assetsubscriptiond, whose
+# UAFAssetSubscriptions.db assistantd opened 100-400 times a boot without it (sqlite "unable to open database file").
+# Watch: geod / navd / mapssyncd (on demand) as on iOS: without them the watch's Maps drew its empty grid, no tiles.
 WATCH_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Carousel com.apple.sleepd com.apple.TextInput.kbd
 	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.campo com.apple.splashboardd
-	com.apple.nanoregistryd com.apple.nanoregistrylaunchd com.apple.nanotimekitd com.apple.carouselecomoded"
+	com.apple.nanoregistryd com.apple.nanoregistrylaunchd com.apple.nanotimekitd com.apple.carouselecomoded
+	com.apple.assetsubscriptiond com.apple.mobileassetd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd"
 WATCH_UI_SLIM="com.apple.backboardd com.apple.Carousel com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.nanoregistryd com.apple.nanotimekitd"
+# No fpsim2host on tvOS / watchOS: their FileProvider has no FPSimulatorSupportInterface (no Files app), so it exited 1
+# at every boot.
 case $A64_PLATFORM in
-	tvos) UI=$TV_UI; UI_SLIM=$TV_UI_SLIM; FULLUI= ;;
-	watchos) UI=$WATCH_UI; UI_SLIM=$WATCH_UI_SLIM; FULLUI= ;;
+	tvos) UI=$TV_UI; UI_SLIM=$TV_UI_SLIM; FULLUI=; OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl" ;;
+	watchos) UI=$WATCH_UI; UI_SLIM=$WATCH_UI_SLIM; FULLUI=; OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl" ;;
 esac
 case "${A64_JOBS:-std}" in
 	min) JOBS="$MIN $OUR_JOBS" ;;

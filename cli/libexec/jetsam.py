@@ -127,6 +127,21 @@ NEVER = ("SpringBoard.app/", "PosterBoard.app/", "InputUI.app/", "Campo.app/")
 # suspended extension, it was killed and relaunched in a loop ("came back 0 s after its kill") and an unlock that hit
 # the gap never undimmed, then froze. A device keeps the active poster's extension alive too.
 NEVER_EXT = ("MercuryPosterExtension.appex/",)
+# Platforms 1: parked executables (X86SIM_A64_SLIM_PARK, boot-a64.sh: WidgetRenderer by default) hold no translated
+# code and next to no memory, so killing one frees nothing. On a watch Carousel asks for WidgetRenderer_Snapshots again
+# at once: it was killed and relaunched in a loop ("came back 0 s after its kill").
+def _park_list():
+    v = os.environ.get("X86SIM_A64_SLIM_PARK")
+    if v is None:
+        try:
+            v = open(os.path.join(os.environ.get("X86SIM_SCRATCH", os.path.expanduser("~/scratch/x86sim")), "a64-slim-park")).read()
+        except OSError:
+            v = ""
+    return tuple(k for k in v.strip().split(",") if k)
+PARKED = _park_list()
+def parked(exe):
+    base = exe.rsplit("/", 1)[-1]
+    return any(k in base for k in PARKED)
 # RAM 4: UI services reclaimed like a background app once RunningBoard says they show nothing (no visible scene, not
 # visible / NON_UI), after X86SIM_JETSAM_UISVC s, and never counted as "the app in the foreground". Spotlight: SpringBoard
 # starts it at boot in the background (role NON_UI, ~170 MB) and draws the home screen's Search pill itself; a pull-down
@@ -400,6 +415,7 @@ def sweep(verbose=False, status=False):
         rows.append((dpid, lpid, exe, st, sm, jm, cpu_idle(st, now, cpu)))
     apps, killed = [], []
     fg_app = False
+    rows = [r for r in rows if not parked(r[2])]
     app_rows = [r for r in rows if ".app/" in r[2] and ".appex/" not in r[2] and not any(k in r[2] for k in NEVER)]
     if app_rows and now - _front["asked"] > FRONT_EVERY:
         ask_front([r[0] for r in app_rows], now)
