@@ -195,7 +195,7 @@ def on_activate(app):
     css.load_from_string(rule) if hasattr(css, "load_from_string") else css.load_from_data(rule.encode())
     Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
     win.add_css_class("x86view")
-    GAP, PAD, BEZEL = 12, 0, 10   # PAD: the stage's margin (none: the window is the phone and its bar)
+    GAP, PAD, BEZEL = 12, 8, 10   # PAD: the margin around the phone and its bar (the launcher's S2)
     row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=GAP)
     pic.set_hexpand(True)
     pic.set_vexpand(True)
