@@ -572,6 +572,50 @@ std::optional<uint32_t> agchk_read_code(u64 a) {
     return 0xD4000001u | (kAgChkSvc << 5);
 }
 
+// Platforms 1 debug: X86SIM_A64_BLWATCH=<addr>[,<addr>...] (guest addresses of "bl" / "b" instructions, hex): each is read
+// by the JIT as "svc #kBlWatchSvc"; the handler logs the call (target, x0-x2, lr) and makes it. "+<hex>": an offset
+// from the main executable's load address. Translations with the
+// substitution are not meant to be kept: run with X86SIM_A64_JITCACHE=0 X86SIM_A64_AOT=0 (and X86SIM_A64_NOASLR=1 for
+// a non-cache image's unslid addresses).
+static const std::vector<u64> &blwatch_sites() {
+    static const std::vector<u64> v = [] {
+        std::vector<u64> r;
+        // "+<offset>": from the main executable's load address (its first mapping in /proc/self/maps)
+        u64 exe_base = 0;
+        if (const char *exe = getenv("X86SIM_A64_EXE")) {
+            const char *bn = strrchr(exe, '/');
+            bn = bn ? bn + 1 : exe;
+            if (FILE *f = fopen("/proc/self/maps", "r")) {
+                char line[1024];
+                while (!exe_base && fgets(line, sizeof line, f)) {
+                    char *nl = strchr(line, '\n');
+                    if (nl) *nl = 0;
+                    const char *sl = strrchr(line, '/');
+                    if (sl && !strcmp(sl + 1, bn)) exe_base = strtoull(line, nullptr, 16);
+                }
+                fclose(f);
+            }
+        }
+        if (const char *e = getenv("X86SIM_A64_BLWATCH"))
+            for (const char *q = e; *q;) {
+                const bool rel = *q == '+';
+                if (rel) q++;
+                char *end; u64 a = strtoull(q, &end, 16);
+                if (end == q) break;
+                r.push_back(rel ? exe_base + a : a);
+                q = *end == ',' ? end + 1 : end;
+            }
+        if (!r.empty()) logf("blwatch: %zu sites (main executable at %#lx)", r.size(), (unsigned long)exe_base);
+        return r;
+    }();
+    return v;
+}
+std::optional<uint32_t> blwatch_read_code(u64 a) {
+    for (u64 w : blwatch_sites())
+        if (w == a) return 0xD4000001u | (kBlWatchSvc << 5);
+    return std::nullopt;
+}
+
 struct Forward final : Dynarmic::A64::UserCallbacks {
     static GuestThread &T() { return *t_self; }
     std::optional<uint32_t> MemoryReadCode(u64 a) override {
@@ -584,6 +628,8 @@ struct Forward final : Dynarmic::A64::UserCallbacks {
         if (auto w = lzfse_read_code(a)) return w;
         if (auto w = agout_read_code(a)) return w;
         if (auto w = agchk_read_code(a)) return w;
+        if (__builtin_expect(!blwatch_sites().empty(), 0))
+            if (auto w = blwatch_read_code(a)) return w;
         return GuestThread::rd<uint32_t>(a);
     }
     uint8_t MemoryRead8(u64 a) override { return GuestThread::rd<uint8_t>(a); }
@@ -972,6 +1018,20 @@ void GuestThread::CallSVC(uint32_t swi) {
     if (swi == kAstcSvc) { astc_step(*this); return; }
     if (swi == kLzfseSvcA || swi == kLzfseSvcB) { lzfse_step(*this, swi == kLzfseSvcB); return; }
     if (swi >= kLzfseSvcDestroy && swi <= kLzfseSvcInit) { lzfse_stream_step(*this, swi); return; }
+    if (swi == kBlWatchSvc) {  // X86SIM_A64_BLWATCH: the original b / bl at svc's address, logged and made
+        const u64 site = pc0 - 4;
+        const u32 insn = rd<u32>(site);
+        const bool link = (insn & 0xfc000000u) == 0x94000000u, br = (insn & 0xfc000000u) == 0x14000000u;
+        if (!link && !br) die("blwatch: %#lx is not a b/bl (%08x)", (unsigned long)site, insn);
+        int64_t off = (int64_t)(insn & 0x3ffffff) << 38 >> 36;
+        const u64 target = site + off;
+        logf("blwatch %#lx %s %#lx x0 %#lx x1 %#lx x2 %#lx lr %#lx tid %ld", (unsigned long)site, link ? "bl" : "b",
+             (unsigned long)target, (unsigned long)x(0), (unsigned long)x(1), (unsigned long)x(2), (unsigned long)x(30),
+             (long)syscall(SYS_gettid));
+        if (link) set_x(30, site + 4);
+        jit->SetPC(target);
+        return;
+    }
     if (swi == kAgChkSvc) {  // ldr w8, [x28, #4] + the check above
         const u64 node = x(28), base = rd<u64>(kAgTableVar);
         const u32 attr = rd<u32>(x(27) - 8), f_old = rd<u32>(node + 4), f_cur = base ? rd<u32>(base + attr + 4) : 0;
@@ -1080,11 +1140,13 @@ void GuestThread::CallSVC(uint32_t swi) {
             bool path = nm.find("open") != std::string::npos || nm.find("stat") != std::string::npos ||
                         nm.find("access") != std::string::npos || nm.find("getattr") != std::string::npos ||
                         nm.find("readlink") != std::string::npos || nm.find("realpath") != std::string::npos;
-            if (path && (nm.find("at") != std::string::npos && nm.find("stat") == std::string::npos ? true : false) && x(1) > 0x10000)
+            // a user-space pointer, not a small int or AT_FDCWD (-2: 0xfffffffe) taken for a string
+            auto uptr = [](u64 v) { return v > 0x10000 && v < 0x800000000000ull && v != 0xfffffffeull; };
+            if (path && (nm.find("at") != std::string::npos && nm.find("stat") == std::string::npos ? true : false) && uptr(x(1)))
                 logf("-> %s(%#lx, \"%.200s\", %#lx)", nm.c_str(), (unsigned long)x(0), (const char *)x(1), (unsigned long)x(2));
             else if (path && nm.find("at") != std::string::npos && nm.find("stat") == std::string::npos)
                 logf("-> %s(%#lx, %#lx, %#lx)", nm.c_str(), (unsigned long)x(0), (unsigned long)x(1), (unsigned long)x(2));
-            else if (path && x(0) > 0x10000) logf("-> %s(\"%.200s\", %#lx, %#lx)", nm.c_str(), (const char *)x(0), (unsigned long)x(1), (unsigned long)x(2));
+            else if (path && uptr(x(0))) logf("-> %s(\"%.200s\", %#lx, %#lx)", nm.c_str(), (const char *)x(0), (unsigned long)x(1), (unsigned long)x(2));
             else logf("-> %s(%#lx, %#lx, %#lx)", nm.c_str(), (unsigned long)x(0), (unsigned long)x(1), (unsigned long)x(2));
         }
         // X86SIM_A64_SVC_TIME=1: accumulate rdtsc around the handler body (excludes dispatcher).

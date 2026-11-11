@@ -140,6 +140,10 @@ const std::map<std::string, const void *> &guest_data() {
 }
 
 std::vector<StubLib> g_libs;
+// Platforms 1: the dyld cache's platform (its header's platform field: 7 iOS, 8 tvOS, 9 watchOS simulator). dyld_sim
+// refuses a dylib built for another platform ("incompatible platform (have 'iOS-simulator', need 'tvOS-simulator')"),
+// so the stubs carry the cache's own. Set by cache_exports, which every stub's export list comes from.
+uint32_t g_cache_platform = 7;
 u64 g_stub_code_hash = 0xcbf29ce484222325ull;  // FNV-1a over each stub's install name and __TEXT
 
 // A real file with the stub's bytes, for F_GETPATH. dyld_sim records an image's path from F_GETPATH on the fd it
@@ -197,6 +201,10 @@ std::vector<std::string> cache_exports(const std::string &cache_path, const std:
         die("address %#lx is not in the cache", (unsigned long)addr);
     };
     const uint8_t *h = files[0].p;
+    {
+        uint32_t plat; memcpy(&plat, h + 0xD8, 4);  // dyld_cache_header.platform
+        if (plat == 7 || plat == 8 || plat == 9) g_cache_platform = plat;
+    }
     uint32_t io, ic; memcpy(&io, h + 0x1C0, 4); memcpy(&ic, h + 0x1C4, 4);
     std::vector<std::string> out;
     for (uint32_t i = 0; i < ic; i++) {
@@ -324,7 +332,7 @@ StubLib build_stub_dylib(const std::string &install, const std::vector<std::stri
     for (size_t k = 0; k < install.size(); k++) uu.uuid[k % 16] ^= (uint8_t)(install[k] * 31 + k);
     uu.uuid[6] = (uu.uuid[6] & 0x0f) | 0x40;
     add(&uu, sizeof uu);
-    build_version_command bv{LC_BUILD_VERSION, sizeof bv, 7 /* PLATFORM_IOSSIMULATOR */, 0x1b0000, 0x1b0000, 0};
+    build_version_command bv{LC_BUILD_VERSION, sizeof bv, g_cache_platform /* PLATFORM_*SIMULATOR */, 0x1b0000, 0x1b0000, 0};
     add(&bv, sizeof bv);
     if (sizeof *mh + mh->sizeofcmds > kCodeStart) die("stub dylib header overflow");
     memcpy(f.data() + kCodeStart, code.data(), code.size() * 4);

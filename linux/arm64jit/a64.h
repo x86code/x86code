@@ -144,6 +144,8 @@ constexpr u32 kAgDlSetSvc = 0xfff1, kAgDlPassedSvc = 0xfff2, kAgDlCancelSvc = 0x
 constexpr u32 kAgOutSetSvc = 0xfff4, kAgOutGetSvc = 0xfff5;
 // Speed 35 debug (X86SIM_A64_AGCHK=1): AG::Graph::UpdateStack::update's post-rule flags load (27.2 0x1c950c134)
 constexpr u32 kAgChkSvc = 0xffd0;
+// Platforms 1 debug: X86SIM_A64_BLWATCH sites (jit.cpp), substituted by MemoryReadCode
+constexpr u32 kBlWatchSvc = 0xffcf;
 void agout_dump(u32 attr);
 // "svc #0xfffc": Swift type-by-name conformance walk step (swiftscan.cpp), substituted by MemoryReadCode.
 constexpr u32 kSwiftTypeSvc = 0xfffc;

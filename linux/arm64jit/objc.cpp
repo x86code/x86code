@@ -110,11 +110,13 @@ void h_objc_msgSend(GuestThread &t, u32) {
 }  // namespace
 
 static u64 g_bks_text;  // BackBoardServices' __TEXT in this runtime's cache (sim_service_patches)
+static u64 g_objc_text_lo, g_objc_text_hi;  // libobjc's __TEXT (objc_cache_gc_guard)
 
 void native_objc_prepare(const std::string &cache_path) {
     u64 bks_hi = 0;
     cache_exports(cache_path, "/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices", nullptr,
                   &g_bks_text, &bks_hi);
+    cache_exports(cache_path, "/usr/lib/libobjc.A.dylib", nullptr, &g_objc_text_lo, &g_objc_text_hi);
     // X86SIM_A64_GUEST_OBJC=1: leave guest A64 msgSend alone (baseline).
     const char *guest = getenv("X86SIM_A64_GUEST_OBJC");
     if (guest && *guest == '1') return;
@@ -122,11 +124,16 @@ void native_objc_prepare(const std::string &cache_path) {
     u64 text_lo = 0, text_hi = 0;
     std::vector<u64> addrs;
     auto names = cache_exports(cache_path, "/usr/lib/objc/libobjcMsgSend.dylib", &addrs, &text_lo, &text_hi);
+    // Platforms 1: __objc_msgSend_uncached is not exported (27.x), so it was always the iOS 27 constant: on tvOS
+    // (_objc_msgSend at 0x18009b800) every cache miss jumped into FindMyCrypto and libSystem's initializer crashed.
+    // It is _objc_msgSend's own cache-miss target (the "b" at +0x68: +0x2e0), the same code on iOS, tvOS and watchOS.
+    g_uncached = 0;
     for (size_t i = 0; i < names.size(); i++) {
         if (addrs[i] == ~0ull) continue;
         if (names[i] == "_objc_msgSend") g_msgsend = addrs[i];
         else if (names[i] == "__objc_msgSend_uncached") g_uncached = addrs[i];
     }
+    if (!g_uncached && g_msgsend) g_uncached = g_msgsend + (kDefaultUncached - kDefaultMsgSend);
     if (!g_msgsend || !g_uncached) {
         logf("native objc: msgSend exports missing (msgsend %#lx uncached %#lx)",
              (unsigned long)g_msgsend, (unsigned long)g_uncached);
@@ -205,11 +212,25 @@ static bool patch_return(GuestThread &t, u64 addr, uint32_t expect, uint32_t mov
     return true;
 }
 
-constexpr u64 kCollectingInCritical = 0x1c005ae50ull;  // __ZL23_collecting_in_criticalv, iOS 27.0 24A434
+constexpr u64 kCollectingInCritical = 0x1c005ae50ull;  // __ZL23_collecting_in_criticalv, iOS 27.0 24A434 and 27.2
+// Platforms 1: found by its first six instructions in libobjc's text (sub sp, sp, #368; stp x28, x27 / x22, x21 /
+// x20, x19 / x29, x30; add x29, sp, #352): one function in iOS 27.2, tvOS 27.2 (0x180062e48) and watchOS 27.2
+// (0x18006ee50). The 27.0 constant alone missed tvOS, where the cache flush then spun in thread_get_state with the
+// runtime lock held: migrationpluginwrapper deadlocked, datamigrator killed it every 30 s and backboardd waited on the
+// data migration for good (no home screen).
+static u64 find_collecting_in_critical() {
+    static const uint32_t sig[] = {0xd105c3ffu, 0xa9136ffcu, 0xa91457f6u, 0xa9154ff4u, 0xa9167bfdu, 0x910583fdu};
+    u64 hit = 0;
+    int n = 0;
+    if (g_objc_text_lo && g_objc_text_hi > g_objc_text_lo)
+        for (u64 a = g_objc_text_lo; a + sizeof sig <= g_objc_text_hi; a += 4)
+            if (!memcmp((const void *)a, sig, sizeof sig)) { hit = a; n++; }
+    return n == 1 ? hit : kCollectingInCritical;
+}
 void objc_cache_gc_guard(GuestThread &t) {
     if (const char *e = getenv("X86SIM_A64_OBJC_CACHE_GC"); e && atoi(e) == 1) return;
     // sub sp, sp, #368 -> mov w0, #1
-    patch_return(t, kCollectingInCritical, 0xd105c3ffu, 0x52800020u, "objc _collecting_in_critical -> true");
+    patch_return(t, find_collecting_in_critical(), 0xd105c3ffu, 0x52800020u, "objc _collecting_in_critical -> true");
 }
 
 // Speed 5: the simulator backboardd has no UI sensor server. BKHIDUISensorCoordinator is compiled out of the sim
