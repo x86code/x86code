@@ -34,6 +34,8 @@ pub struct Shared {
     pub ring: Mutex<std::path::PathBuf>,
     /// Models 2: degrees the shown panel is mounted at (the iPhone Duo's inner screen: 270), turned upright here
     pub rot: AtomicU32,
+    /// SCALE_SMOOTH | SCALE_SHARP | SCALE_FULL
+    pub scaling: AtomicU8,
 }
 
 pub struct Viewer {
@@ -54,38 +56,74 @@ pub struct Viewer {
     shift_held: bool,
 }
 
-fn convert(f: &x86sim_core::ring::Frame, step: usize, rot: u32) -> Img {
+/// How a frame is shrunk to the size it is drawn at (per phone: launcher.json "scaling", Advanced > Screen scaling)
+pub const SCALE_SMOOTH: u8 = 0;
+/// every step-th pixel: cheapest, but small text and edges shimmer and break up
+pub const SCALE_SHARP: u8 = 1;
+/// the whole frame to the GPU, which scales it (linear): the most upload and GPU work
+pub const SCALE_FULL: u8 = 2;
+
+pub fn scaling_of(s: &str) -> u8 {
+    match s {
+        "sharp" => SCALE_SHARP,
+        "full" => SCALE_FULL,
+        _ => SCALE_SMOOTH,
+    }
+}
+
+/// The frame shrunk by `step` and turned upright. `smooth`: each output pixel is the average of its step x step block
+/// (a box filter) instead of the block's first pixel, so a phone drawn small keeps its text and lines whole.
+fn convert(f: &x86sim_core::ring::Frame, step: usize, rot: u32, smooth: bool) -> Img {
     let (w, h) = (f.w as usize / step, f.h as usize / step);
-    let px_at = |x: usize, y: usize| {
-        let o = y * step * f.stride as usize + x * step * 4;
-        egui::Color32::from_rgb(f.bgra[o + 2], f.bgra[o + 1], f.bgra[o])
-    };
-    let mut px = Vec::with_capacity(w * h);
+    let stride = f.stride as usize;
+    let mut small = Vec::with_capacity(w * h);
+    if smooth && step > 1 {
+        let n = (step * step) as u32;
+        let mut acc = vec![[0u32; 3]; w];
+        for y in 0..h {
+            acc.iter_mut().for_each(|a| *a = [0; 3]);
+            for sy in 0..step {
+                let row = &f.bgra[(y * step + sy) * stride..];
+                for (x, a) in acc.iter_mut().enumerate() {
+                    for p in row[x * step * 4..(x + 1) * step * 4].chunks_exact(4) {
+                        a[0] += p[2] as u32;
+                        a[1] += p[1] as u32;
+                        a[2] += p[0] as u32;
+                    }
+                }
+            }
+            small.extend(acc.iter().map(|a| egui::Color32::from_rgb(((a[0] + n / 2) / n) as u8, ((a[1] + n / 2) / n) as u8, ((a[2] + n / 2) / n) as u8)));
+        }
+    } else {
+        for y in 0..h {
+            for x in 0..w {
+                let o = y * step * stride + x * step * 4;
+                small.push(egui::Color32::from_rgb(f.bgra[o + 2], f.bgra[o + 1], f.bgra[o]));
+            }
+        }
+    }
+    let px_at = |x: usize, y: usize| small[y * w + x];
     match rot % 360 {
         // the panel's framebuffer turned upright: 270 = a quarter clockwise (upright (xo, yo) = framebuffer
         // (yo, h - 1 - xo)), 90 = counter-clockwise; hid::unrotate is the inverse for touches
         270 | 90 => {
+            let mut px = Vec::with_capacity(w * h);
             for yo in 0..w {
                 for xo in 0..h {
                     px.push(if rot % 360 == 270 { px_at(yo, h - 1 - xo) } else { px_at(w - 1 - yo, xo) });
                 }
             }
-            return Img { w: h, h: w, pixels: px, seq: f.seq };
+            Img { w: h, h: w, pixels: px, seq: f.seq }
         }
-        _ => {}
+        _ => Img { w, h, pixels: small, seq: f.seq },
     }
-    for y in 0..h {
-        for x in 0..w {
-            px.push(px_at(x, y));
-        }
-    }
-    Img { w, h, pixels: px, seq: f.seq }
 }
 
 impl Viewer {
     pub fn new(inst: &Instance, ctx: egui::Context) -> Viewer {
         let shared = Arc::new(Shared::default());
         shared.target_w.store(inst.screen.0, Ordering::Relaxed);
+        shared.scaling.store(scaling_of(&x86sim_core::instance::load_settings(&inst.dir).scaling), Ordering::Relaxed);
         *shared.ring.lock().unwrap() = inst.ring.clone();
         let sh = shared.clone();
         std::thread::Builder::new()
@@ -93,13 +131,13 @@ impl Viewer {
             .spawn(move || {
                 let mut ring_path = sh.ring.lock().unwrap().clone();
                 let mut ring = Ring::new(&ring_path);
-                let mut last = (0u64, 0usize);
+                let mut last = (0u64, 0usize, 0u8);
                 loop {
                     let want = sh.ring.lock().unwrap().clone();
                     if want != ring_path {
                         ring = Ring::new(&want);
                         ring_path = want;
-                        last = (0, 0);
+                        last = (0, 0, 0);
                     }
                     let mode = sh.mode.load(Ordering::Relaxed);
                     if mode == OFF {
@@ -112,11 +150,19 @@ impl Viewer {
                         if let Some(f) = ring.latest() {
                             let rot = sh.rot.load(Ordering::Relaxed);
                             let src_w = if rot % 180 == 90 { f.h } else { f.w } as usize;
-                            let step = ((src_w + tw - 1) / tw).max(1);
-                            if (f.seq, step) != last {
+                            let sc = sh.scaling.load(Ordering::Relaxed);
+                            // smooth: the largest step that keeps the image at least as wide as it is drawn (the GPU
+                            // then shrinks it by less than 2x, which linear filtering does well); sharp: at most as wide
+                            let step = match sc {
+                                SCALE_FULL => 1,
+                                SCALE_SHARP => (src_w + tw - 1) / tw,
+                                _ => src_w / tw,
+                            }
+                            .max(1);
+                            if (f.seq, step, sc) != last {
                                 let boot = f64::from_bits(sh.boot_time.load(Ordering::Relaxed));
                                 if (f.t_ns as f64) / 1e9 >= boot - 2.0 {
-                                    let img = convert(&f, step, rot);
+                                    let img = convert(&f, step, rot, sc == SCALE_SMOOTH);
                                     *sh.frame.lock().unwrap() = Some(img);
                                     sh.dirty.store(true, Ordering::Release);
                                     sh.seq.store(f.seq, Ordering::Relaxed);
@@ -126,7 +172,7 @@ impl Viewer {
                                     fps.push(now);
                                     ctx.request_repaint();
                                 }
-                                last = (f.seq, step);
+                                last = (f.seq, step, sc);
                             }
                         }
                     }
@@ -209,7 +255,8 @@ impl Viewer {
         let inner = avail - egui::vec2(2.0 * bezel, 2.0 * bezel);
         let scale = (inner.x / sw).min(inner.y / sh).max(0.01);
         let size = egui::vec2(sw * scale, sh * scale);
-        self.shared.target_w.store(size.x.ceil() as u32 * 1, Ordering::Relaxed);
+        // in physical pixels: on a HiDPI screen (2 pixels a point) a frame shrunk to the size in points was blown up 2x
+        self.shared.target_w.store((size.x * ui.ctx().pixels_per_point()).ceil() as u32, Ordering::Relaxed);
         let outer = size + egui::vec2(2.0 * bezel, 2.0 * bezel);
         let (rect, resp) = ui.allocate_exact_size(outer, if interactive { egui::Sense::click_and_drag() } else { egui::Sense::hover() });
         let screen = rect.shrink(bezel);
@@ -561,4 +608,54 @@ fn char_usage(c: char) -> Option<(u32, bool)> {
         ')' => (0x27, true),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(w: u32, h: u32, px: impl Fn(u32, u32) -> u8) -> x86sim_core::ring::Frame {
+        let mut bgra = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let v = px(x, y);
+                let o = ((y * w + x) * 4) as usize;
+                bgra[o..o + 4].copy_from_slice(&[v, v, v, 255]);
+            }
+        }
+        x86sim_core::ring::Frame { w, h, stride: w * 4, seq: 1, t_ns: 0, bgra }
+    }
+
+    #[test]
+    fn smooth_scaling_averages() {
+        // one-pixel black/white checkerboard (fine text, hairlines): every 2nd pixel is all black, the average grey
+        let f = frame(8, 6, |x, y| if (x + y) % 2 == 0 { 0 } else { 255 });
+        let sharp = convert(&f, 2, 0, false);
+        assert!(sharp.pixels.iter().all(|p| p.r() == 0));
+        let smooth = convert(&f, 2, 0, true);
+        assert_eq!((smooth.w, smooth.h), (4, 3));
+        assert!(smooth.pixels.iter().all(|p| p.r() == 128 && p.g() == 128 && p.b() == 128));
+        // turned upright like the sharp path: a left-to-right ramp becomes top-to-bottom
+        let ramp = frame(6, 4, |x, _| (x * 40) as u8);
+        let r = convert(&ramp, 2, 270, true);
+        assert_eq!((r.w, r.h), (2, 3));
+        assert_eq!([r.pixels[0].r(), r.pixels[2].r(), r.pixels[4].r()], [20, 100, 180]);
+        assert_eq!(convert(&ramp, 2, 270, false).pixels.iter().map(|p| p.r()).collect::<Vec<_>>(), [0, 0, 80, 80, 160, 160]);
+    }
+
+    #[test]
+    fn smooth_scaling_cost() {
+        // an iPhone 18 Pro frame into a ~450 px wide panel (step 2): the per-frame cost on the ring thread
+        let f = frame(1206, 2622, |x, y| (x ^ y) as u8);
+        let t = std::time::Instant::now();
+        for _ in 0..10 {
+            std::hint::black_box(convert(&f, 2, 0, true));
+        }
+        let smooth = t.elapsed() / 10;
+        let t = std::time::Instant::now();
+        for _ in 0..10 {
+            std::hint::black_box(convert(&f, 2, 0, false));
+        }
+        eprintln!("1206x2622 step 2: smooth {smooth:?}, sharp {:?} a frame", t.elapsed() / 10);
+    }
 }

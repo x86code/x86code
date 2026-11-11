@@ -279,11 +279,14 @@ pub struct BootSettings {
     pub extra_env: String,
     /// share one mtlvk between phones when one is up
     pub share_mtlvk: bool,
+    /// the launcher's screen when drawn smaller than the phone: smooth (averaged) | sharp (every nth pixel) | full
+    /// (the whole frame, scaled by the GPU). Applies at once, not at the next start.
+    pub scaling: String,
 }
 
 impl Default for BootSettings {
     fn default() -> Self {
-        BootSettings { metal: "all".into(), mem_max: "12G".into(), jobs: "std".into(), extra_env: String::new(), share_mtlvk: true }
+        BootSettings { metal: "all".into(), mem_max: "12G".into(), jobs: "std".into(), extra_env: String::new(), share_mtlvk: true, scaling: "smooth".into() }
     }
 }
 

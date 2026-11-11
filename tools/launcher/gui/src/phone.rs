@@ -687,7 +687,16 @@ impl App {
                 ui.label(egui::RichText::new(icon::INFO).size(12.0).color(INK_3)).on_hover_text(tip);
             });
         };
-        ui.label(muted("These apply at the next start."));
+        field(ui, "Screen scaling", "How the screen is shrunk when it is drawn smaller than the phone (a small window, the side panel). Smooth averages the pixels; Sharp keeps every nth one (least CPU, but text and edges shimmer); Full sends the whole frame and lets the GPU scale it. Applies at once.");
+        let opts = [("smooth", "Smooth"), ("sharp", "Sharp"), ("full", "Full resolution")];
+        let sel = opts.iter().position(|o| o.0 == s.scaling);
+        let mut scaled = false;
+        if let Some(i) = segmented(ui, &opts.map(|o| o.1), sel, true) {
+            s.scaling = opts[i].0.into();
+            scaled = true;
+        }
+        ui.add_space(S2);
+        ui.label(muted("The rest apply at the next start."));
         field(ui, "Graphics", "X86SIM_METAL: GPU for everything (all), only the system (backboardd), or software rendering (0).");
         let opts = [("all", "GPU"), ("backboardd", "System only"), ("0", "Software")];
         let sel = opts.iter().position(|o| o.0 == s.metal);
@@ -721,9 +730,15 @@ impl App {
         if ui.add(egui::TextEdit::singleline(&mut s.extra_env).font(egui::TextStyle::Monospace).hint_text(egui::RichText::new("KEY=value …").color(INK_3)).desired_width(ui.available_width()).margin(egui::Margin::symmetric(8, 6))).lost_focus() {
             save = true;
         }
-        if save {
+        if save || scaled {
             let _ = instance::save_settings(&inst.dir, s);
-            self.say("Saved. Applies at the next start.");
+            if scaled {
+                let sc = crate::viewer::scaling_of(&s.scaling);
+                if let Some(v) = self.viewers.get(&inst.id) {
+                    v.shared.scaling.store(sc, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            self.say(if save { "Saved. Applies at the next start." } else { "Saved." });
         }
         ui.add_space(S3);
         ui.label(overline("Paths"));
