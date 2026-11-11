@@ -19,6 +19,8 @@
 //                                  children, finger indexes 1 and 2 with their own identities
 //   key down|up <usage>            keyboard usage (page 7), e.g. 4 = 'a', 0x28 = return
 //   button home|lock|volup|voldown down|up
+//   crown <delta> [x|y|z]          (Platforms 1, Apple Watch) Digital Crown rotation: a scroll event of <delta> on that
+//                                  axis (default y) through the crown service
 //   @<screenID> <touch command>    (Models 2) the touch on another integrated display (iPhone Duo: @3 = the inner
 //                                  "LCD-1"; x, y normalized to that display's framebuffer as simfb publishes it)
 //   hinge <degrees>                (Models 2, devices with two integrated displays) the hinge angle: 0 folded (closed),
@@ -86,6 +88,9 @@ extern IOHIDEventRef IOHIDEventCreateHingeAngleEvent(CFAllocatorRef, uint64_t ts
 #define kFieldHingeState ((44 << 16) | 4)
 // CoreMotion's CLAngleNotifier drops a hinge event whose phase is 0 ("copied event is invalid")
 extern void IOHIDEventSetPhase(IOHIDEventRef, uint16_t phase);
+// Platforms 1: the Digital Crown's events (Apple's watchOS SimulatorHID decodes the host's crown messages into these)
+extern IOHIDEventRef IOHIDEventCreateScrollEvent(CFAllocatorRef, uint64_t ts, IOHIDFloat x, IOHIDFloat y, IOHIDFloat z,
+	IOOptionBits options);
 extern IOHIDEventRef IOHIDEventCreateVendorDefinedEvent(CFAllocatorRef, uint64_t ts, uint32_t page, uint32_t usage, uint32_t version,
 	const uint8_t* data, CFIndex length, IOOptionBits options);
 
@@ -148,7 +153,10 @@ static VService touch_svc, buttons_svc, keyboard_svc;
 // Models 2: a device with two integrated displays (capabilities) gets a touchscreen per extra display and a hinge
 static VService inner_touch_svc, hinge_svc;
 static uint32_t inner_display_id;
-static VService* cur_touch = &touch_svc;   // the touchscreen of the command being handled (@<screenID> prefix)
+static VService* cur_touch = &touch_svc;
+// Platforms 1: an Apple Watch's Digital Crown, as Apple's watchOS SimulatorHID registers it
+// ("com.apple.SimulatorHID.MainScreenDigitalCrownService": Apple vendor usage page 0xff0b, usage 1, built in)
+static VService crown_svc;   // the touchscreen of the command being handled (@<screenID> prefix)
 static double hinge_deg, hinge_vel;
 static uint16_t hinge_phase = 2;
 // Models 2: CoreMotion's device state (the magic pose SpringBoard's SBFDevicePoseProvider combines with the angle:
@@ -519,11 +527,34 @@ static void handle_line(char* line, Client* cl) {
 #endif
 		return;
 	}
+	double delta;
+	if (sscanf(line, "crown %lf %15s", &delta, a) >= 1) {
+		if (!crown_svc.service) { slog("no digital crown on this device: %s", line); return; }
+		note_input();
+		const char axis = strchr(line + 6, ' ') ? a[0] : 'y';
+		dispatch_event(&crown_svc, IOHIDEventCreateScrollEvent(kCFAllocatorDefault, mach_absolute_time(),
+			axis == 'x' ? delta : 0, axis == 'y' ? delta : 0, axis == 'z' ? delta : 0, 0));
+		slog("crown %.2f (%c)", delta, axis);
+		return;
+	}
+	unsigned page;
+	if (sscanf(line, "usage %i %i %15s", &page, &usage, a) == 3) {   // Platforms 1: any page/usage on the buttons service
+		note_input();
+		send_key(&buttons_svc, page, usage, !strcmp(a, "down"));
+		slog("usage 0x%x/0x%x %s", page, usage, a);
+		return;
+	}
 	if (sscanf(line, "button %15s %15s", a, b) == 2) {
 		bool down = !strcmp(b, "down");
-		// consumer page: 0x40 menu (home), 0x30 power (lock), 0xe9/0xea volume
-		uint32_t u = !strcmp(a, "home") ? 0x40 : !strcmp(a, "lock") ? 0x30 : !strcmp(a, "volup") ? 0xe9 : !strcmp(a, "voldown") ? 0xea : 0;
+		// consumer page: 0x40 menu (home), 0x30 power (lock), 0xe9/0xea volume.
+		// Platforms 1: tvOS reads 0x40 as the Siri Remote's Back (Menu) and 0x60 as its TV button (PineBoard's home;
+		// found by trying usages, see SIMHID.md), 0xcd play / pause; holding 0x30 sleeps the TV. On a watch 0x40 is
+		// the crown's press and 0x30 the side button ("side").
+		uint32_t u = !strcmp(a, "home") || !strcmp(a, "menu") ? 0x40 : !strcmp(a, "lock") || !strcmp(a, "side") ? 0x30
+			: !strcmp(a, "volup") ? 0xe9 : !strcmp(a, "voldown") ? 0xea : !strcmp(a, "tv") ? 0x60
+			: !strcmp(a, "playpause") ? 0xcd : 0;
 		if (u) send_key(&buttons_svc, 0x0c, u, down);
+		else slog("unknown button: %s", a);
 		return;
 	}
 	if (*line) slog("unknown command: %s", line);
@@ -652,6 +683,14 @@ static void* listen_thread(void* arg) {
 	keyboard_svc = (VService){ "keyboard", 0x7863000000000003ull, make_props(@"x86Sim keyboard", 0x01, 0x06, nil) };
 	add_service(system, &touch_svc);
 	add_service(system, &buttons_svc);
+	{
+		const char* model = getenv("SIMULATOR_MODEL_IDENTIFIER");
+		if (model && !strncmp(model, "Watch", 5)) {
+			crown_svc = (VService){ "crown", 0x7863000000000006ull,
+				make_props(@"com.apple.SimulatorHID.MainScreenDigitalCrownService", 0xff0b, 0x01, nil) };
+			add_service(system, &crown_svc);
+		}
+	}
 	// Models 2: the second integrated display of $SIMULATOR_CAPABILITIES (as host/simfb publishes it: SFB display
 	// <screenID>, UID x86Sim-display-<screenID>) gets its own touchscreen, and the device a hinge sensor
 	{
