@@ -631,7 +631,7 @@ pub fn phase_look(phase: x86sim_core::instance::Phase, runtime_present: bool) ->
         Phase::Running => ("Running", GOOD),
         Phase::Starting => ("Starting", WARN),
         Phase::Stopping => ("Stopping", WARN),
-        Phase::Off if !runtime_present => ("iOS not installed", WARN),
+        Phase::Off if !runtime_present => ("Version not installed", WARN),
         Phase::Off => ("Off", INK_3),
     }
 }

@@ -234,9 +234,10 @@ pub fn link_runtime(src: &Path) -> Result<String> {
     let src = if src.file_name().is_some_and(|n| n == "RuntimeRoot") { src.parent().unwrap().to_path_buf() } else { src.to_path_buf() };
     let src = src.canonicalize().with_context(|| format!("{} not found", src.display()))?;
     let rr = src.join("RuntimeRoot");
-    anyhow::ensure!(crate::dyldcache::Cache::cache_dir(&rr).join(crate::dyldcache::CACHE_NAME).exists(), "{} has no iOS runtime (no RuntimeRoot with a dyld cache)", src.display());
+    anyhow::ensure!(crate::dyldcache::Cache::cache_dir(&rr).join(crate::dyldcache::CACHE_NAME).exists(), "{} has no simulator runtime (no RuntimeRoot with a dyld cache)", src.display());
     let name = src.file_name().unwrap().to_string_lossy().into_owned();
-    anyhow::ensure!(name.starts_with("ios-") && name.split('-').count() >= 3, "{name}: expected a runtimes/ios-<version>-<build>-arm64 dir");
+    // Platforms 1: tvOS / watchOS runtimes too (tvos-<version>-<build>-arm64, watchos-...)
+    anyhow::ensure!(crate::sim::parse_runtime_dir(&name).is_some(), "{name}: expected a runtimes/ios-<version>-<build>-arm64 dir (or tvos-..., watchos-...)");
     let dst = repo_root().join("runtimes").join(&name);
     anyhow::ensure!(dst.symlink_metadata().is_err(), "runtimes/{name} already exists");
     std::fs::create_dir_all(repo_root().join("runtimes"))?;

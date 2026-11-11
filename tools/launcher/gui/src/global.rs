@@ -260,11 +260,11 @@ fn aot_alive(pid: u32) -> bool {
 }
 
 impl App {
-    // ---------------- iOS versions ----------------
+    // ---------------- iOS / tvOS / watchOS versions ----------------
     pub fn ios_page(&mut self, ui: &mut egui::Ui) {
         let mut check = false;
         let checking = self.catalogue.lock().unwrap().is_none();
-        page_header(ui, "iOS versions", "Each phone runs one iOS version. Download more here.", |ui| {
+        page_header(ui, "Versions", "Each phone runs one iOS version (an Apple TV tvOS, an Apple Watch watchOS). Download more here.", |ui| {
             check = ui.add_enabled(!checking, Btn::secondary(if checking { "Checking…" } else { "Check for updates" }).icon(icon::ARROW_CLOCKWISE)).on_hover_text("Ask Apple for its current list").clicked();
         });
         if check {
@@ -289,7 +289,7 @@ impl App {
         let mut aot_rt = None;
         list_card(ui, |ui| {
             if runtimes.is_empty() {
-                empty_state(ui, icon::STACK, "No iOS version yet", "Download one below to start a phone.", |_| {});
+                empty_state(ui, icon::STACK, "No version yet", "Download one below to start a phone.", |_| {});
             }
             for (k, r) in runtimes.iter().enumerate() {
                 if k > 0 {
@@ -312,7 +312,7 @@ impl App {
                 } else {
                     ("Files missing", WARN)
                 };
-                list_row(ui, icon::STACK, &format!("iOS {}", r.version), &line, |ui| {
+                list_row(ui, icon::STACK, &r.label(), &line, |ui| {
                     if r.present {
                         if ui.add(Btn::secondary("Pre-translate").icon(icon::LIGHTNING)).on_hover_text("Get this version's apps ready ahead of time").clicked() {
                             aot_rt = Some(r.root.clone());
@@ -320,7 +320,7 @@ impl App {
                     } else if fetching.is_none() {
                         let label = if partial.is_some() { "Resume" } else { "Download" };
                         if ui.add(Btn::primary(label).icon(icon::DOWNLOAD_SIMPLE)).clicked() {
-                            fetch = Some((r.build.clone(), format!("iOS {}", r.version)));
+                            fetch = Some((r.build.clone(), r.label()));
                         }
                         if partial.is_some() && ui.add(Btn::ghost("Discard")).on_hover_text("Delete what was downloaded").clicked() {
                             discard = Some(r.clone());
@@ -392,7 +392,7 @@ impl App {
                     }
                     let fetching = self.fetching.get(&c.build).cloned();
                     let short = c.name.trim_end_matches(" Simulator Runtime").trim().replace("Release Candidate", "RC");
-                    let t = if !short.is_empty() { short } else if c.version.is_empty() { c.build.clone() } else { format!("iOS {}", c.version) };
+                    let t = if !short.is_empty() { short } else if c.version.is_empty() { c.build.clone() } else { format!("{} {}", x86sim_core::sim::platform_name(&c.platform), c.version) };
                     let need = phones_need(&c.build);
                     let mut detail = format!("Build {} · {:.1} GB download", c.build, c.gb);
                     if need > 0 {
@@ -434,7 +434,7 @@ impl App {
         }
         if let Some(r) = discard {
             match host::discard_download(&r) {
-                Ok(()) => self.say(format!("Removed the stopped iOS {} download", r.version)),
+                Ok(()) => self.say(format!("Removed the stopped {} download", r.label())),
                 Err(e) => self.say(format!("Couldn't remove it: {e:#}")),
             }
             self.runtimes = host::runtimes();
@@ -448,16 +448,16 @@ impl App {
 
     // ---------------- Pre-translate ----------------
     pub fn aot_page(&mut self, ui: &mut egui::Ui) {
-        page_header(ui, "Pre-translate", "Get apps ready ahead of time so they open fast. One cache per iOS version.", |_| {});
+        page_header(ui, "Pre-translate", "Get apps ready ahead of time so they open fast. One cache per version.", |_| {});
         let present: Vec<host::Runtime> = self.runtimes.iter().filter(|r| r.present).cloned().collect();
         if present.is_empty() {
-            card(ui, |ui| empty_state(ui, icon::LIGHTNING, "Nothing to pre-translate yet", "Download an iOS version first.", |_| {}));
+            card(ui, |ui| empty_state(ui, icon::LIGHTNING, "Nothing to pre-translate yet", "Download a version first.", |_| {}));
             return;
         }
         let building = self.aot.building();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = S2;
-            let labels: Vec<String> = present.iter().map(|r| format!("iOS {}", r.version)).collect();
+            let labels: Vec<String> = present.iter().map(|r| r.label()).collect();
             let sel = present.iter().position(|r| Some(&r.root) == self.aot.runtime_root.as_ref());
             if let Some(i) = segmented(ui, &labels.iter().map(|s| s.as_str()).collect::<Vec<_>>(), sel, !building) {
                 self.aot.select(present[i].root.clone(), None);
@@ -500,7 +500,7 @@ impl App {
                         ACCENT,
                         self.aot.progress.as_ref().filter(|p| p.chunks_total > 0).map(|p| format!("{} of {} parts done", p.chunks_done, p.chunks_total)).unwrap_or_else(|| "Getting ready…".into()),
                     ),
-                    (Some(s), _) if s.total == 0 => ("Nothing to translate yet", INK_3, "Start a phone on this iOS version first: it learns what's used.".to_string()),
+                    (Some(s), _) if s.total == 0 => ("Nothing to translate yet", INK_3, "Start a phone on this version first: it learns what's used.".to_string()),
                     (Some(s), _) if s.image_current && need == 0 => ("Ready", GOOD, format!("All {} parts are ready", s.total)),
                     (Some(s), _) if need == 0 => ("Almost ready", WARN, "Every part is translated; it needs putting together".to_string()),
                     (Some(s), _) if s.image_present => ("Needs an update", WARN, format!("{need} of {} parts to redo", s.total)),

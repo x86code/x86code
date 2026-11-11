@@ -10,6 +10,8 @@ use x86sim_core::{features, instance, instance::Phase, logs};
 /// Width of the tool bar right of the screen
 const TOOLBAR_W: f32 = 46.0;
 const GESTURES: &str ="Click the screen to tap, drag to swipe.\nDrag in from an edge for system gestures (Home, Control Center, back).\nCtrl + drag to pinch, Shift + drag to scroll with two fingers.\nF1 Home · F2 Lock · F3/F4 volume";
+const GESTURES_TV: &str = "The keyboard is the remote: arrow keys move, Return selects, Esc goes back.\nClick the screen to select; the mouse wheel or a touchpad swipe moves the focus.\nF1 TV (home) · F2 play / pause · F3/F4 volume";
+const GESTURES_WATCH: &str = "Click the screen to tap, drag to swipe.\nThe mouse wheel turns the Digital Crown.\nF1 presses the crown (watch face / apps) · F2 the side button (sleep / wake)";
 
 impl App {
     pub fn phone_view(&mut self, ctx: &egui::Context, id: &str) {
@@ -53,7 +55,7 @@ impl App {
                             Phase::Running => "Running",
                             Phase::Starting => "Starting",
                             Phase::Stopping => "Stopping",
-                            Phase::Off if !present => "No iOS",
+                            Phase::Off if !present => "Not installed",
                             Phase::Off => "Off",
                         };
                         p.text(r.right_center() - egui::vec2(10.0, 0.0), egui::Align2::RIGHT_CENTER, state, font(T_SMALL), INK_3);
@@ -300,11 +302,13 @@ impl App {
     }
 
     /// The tools, a vertical bar right of the screen: the hardware buttons Simulator has (Home, side button, volume,
-    /// Siri), Save Screen, the hinge of a two-screen phone, gesture help. Simulator's rotate and shake have no simhid
+    /// Siri), Save Screen, the hinge of a two-screen phone, gesture help. Platforms 1: an Apple TV gets the Siri
+    /// Remote's buttons and a click pad, an Apple Watch the Digital Crown (press, turn) and the side button. Simulator's rotate and shake have no simhid
     /// command (no orientation or motion events), so they are not offered.
     fn screen_toolbar(&mut self, ui: &mut egui::Ui, id: &str, live: bool) {
         let name = self.inst(id).map(|i| i.name.clone()).unwrap_or_else(|| id.to_string());
         let hinge = self.inst(id).filter(|i| i.inner.is_some()).map(|i| i.inner_active());
+        let platform = self.inst(id).map(|i| i.platform.clone()).unwrap_or_default();
         egui::Frame::new().fill(CARD).stroke(egui::Stroke::new(1.0_f32, BORDER)).corner_radius(8).inner_margin(4).show(ui, |ui| {
             ui.set_width(TOOLBAR_W - 10.0);
             ui.vertical_centered(|ui| {
@@ -318,26 +322,88 @@ impl App {
                     ui.painter().hline(r.x_range().shrink(6.0), r.center().y, egui::Stroke::new(1.0_f32, BORDER));
                 };
                 let mut press = None;
-                if tool(ui, icon::HOUSE, "Home (F1)") {
-                    press = Some("home");
-                }
-                if tool(ui, icon::LOCK, "Lock: the side button (F2)") {
-                    press = Some("lock");
-                }
-                if tool(ui, icon::SPEAKER_HIGH, "Volume up (F3)") {
-                    press = Some("volup");
-                }
-                if tool(ui, icon::SPEAKER_LOW, "Volume down (F4)") {
-                    press = Some("voldown");
-                }
-                if tool(ui, icon::MICROPHONE, "Siri: holds the side button") {
-                    if let Some(v) = self.viewer(id) {
-                        v.hold("lock", 2500);
+                let mut key = None;
+                let mut crown = None;
+                match platform.as_str() {
+                    // Platforms 1: the Siri Remote: TV (consumer 0x60, PineBoard's home), Back (Menu, 0x40), play /
+                    // pause, volume, and the click pad as the keyboard's arrows and return. No power or Siri: the
+                    // power button held (which Siri was on an iPhone) puts the TV to sleep.
+                    "tvos" => {
+                        if tool(ui, icon::TELEVISION_SIMPLE, "TV: the home screen (F1)") {
+                            press = Some("tv");
+                        }
+                        if tool(ui, icon::ARROW_U_UP_LEFT, "Back (Esc)") {
+                            press = Some("menu");
+                        }
+                        if tool(ui, icon::PLAY_PAUSE, "Play / pause (F2)") {
+                            press = Some("playpause");
+                        }
+                        sep(ui);
+                        for (ic, tip, u) in [
+                            (icon::CARET_UP, "Up (arrow key)", 0x52),
+                            (icon::CARET_LEFT, "Left (arrow key)", 0x50),
+                            (icon::RADIO_BUTTON, "Select: a click on the screen, or Return", 0x28),
+                            (icon::CARET_RIGHT, "Right (arrow key)", 0x4f),
+                            (icon::CARET_DOWN, "Down (arrow key)", 0x51),
+                        ] {
+                            if tool(ui, ic, tip) {
+                                key = Some(u);
+                            }
+                        }
+                        sep(ui);
+                        if tool(ui, icon::SPEAKER_HIGH, "Volume up (F3)") {
+                            press = Some("volup");
+                        }
+                        if tool(ui, icon::SPEAKER_LOW, "Volume down (F4)") {
+                            press = Some("voldown");
+                        }
+                    }
+                    // Platforms 1: the Digital Crown (pressed: home / the app grid; turned: the mouse wheel) and the
+                    // side button. No volume buttons on a watch; the side button held is the power-off slider.
+                    "watchos" => {
+                        if tool(ui, icon::CROWN_SIMPLE, "Press the Digital Crown: watch face / apps (F1)") {
+                            press = Some("home");
+                        }
+                        if tool(ui, icon::CARET_UP, "Turn the crown up (or the mouse wheel)") {
+                            crown = Some(-120.0);
+                        }
+                        if tool(ui, icon::CARET_DOWN, "Turn the crown down (or the mouse wheel)") {
+                            crown = Some(120.0);
+                        }
+                        sep(ui);
+                        if tool(ui, icon::SIDEBAR_SIMPLE, "Side button: sleep / wake the screen (F2)") {
+                            press = Some("side");
+                        }
+                    }
+                    _ => {
+                        if tool(ui, icon::HOUSE, "Home (F1)") {
+                            press = Some("home");
+                        }
+                        if tool(ui, icon::LOCK, "Lock: the side button (F2)") {
+                            press = Some("lock");
+                        }
+                        if tool(ui, icon::SPEAKER_HIGH, "Volume up (F3)") {
+                            press = Some("volup");
+                        }
+                        if tool(ui, icon::SPEAKER_LOW, "Volume down (F4)") {
+                            press = Some("voldown");
+                        }
+                        if tool(ui, icon::MICROPHONE, "Siri: holds the side button") {
+                            if let Some(v) = self.viewer(id) {
+                                v.hold("lock", 2500);
+                            }
+                        }
                     }
                 }
-                if let Some(b) = press {
-                    if let Some(v) = self.viewer(id) {
+                if let Some(v) = self.viewer(id) {
+                    if let Some(b) = press {
                         v.press(b);
+                    }
+                    if let Some(u) = key {
+                        v.tap_key(u);
+                    }
+                    if let Some(d) = crown {
+                        v.crown(d);
                     }
                 }
                 sep(ui);
@@ -359,7 +425,11 @@ impl App {
                     }
                 }
                 sep(ui);
-                ui.add(Btn::tool(icon::INFO)).on_hover_text(GESTURES);
+                ui.add(Btn::tool(icon::INFO)).on_hover_text(match platform.as_str() {
+                    "tvos" => GESTURES_TV,
+                    "watchos" => GESTURES_WATCH,
+                    _ => GESTURES,
+                });
             });
         });
     }
@@ -380,7 +450,7 @@ impl App {
         ui.spacing_mut().item_spacing.y = 2.0;
         let lw = 84.0;
         kv_text(ui, lw, "Model", &inst.model);
-        kv_text(ui, lw, "iOS", if inst.runtime_present { inst.ios.clone() } else { format!("{} · not installed", inst.ios) });
+        kv_text(ui, lw, x86sim_core::sim::platform_name(&inst.platform), if inst.runtime_present { inst.ios.clone() } else { format!("{} · not installed", inst.ios) });
         kv_text(ui, lw, "Screen", format!("{} × {} pixels", inst.screen.0, inst.screen.1));
         if let Some(s) = st.filter(|_| on) {
             kv_text(ui, lw, "Processes", format!("{}{}", s.procs.len(), if s.mtlvk { " · GPU helper on" } else { "" }));
@@ -557,7 +627,7 @@ impl App {
                         let has = groups.contains(&g);
                         ui.add_enabled_ui(has || self.log_source == g, |ui| {
                             ui.selectable_value(&mut self.log_source, g.to_string(), g).on_hover_text(match g {
-                                "System" => "One log per iOS service and app",
+                                "System" => "One log per system service and app",
                                 "Translator" => "The ARM translator, one log per process",
                                 "Boot" => "Starting the phone",
                                 "Graphics" => "The GPU helper",
@@ -767,7 +837,7 @@ impl App {
                     Err(e) => self.say(format!("Couldn't open the window: {e:#}")),
                 }
             }
-            if ui.add(Btn::secondary("Pre-translate this iOS").icon(icon::LIGHTNING).small()).clicked() {
+            if ui.add(Btn::secondary("Pre-translate this version").icon(icon::LIGHTNING).small()).clicked() {
                 self.aot.select(inst.runtime_root.clone(), Some(inst.dir.clone()));
                 self.view = View::Aot;
             }

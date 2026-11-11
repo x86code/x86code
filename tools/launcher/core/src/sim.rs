@@ -83,29 +83,91 @@ pub fn device_runtime(dev: &Path) -> PathBuf {
     repo_root().join("runtimes").join(d).join("RuntimeRoot")
 }
 
+/// Platforms 1: the runtimes/ dir prefixes ("ios", "tvos", "watchos"), as cli/libexec/arm64/runtime-fetch.py names them
+pub const PLATFORMS: [&str; 3] = ["ios", "tvos", "watchos"];
+
+/// Platforms 1: "ios" -> "iOS", "tvos" -> "tvOS", "watchos" -> "watchOS"
+pub fn platform_name(platform: &str) -> &'static str {
+    match platform {
+        "tvos" => "tvOS",
+        "watchos" => "watchOS",
+        _ => "iOS",
+    }
+}
+
+/// Platforms 1: the build Add-phone offers to download when no runtime of a platform is installed
+pub fn platform_default_build(platform: &str) -> (&'static str, &'static str) {
+    match platform {
+        "tvos" => ("27.2", "24K150"),
+        "watchos" => ("27.2", "24S118"),
+        _ => (crate::setup::DEFAULT_VERSION, crate::setup::DEFAULT_BUILD),
+    }
+}
+
+/// Platforms 1: (platform, version, build) of a runtimes/ dir name ("tvos-27.2-24K150-arm64"), None for other dirs
+pub fn parse_runtime_dir(dir: &str) -> Option<(&'static str, String, String)> {
+    let parts: Vec<&str> = dir.split('-').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let p = PLATFORMS.iter().find(|p| **p == parts[0])?;
+    Some((p, parts[1].to_string(), parts[2].to_string()))
+}
+
+fn rt_dir(runtime_root: &Path) -> String {
+    runtime_root.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
 /// The JIT/AOT cache dir of a runtime, as boot-a64.sh picks it: 27.0 the default one, others $SCRATCH/jc-<build>
+/// (tvOS / watchOS runtimes too)
 pub fn jc_for(runtime_root: &Path) -> PathBuf {
-    let dir = runtime_root.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    match dir.split('-').collect::<Vec<_>>()[..] {
-        ["ios", _, build, ..] if build != "24A434" => scratch().join(format!("jc-{build}")),
+    match parse_runtime_dir(&rt_dir(runtime_root)) {
+        Some((_, _, build)) if build != "24A434" => scratch().join(format!("jc-{build}")),
         _ => crate::aot::Paths::default_jc(),
     }
 }
 
-/// "iOS 27.2" for a RuntimeRoot
+/// "iOS 27.2" (or "tvOS 27.2", "watchOS 27.2") for a RuntimeRoot
 pub fn runtime_short(runtime_root: &Path) -> String {
-    let dir = runtime_root.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    match dir.split('-').collect::<Vec<_>>()[..] {
-        ["ios", ver, ..] => format!("iOS {ver}"),
-        _ => dir,
+    let dir = rt_dir(runtime_root);
+    match parse_runtime_dir(&dir) {
+        Some((p, ver, _)) => format!("{} {ver}", platform_name(p)),
+        None => dir,
     }
 }
 
 /// "ios-27.2-24B8117-arm64" -> "iOS 27.2 (24B8117)"
 fn runtime_label(dir: &str) -> String {
-    match dir.split('-').collect::<Vec<_>>()[..] {
-        ["ios", ver, build, ..] => format!("iOS {ver} ({build})"),
-        _ => dir.to_string(),
+    match parse_runtime_dir(dir) {
+        Some((p, ver, build)) => format!("{} {ver} ({build})", platform_name(p)),
+        None => dir.to_string(),
+    }
+}
+
+/// Platforms 1: a model's platform ("ios", "tvos", "watchos"): its devicetypes-a64.json entry's "platform" (by model
+/// identifier), else from the identifier itself
+pub fn model_platform(model_id: &str) -> &'static str {
+    static M: std::sync::OnceLock<HashMap<String, String>> = std::sync::OnceLock::new();
+    let m = M.get_or_init(|| {
+        let txt = std::fs::read_to_string(repo_root().join("cli/lib/devicetypes-a64.json")).unwrap_or_default();
+        let v: serde_json::Value = serde_json::from_str(&txt).unwrap_or_default();
+        let mut out = HashMap::new();
+        if let Some(o) = v.as_object() {
+            for t in o.values() {
+                if let (Some(id), Some(p)) = (t["model"].as_str(), t["platform"].as_str()) {
+                    out.insert(id.to_string(), p.to_string());
+                }
+            }
+        }
+        out
+    });
+    match m.get(model_id).map(|s| s.as_str()) {
+        Some("tvos") => "tvos",
+        Some("watchos") => "watchos",
+        Some(_) => "ios",
+        None if model_id.starts_with("AppleTV") => "tvos",
+        None if model_id.starts_with("Watch") => "watchos",
+        None => "ios",
     }
 }
 
@@ -125,7 +187,7 @@ fn load_models() -> Vec<(String, String)> {
         }
     }
     // newest to oldest, as cli/lib/devicetypes-a64.json lists them (serde_json's map is sorted by name, so the file's
-    // own order is read from where each name sits in it), iPhones before iPads
+    // own order is read from where each name sits in it), iPhones before iPads, then Apple TV, then Apple Watch
     let at = |name: &str| txt.find(&format!("\"{name}\": {{")).unwrap_or(usize::MAX);
     // models the runtime lists as unsupported (with a "note": the iPhone Duo) are appended at the end of the file: they
     // go right after the last model of their own generation ("iPhone19,4" after the other iPhone19s)
@@ -140,7 +202,13 @@ fn load_models() -> Vec<(String, String)> {
         let last = out.iter().filter(|o| !noted(&o.0) && generation(&o.1) == g).map(|o| at(&o.0)).max();
         last.map(|l| (l, 1)).unwrap_or((own, 0))
     };
-    let mut keyed: Vec<_> = out.iter().map(|m| ((!m.0.starts_with("iPhone"), pos(m)), m.clone())).collect();
+    let group = |m: &(String, String)| match v.get(&m.0).and_then(|t| t["platform"].as_str()) {
+        Some("tvos") => 2,
+        Some("watchos") => 3,
+        _ if m.0.starts_with("iPhone") => 0,
+        _ => 1,
+    };
+    let mut keyed: Vec<_> = out.iter().map(|m| ((group(m), pos(m)), m.clone())).collect();
     keyed.sort_by_key(|k| k.0);
     let out: Vec<_> = keyed.into_iter().map(|k| k.1).collect();
     out

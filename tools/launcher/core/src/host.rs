@@ -10,6 +10,8 @@ use std::process::{Command, Stdio};
 pub struct Runtime {
     /// runtimes/ dir name
     pub dir: String,
+    /// Platforms 1: "ios", "tvos" or "watchos" (the dir's prefix)
+    pub platform: String,
     pub version: String,
     pub build: String,
     pub root: PathBuf,
@@ -22,6 +24,13 @@ pub struct Runtime {
     pub restricted_to: Vec<String>,
 }
 
+impl Runtime {
+    /// "iOS 27.2", "tvOS 27.2", "watchOS 27.2"
+    pub fn label(&self) -> String {
+        format!("{} {}", crate::sim::platform_name(&self.platform), self.version)
+    }
+}
+
 pub fn runtimes() -> Vec<Runtime> {
     let mut v: Vec<Runtime> = std::fs::read_dir(repo_root().join("runtimes"))
         .into_iter()
@@ -29,17 +38,16 @@ pub fn runtimes() -> Vec<Runtime> {
         .flatten()
         .filter_map(|e| {
             let dir = e.file_name().to_string_lossy().into_owned();
-            let parts: Vec<&str> = dir.split('-').collect();
-            if parts.len() < 3 || parts[0] != "ios" {
-                return None;
-            }
+            let (platform, version, build) = crate::sim::parse_runtime_dir(&dir)?;
             let root = e.path().join("RuntimeRoot");
             let present = crate::dyldcache::Cache::cache_dir(&root).join(crate::dyldcache::CACHE_NAME).exists();
-            Some(Runtime { jc: crate::sim::jc_for(&root), version: parts[1].to_string(), build: parts[2].to_string(), restricted_to: crate::sim::runtime_restricted_to(&root), dir, root, present, partial: !present })
+            Some(Runtime { jc: crate::sim::jc_for(&root), platform: platform.to_string(), version, build, restricted_to: crate::sim::runtime_restricted_to(&root), dir, root, present, partial: !present })
         })
         .collect();
     // within a version a runtime limited to some models (the iPhone Duo's 27.2 build) after the general one
-    v.sort_by(|a, b| a.version.cmp(&b.version).then(a.restricted_to.is_empty().cmp(&b.restricted_to.is_empty()).reverse()).then(a.build.cmp(&b.build)));
+    // Platforms 1: iOS, then tvOS, then watchOS
+    let rank = |p: &str| crate::sim::PLATFORMS.iter().position(|x| *x == p).unwrap_or(0);
+    v.sort_by(|a, b| rank(&a.platform).cmp(&rank(&b.platform)).then(a.version.cmp(&b.version)).then(a.restricted_to.is_empty().cmp(&b.restricted_to.is_empty()).reverse()).then(a.build.cmp(&b.build)));
     v
 }
 
@@ -49,17 +57,25 @@ pub struct Catalogue {
     pub build: String,
     pub name: String,
     pub gb: f64,
+    /// Platforms 1: "ios", "tvos" or "watchos" (from the name: "tvOS 27.2 Simulator Runtime"); absent in older caches
+    #[serde(default = "ios")]
+    pub platform: String,
 }
 
-/// Apple's catalogue (network; `x86sim runtime list`), cached in scratch
+fn ios() -> String {
+    "ios".into()
+}
+
+/// Apple's catalogue (network; `x86sim runtime list all`: iOS, tvOS and watchOS), cached in scratch
 pub fn catalogue(refresh: bool) -> Vec<Catalogue> {
-    let cache = scratch().join("launcher-runtimes.json");
+    // Platforms 1: a new file name, so a cache of the iOS-only list is not taken for the whole catalogue
+    let cache = scratch().join("launcher-runtimes-all.json");
     if !refresh {
         if let Some(v) = std::fs::read(&cache).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
             return v;
         }
     }
-    let out = Command::new(repo_root().join("cli/x86sim")).args(["runtime", "list"]).stdin(Stdio::null()).output();
+    let out = Command::new(repo_root().join("cli/x86sim")).args(["runtime", "list", "all"]).stdin(Stdio::null()).output();
     let mut v = vec![];
     if let Ok(o) = out {
         for l in String::from_utf8_lossy(&o.stdout).lines() {
@@ -73,7 +89,8 @@ pub fn catalogue(refresh: bool) -> Vec<Catalogue> {
             let gb = gb_i.checked_sub(1).and_then(|i| f.get(i)).and_then(|x| x.parse().ok()).unwrap_or(0.0);
             let name = f[1..gb_i.saturating_sub(1)].join(" ");
             let version = name.split_whitespace().find(|w| w.starts_with("27")).unwrap_or("").to_string();
-            v.push(Catalogue { version, build, name, gb });
+            let platform = if name.starts_with("tvOS") { "tvos" } else if name.starts_with("watchOS") { "watchos" } else { "ios" }.to_string();
+            v.push(Catalogue { version, build, name, gb, platform });
         }
     }
     if !v.is_empty() {

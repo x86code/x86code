@@ -437,7 +437,7 @@ impl eframe::App for App {
             self.first_boot_retried.insert(id.clone());
             let name = self.inst(&id).map(|i| i.name.clone()).unwrap_or_default();
             self.restart(&id);
-            self.say(format!("{name}'s first start stalled while iOS set up its apps. Restarting it once (this is expected for a new phone)."));
+            self.say(format!("{name}'s first start stalled while it set up its apps. Restarting it once (this is expected for a new phone)."));
         }
         // thumbnails and the open phone's screen only: everything else sleeps
         let open_id = if let View::Phone(id) = &self.view { Some(id.clone()) } else { None };
@@ -473,7 +473,7 @@ impl eframe::App for App {
                 if nav_item(ui, icon::SQUARES_FOUR, "Phones", on_phones, &if n > 0 { n.to_string() } else { String::new() }, "Ctrl+1") {
                     self.view = View::Home;
                 }
-                if nav_item(ui, icon::DOWNLOAD_SIMPLE, "iOS versions", self.view == View::Ios, "", "Ctrl+2") {
+                if nav_item(ui, icon::DOWNLOAD_SIMPLE, "Versions", self.view == View::Ios, "", "Ctrl+2") {
                     self.view = View::Ios;
                     self.runtimes = host::runtimes();
                 }

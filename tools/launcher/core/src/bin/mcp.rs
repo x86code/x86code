@@ -24,7 +24,7 @@ fn tools() -> Value {
          "inputSchema": {"type": "object", "properties": {"name": {"type": "string", "enum": ["full", "lean", "minimal"]}, "phone": phone}, "required": ["name"]}},
         {"name": "sim_devices", "description": "Phones (folder, label with phone model, iOS), the phone models a new phone can be and the installed iOS versions.",
          "inputSchema": {"type": "object", "properties": {}}},
-        {"name": "sim_add_device", "description": "Make a new phone of a model (see sim_devices models), optional name and iOS version (ios, e.g. \"27.2\", or a build such as \"24B91016s\"; see sim_devices runtimes; a model with a runtime of its own, the iPhone Duo's 24B91016s, gets that one). Start it with sim_start phone=<name>. Its first start can take a few minutes.",
+        {"name": "sim_add_device", "description": "Make a new phone of a model (see sim_devices models), optional name and version (ios, e.g. \"27.2\": iOS for an iPhone or iPad, tvOS for an Apple TV, watchOS for an Apple Watch, or a build such as \"24B91016s\"; see sim_devices runtimes; a model with a runtime of its own, the iPhone Duo's 24B91016s, gets that one). Start it with sim_start phone=<name>. Its first start can take a few minutes.",
          "inputSchema": {"type": "object", "properties": {"model": {"type": "string"}, "name": {"type": "string"}, "ios": {"type": "string"}}, "required": ["model"]}},
         {"name": "sim_start", "description": "Start a phone (its own container, so other phones keep running). Returns at once; poll phones_list for state running.", "inputSchema": {"type": "object", "properties": {"phone": phone}}},
         {"name": "sim_fold", "description": "Fold or unfold a two-screen phone (iPhone Duo): open=true opens it flat (the large inner screen takes over), open=false closes it (the outer screen); or angle in degrees (0 closed .. 180 flat; SpringBoard swaps screens at 85). The hinge moves over ms (default 600) as a hand would.",
@@ -76,13 +76,20 @@ fn call(name: &str, a: &Value) -> anyhow::Result<Value> {
         // first and never for others
         let model = a["model"].as_str().unwrap_or("");
         let model_id = sim::models().into_iter().find(|m| m.0 == model || m.1 == model).map(|m| m.1).unwrap_or_default();
-        let cands: Vec<_> = sim::runtimes().into_iter().filter(|r| r.0.starts_with(&format!("iOS {want} ")) || r.0.contains(want)).filter(|r| sim::runtime_allows(&r.1, &model_id)).collect();
+        // Platforms 1: only runtimes of the model's platform (an Apple TV takes tvOS, an Apple Watch watchOS)
+        let pname = sim::platform_name(sim::model_platform(&model_id));
+        let cands: Vec<_> = sim::runtimes()
+            .into_iter()
+            .filter(|r| r.0.starts_with(&format!("{pname} ")))
+            .filter(|r| r.0.starts_with(&format!("{pname} {want} ")) || r.0.contains(want))
+            .filter(|r| sim::runtime_allows(&r.1, &model_id))
+            .collect();
         let rt = cands
             .iter()
             .find(|r| !sim::runtime_restricted_to(&r.1).is_empty())
             .or(cands.first())
             .map(|r| r.1.clone())
-            .ok_or_else(|| anyhow::anyhow!("no iOS {want} installed for {model} (see sim_devices runtimes)"))?;
+            .ok_or_else(|| anyhow::anyhow!("no {pname} {want} installed for {model} (see sim_devices runtimes)"))?;
         return Ok(json!({"device": sim::create_device(a["model"].as_str().unwrap_or(""), a["name"].as_str().unwrap_or(""), &rt)?}));
     }
     let inst = phone_of(a, &cfg)?;

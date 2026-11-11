@@ -29,7 +29,9 @@ impl App {
 
     pub fn open_add_dialog(&mut self) {
         // the newest installed iOS (one limited to some models, the iPhone Duo's 27.2 build, only when one is chosen)
-        let rt = self.runtimes.iter().rposition(|r| r.present && r.restricted_to.is_empty()).unwrap_or(0);
+        // (Platforms 1: of the first model's platform: an iPhone, so iOS)
+        let mp = self.models.first().map(|m| x86sim_core::sim::model_platform(&m.1)).unwrap_or("ios");
+        let rt = self.runtimes.iter().rposition(|r| r.present && r.restricted_to.is_empty() && r.platform == mp).unwrap_or(0);
         self.add = Some(AddDialog { model: 0, last_model: 0, runtime: rt, name: String::new(), busy: Arc::new(Mutex::new(None)), working: false });
     }
 
@@ -42,7 +44,7 @@ impl App {
             (n, r) => format!("{n} phone{} · {r} running", if n == 1 { "" } else { "s" }),
         };
         let mut add = false;
-        let sorts = [("name", "Name"), ("newest", "Newest first"), ("oldest", "Oldest first"), ("model", "Model"), ("ios", "iOS version")];
+        let sorts = [("name", "Name"), ("newest", "Newest first"), ("oldest", "Oldest first"), ("model", "Model"), ("ios", "Version")];
         let mut sort = self.hub.sort.clone();
         page_header(ui, "Phones", &subtitle, |ui| {
             add = ui.add(Btn::primary("Add phone").icon(icon::PLUS)).on_hover_text("Ctrl+N").clicked();
@@ -111,7 +113,7 @@ impl App {
         if !ready.is_empty() {
             ui.add_space(S3);
         }
-        section(ui, "Waiting for an iOS download", |_| {});
+        section(ui, "Waiting for a download", |_| {});
         let cat = self.catalogue.lock().unwrap().clone().unwrap_or_default();
         let mut open = None;
         let mut fetch = None;
@@ -208,6 +210,10 @@ impl App {
             let inner = well.shrink2(egui::vec2(S4, S4));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Center)));
             if let Some(v) = self.viewer(id) {
+                // Platforms 1: centred in the well whatever its shape (a TV is wide, a phone tall)
+                let (sw, sh) = (v.screen.0.max(1) as f32, v.screen.1.max(1) as f32);
+                let fit = ((inner.width() - 10.0) / sw).min((inner.height() - 10.0) / sh).max(0.01);
+                child.add_space(((inner.height() - (sh * fit + 10.0)) / 2.0).max(0.0));
                 v.show(&mut child, inner.size(), live, placeholder, false, viewer::THUMB);
             }
             let wresp = wresp.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -335,38 +341,59 @@ impl App {
                     }
                 });
                 ui.add_space(S3);
-                ui.label(egui::RichText::new("iOS version").size(T_SMALL).family(medium()).color(INK_2));
+                // Platforms 1: an Apple TV takes a tvOS runtime, an Apple Watch a watchOS one
+                let mid = self.models.get(d.model).map(|m| m.1.clone()).unwrap_or_default();
+                let mp = x86sim_core::sim::model_platform(&mid);
+                let pname = x86sim_core::sim::platform_name(mp);
+                ui.label(egui::RichText::new(format!("{pname} version")).size(T_SMALL).family(medium()).color(INK_2));
                 // Models 2: a runtime limited to some models (iOS 27.2 24B91016s: iPhone Duo) is picked for them and
                 // greyed out for the others
-                let mid = self.models.get(d.model).map(|m| m.1.clone()).unwrap_or_default();
-                let fits = |r: &x86sim_core::host::Runtime| r.restricted_to.is_empty() || r.restricted_to.contains(&mid);
+                let fits = |r: &x86sim_core::host::Runtime| r.platform == mp && (r.restricted_to.is_empty() || r.restricted_to.contains(&mid));
                 if d.model != d.last_model {
                     d.last_model = d.model;
-                    if let Some(i) = self.runtimes.iter().position(|r| r.present && r.restricted_to.contains(&mid)) {
+                    if let Some(i) = self.runtimes.iter().position(|r| r.present && r.platform == mp && r.restricted_to.contains(&mid)) {
                         d.runtime = i;
                     } else if !self.runtimes.get(d.runtime).is_some_and(|r| fits(r)) {
-                        d.runtime = self.runtimes.iter().rposition(|r| r.present && r.restricted_to.is_empty()).unwrap_or(0);
+                        d.runtime = self.runtimes.iter().rposition(|r| r.present && r.platform == mp && r.restricted_to.is_empty()).unwrap_or(usize::MAX);
                     }
                 }
                 let label = |r: &x86sim_core::host::Runtime| {
                     let only = if r.restricted_to.is_empty() { String::new() } else { format!(" ({}) · {} only", r.build, r.restricted_to.join(", ")) };
-                    if r.present { format!("iOS {}{only}", r.version) } else { format!("iOS {}{only} · not installed", r.version) }
+                    if r.present { format!("{}{only}", r.label()) } else { format!("{}{only} · not installed", r.label()) }
                 };
-                egui::ComboBox::from_id_salt("addrt").icon(caret).width(fw).selected_text(body(self.runtimes.get(d.runtime).map(label).unwrap_or("None installed".into()))).show_ui(ui, |ui| {
-                    for (i, r) in self.runtimes.iter().enumerate() {
-                        ui.add_enabled_ui(r.present && fits(r), |ui| {
-                            ui.selectable_value(&mut d.runtime, i, label(r));
-                        });
-                    }
-                });
+                let have = self.runtimes.iter().any(|r| r.present && fits(r));
+                if have {
+                    egui::ComboBox::from_id_salt("addrt").icon(caret).width(fw).selected_text(body(self.runtimes.get(d.runtime).filter(|r| fits(r)).map(label).unwrap_or("Pick one".into()))).show_ui(ui, |ui| {
+                        for (i, r) in self.runtimes.iter().enumerate().filter(|(_, r)| r.platform == mp) {
+                            ui.add_enabled_ui(r.present && fits(r), |ui| {
+                                ui.selectable_value(&mut d.runtime, i, label(r));
+                            });
+                        }
+                    });
+                } else {
+                    // none of this platform installed: offer its default build
+                    let (ver, build) = x86sim_core::sim::platform_default_build(mp);
+                    let what = format!("{pname} {ver}");
+                    ui.horizontal(|ui| {
+                        if let Some(f) = self.fetching.get(build) {
+                            ui.spinner();
+                            ui.label(muted(format!("{what}: {}", fetch_line(f))));
+                        } else {
+                            ui.label(muted(format!("{pname} isn't installed yet.")));
+                            if ui.add(Btn::secondary(&format!("Download {what}")).icon(icon::DOWNLOAD_SIMPLE)).clicked() {
+                                self.download(build, &what);
+                            }
+                        }
+                    });
+                }
                 ui.add_space(S3);
                 ui.label(egui::RichText::new("Name").size(T_SMALL).family(medium()).color(INK_2));
                 let r = ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(egui::RichText::new("Optional, e.g. Test phone").color(INK_3)).desired_width(fw).margin(egui::Margin::symmetric(8, 6)));
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && self.runtimes.get(d.runtime).is_some_and(|r| r.present) && !d.working {
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && self.runtimes.get(d.runtime).is_some_and(|r| r.present && fits(r)) && !d.working {
                     create = true;
                 }
                 ui.add_space(S3);
-                ui.label(muted("The first start takes a few minutes while iOS sets itself up."));
+                ui.label(muted(format!("The first start takes a few minutes while {pname} sets itself up.")));
                 ui.add_space(S4);
                 ui.horizontal(|ui| {
                     if d.working {
@@ -374,7 +401,7 @@ impl App {
                         ui.label(muted("Setting it up…"));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let ok = self.runtimes.get(d.runtime).is_some_and(|r| r.present) && !d.working;
+                        let ok = self.runtimes.get(d.runtime).is_some_and(|r| r.present && fits(r)) && !d.working;
                         if ui.add_enabled(ok, Btn::primary("Add phone").min_w(96.0)).clicked() {
                             create = true;
                         }

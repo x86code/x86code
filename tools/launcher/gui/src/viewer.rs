@@ -54,6 +54,15 @@ pub struct Viewer {
     wheel: Option<((f32, f32), std::time::Instant)>,
     /// Shift as the phone knows it
     shift_held: bool,
+    /// Platforms 1: an Apple Watch: the mouse wheel turns its Digital Crown (host/simhid "crown")
+    pub crown: bool,
+    /// Platforms 1: an Apple TV: no touchscreen; a click is the remote's select, the wheel moves focus (the Siri
+    /// Remote's touch surface), F1 the TV button
+    pub remote: bool,
+    /// the wheel distance not yet sent as an arrow key (remote)
+    wheel_acc: egui::Vec2,
+    /// Platforms 1: the screen's corner radius as a fraction of its width (a TV's is square, a watch's rounder)
+    pub corner: f32,
 }
 
 /// How a frame is shrunk to the size it is drawn at (per phone: launcher.json "scaling", Advanced > Screen scaling)
@@ -185,7 +194,11 @@ impl Viewer {
                 }
             })
             .expect("ring thread");
-        Viewer { shared, tex: None, tex_seq: 0, hid: hid::Hid::new(&inst.sock), touching: false, last_norm: (0.0, 0.0), focused: false, screen: inst.screen, id: inst.id.clone(), pinch: false, pan2: false, wheel: None, shift_held: false }
+        Viewer { shared, tex: None, tex_seq: 0, hid: hid::Hid::new(&inst.sock), touching: false, last_norm: (0.0, 0.0), focused: false, screen: inst.screen, id: inst.id.clone(), pinch: false, pan2: false, wheel: None, shift_held: false,
+            crown: inst.model_id.starts_with("Watch"),
+            remote: inst.model_id.starts_with("AppleTV"),
+            wheel_acc: egui::Vec2::ZERO,
+            corner: if inst.model_id.starts_with("AppleTV") { 0.0 } else if inst.model_id.starts_with("Watch") { 0.22 } else { 0.11 } }
     }
 
     /// Follow the phone's current ring (sim.env after its last boot); a change drops the old ring's picture.
@@ -253,7 +266,11 @@ impl Viewer {
         let (sw, sh) = (self.screen.0 as f32, self.screen.1 as f32);
         let bezel = if mode == FULL { 10.0 } else { 5.0 };
         let inner = avail - egui::vec2(2.0 * bezel, 2.0 * bezel);
-        let scale = (inner.x / sw).min(inner.y / sh).max(0.01);
+        // Platforms 1: a watch's small screen is not blown up past 1.5 points a pixel (the rest of the area stays free)
+        let mut scale = (inner.x / sw).min(inner.y / sh).max(0.01);
+        if self.crown && mode == FULL {
+            scale = scale.min(1.5);
+        }
         let size = egui::vec2(sw * scale, sh * scale);
         // in physical pixels: on a HiDPI screen (2 pixels a point) a frame shrunk to the size in points was blown up 2x
         self.shared.target_w.store((size.x * ui.ctx().pixels_per_point()).ceil() as u32, Ordering::Relaxed);
@@ -261,7 +278,7 @@ impl Viewer {
         let (rect, resp) = ui.allocate_exact_size(outer, if interactive { egui::Sense::click_and_drag() } else { egui::Sense::hover() });
         let screen = rect.shrink(bezel);
         let p = ui.painter();
-        let radius = (size.x * 0.11).max(4.0);
+        let radius = (size.x * self.corner).max(4.0);
         p.rect_filled(rect, radius + bezel * 0.7, BEZEL);
         p.rect_stroke(rect, radius + bezel * 0.7, egui::Stroke::new(1.0_f32, BORDER_STRONG), egui::StrokeKind::Inside);
         match (&self.tex, live) {
@@ -296,7 +313,10 @@ impl Viewer {
                 if resp.rect.contains(p) {
                     self.focused = true;
                     ui.memory_mut(|m| m.request_focus(resp.id));
-                    if live {
+                    if live && self.remote {
+                        self.hid.key(true, 0x28);
+                        self.touching = true;
+                    } else if live {
                         let (x, y) = norm(p);
                         self.last_norm = (x, y);
                         self.touching = true;
@@ -314,7 +334,30 @@ impl Viewer {
                 }
             }
         }
-        if self.touching && moving {
+        if self.remote {
+            if self.touching && released {
+                self.touching = false;
+                self.hid.key(false, 0x28);
+            }
+            // the wheel / touchpad as the remote's touch surface: an arrow key a notch (40 points of scroll)
+            if live {
+                let (delta, hover) = ctx.input(|i| (i.raw_scroll_delta, i.pointer.hover_pos()));
+                if delta != egui::Vec2::ZERO && hover.is_some_and(|p| screen.contains(p)) {
+                    self.wheel_acc += delta;
+                    const NOTCH: f32 = 40.0;
+                    while self.wheel_acc.y.abs() >= NOTCH || self.wheel_acc.x.abs() >= NOTCH {
+                        // content follows the wheel: wheel down (negative y) = focus down
+                        let u = if self.wheel_acc.y <= -NOTCH { self.wheel_acc.y += NOTCH; 0x51 }
+                            else if self.wheel_acc.y >= NOTCH { self.wheel_acc.y -= NOTCH; 0x52 }
+                            else if self.wheel_acc.x <= -NOTCH { self.wheel_acc.x += NOTCH; 0x4f }
+                            else { self.wheel_acc.x -= NOTCH; 0x50 };
+                        self.hid.key(true, u);
+                        self.hid.key(false, u);
+                    }
+                }
+            }
+        }
+        if !self.remote && self.touching && moving {
             if let Some(p) = pos {
                 let (x, y) = norm(p);
                 let (x, y) = (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0));
@@ -328,7 +371,7 @@ impl Viewer {
                 }
             }
         }
-        if self.touching && released {
+        if !self.remote && self.touching && released {
             self.touching = false;
             let (x, y) = self.last_norm;
             if self.pinch || self.pan2 {
@@ -339,8 +382,16 @@ impl Viewer {
             self.pinch = false;
             self.pan2 = false;
         }
+        // Platforms 1: on an Apple Watch the wheel turns the Digital Crown (as Apple's Simulator and simview.py do):
+        // wheel down / content up = crown towards the bottom (positive)
+        if live && self.crown {
+            let (delta, hover) = ctx.input(|i| (i.raw_scroll_delta, i.pointer.hover_pos()));
+            if delta.y != 0.0 && hover.is_some_and(|p| screen.contains(p)) {
+                self.hid.crown(-delta.y * 0.16);
+            }
+        }
         // mouse wheel / touchpad scroll over the screen: a finger dragging the content (lifted after a short pause)
-        if live && !self.touching {
+        if live && !self.touching && !self.crown && !self.remote {
             let (delta, hover) = ctx.input(|i| (i.raw_scroll_delta, i.pointer.hover_pos()));
             let over = hover.is_some_and(|p| screen.contains(p));
             if delta != egui::Vec2::ZERO && over {
@@ -383,6 +434,7 @@ impl Viewer {
             let mut buttons: Vec<(&'static str, bool)> = vec![];
             let mut paste = String::new();
             let shift_now = ctx.input(|i| i.modifiers.shift);
+            let remote = self.remote;
             ctx.input_mut(|i| {
                 i.events.retain(|e| match e {
                     egui::Event::Key { key, pressed, repeat, modifiers, .. } => {
@@ -390,6 +442,10 @@ impl Viewer {
                             return false;
                         }
                         match *key {
+                            // Platforms 1: an Apple TV's F1 is the TV button, F2 play/pause (its power button only
+                            // sleeps the TV); a watch's F1 presses the crown, F2 the side button
+                            egui::Key::F1 if remote => buttons.push(("tv", *pressed)),
+                            egui::Key::F2 if remote => buttons.push(("playpause", *pressed)),
                             egui::Key::F1 => buttons.push(("home", *pressed)),
                             egui::Key::F2 => buttons.push(("lock", *pressed)),
                             egui::Key::F3 => buttons.push(("volup", *pressed)),
@@ -488,6 +544,17 @@ impl Viewer {
 
     pub fn hold(&self, button: &str, ms: u64) {
         self.hid.hold(button, ms);
+    }
+
+    /// Platforms 1: a key tapped (the TV remote's arrows and select are the keyboard's)
+    pub fn tap_key(&mut self, usage: u32) {
+        self.hid.key(true, usage);
+        self.hid.key(false, usage);
+    }
+
+    /// Platforms 1: the Digital Crown turned by `delta` (host/simhid "crown"; positive scrolls towards the bottom)
+    pub fn crown(&mut self, delta: f32) {
+        self.hid.crown(delta);
     }
 
     /// Saves the screen at full resolution, upright, as Simulator's File > Save Screen does: "<name> <date> at

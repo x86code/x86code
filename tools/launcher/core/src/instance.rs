@@ -25,8 +25,10 @@ pub struct Instance {
     pub runtime_root: PathBuf,
     /// the runtime's dyld cache is on disk (a 0-byte RuntimeRoot after a data loss is not)
     pub runtime_present: bool,
-    /// "iOS 27.2"
+    /// "iOS 27.2" (Platforms 1: "tvOS 27.2", "watchOS 27.2")
     pub ios: String,
+    /// Platforms 1: "ios", "tvos" or "watchos" (the runtime's, else the model's)
+    pub platform: String,
     pub build: String,
     pub screen: (u32, u32),
     pub scale: f32,
@@ -131,13 +133,22 @@ pub fn load(dir: &Path) -> Instance {
     let env = env_of(dir);
     let name = std::fs::read_to_string(dir.join("name")).map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| default_name(sfx));
     let model_id = env.get("SIMULATOR_MODEL_IDENTIFIER").cloned().unwrap_or_default();
-    let model = crate::sim::models().into_iter().find(|m| m.1 == model_id).map(|m| m.0).unwrap_or_else(|| if model_id.is_empty() { "iPhone".into() } else { model_id.clone() });
+    // <device>/model names the device type (device-a64.py create): models sharing an identifier (Apple TV 4K and its
+    // "at 1080p" variant) are told apart by it
+    let model_file = std::fs::read_to_string(dir.join("model")).map(|s| s.trim().to_string()).unwrap_or_default();
+    let models = crate::sim::models();
+    let model = models
+        .iter()
+        .find(|m| m.0 == model_file && m.1 == model_id)
+        .or_else(|| models.iter().find(|m| m.1 == model_id))
+        .map(|m| m.0.clone())
+        .unwrap_or_else(|| if model_id.is_empty() { "iPhone".into() } else { model_id.clone() });
     let runtime_dir = std::fs::read_to_string(dir.join("runtime")).map(|s| s.trim().to_string()).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "ios-27.2-24B8117-arm64".into());
     let runtime_root = repo_root().join("runtimes").join(&runtime_dir).join("RuntimeRoot");
     let runtime_present = crate::dyldcache::Cache::cache_dir(&runtime_root).join(crate::dyldcache::CACHE_NAME).exists();
-    let (ios, build) = match runtime_dir.split('-').collect::<Vec<_>>()[..] {
-        ["ios", v, b, ..] => (format!("iOS {v}"), b.to_string()),
-        _ => (runtime_dir.clone(), String::new()),
+    let (ios, build, platform) = match crate::sim::parse_runtime_dir(&runtime_dir) {
+        Some((p, v, b)) => (format!("{} {v}", crate::sim::platform_name(p)), b, p.to_string()),
+        None => (runtime_dir.clone(), String::new(), crate::sim::model_platform(&model_id).to_string()),
     };
     let w = env.get("SIMULATOR_MAINSCREEN_WIDTH").and_then(|v| v.parse().ok()).unwrap_or(1206);
     let h = env.get("SIMULATOR_MAINSCREEN_HEIGHT").and_then(|v| v.parse().ok()).unwrap_or(2622);
@@ -163,6 +174,7 @@ pub fn load(dir: &Path) -> Instance {
         runtime_present,
         ios,
         build,
+        platform,
         screen: (w, h),
         scale,
         ring,
@@ -182,7 +194,11 @@ pub fn load(dir: &Path) -> Instance {
 pub fn sort(v: &mut [Instance], by: &str) {
     let models = crate::sim::models();
     let model_rank = |i: &Instance| models.iter().position(|m| m.1 == i.model_id && m.0 == i.model).or_else(|| models.iter().position(|m| m.1 == i.model_id)).unwrap_or(usize::MAX);
-    let ios = |i: &Instance| -> Vec<u32> { i.ios.trim_start_matches("iOS ").split('.').map(|n| n.parse().unwrap_or(0)).collect() };
+    // version numbers, whatever the platform ("tvOS 27.2"); a platform's devices together (iOS, tvOS, watchOS)
+    let ios = |i: &Instance| -> (std::cmp::Reverse<usize>, Vec<u32>) {
+        let rank = crate::sim::PLATFORMS.iter().position(|p| *p == i.platform).unwrap_or(0);
+        (std::cmp::Reverse(rank), i.ios.rsplit(' ').next().unwrap_or("").split('.').map(|n| n.parse().unwrap_or(0)).collect())
+    };
     let name = |a: &Instance, b: &Instance| a.name.to_lowercase().cmp(&b.name.to_lowercase());
     v.sort_by(|a, b| {
         match by {

@@ -92,6 +92,11 @@ impl Hid {
         self.send(&format!("hinge {deg:.1} {ms}"));
     }
 
+    /// Platforms 1: turns an Apple Watch's Digital Crown by `delta` (positive: towards the bottom), host/simhid "crown"
+    pub fn crown(&mut self, delta: f32) {
+        self.send(&format!("crown {delta:.2} y"));
+    }
+
     pub fn key(&mut self, down: bool, usage: u32) {
         self.send(&format!("key {} {usage}", if down { "down" } else { "up" }));
     }
