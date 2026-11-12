@@ -637,8 +637,8 @@ static void h_exit(GuestThread &t, u32 i) {  // __exit: the guest process ends h
 // 1/1 (mach time in ns). Code compiled for arm64 inlines 125/3 in places (libswift_Concurrency's deadline conversion,
 // libdispatch's dispatch_time_to_nsecs/_from_nsec), so with 1/1 those deadlines were ~41x off. Values cross at the
 // thunks: returned mach times are scaled down (ns * 3 / 125), mach-time arguments up (ticks * 125 / 3) before Darling
-// sees them (mach_wait_until, mk_timer_arm*, EVFILT_TIMER with NOTE_MACHTIME, and the changes workqueue threads hand
-// back). CNTVCT_EL0 counts at 24 MHz (jit.cpp). Default since Speed 11; X86SIM_A64_TIMEBASE=1to1 gives the guest
+// sees them (mach_wait_until, mk_timer_arm*, mach_eventlink_*wait_until, EVFILT_TIMER with NOTE_MACHTIME, and the
+// changes workqueue threads hand back). CNTVCT_EL0 counts at 24 MHz (jit.cpp). Default since Speed 11; X86SIM_A64_TIMEBASE=1to1 gives the guest
 // Darling's 1/1 again (with the Swift deadline patch, jit.cpp; rebuild the image).
 bool strict_monitor() {
     static const bool on = getenv("X86SIM_A64_STRICT_MONITOR") && atoi(getenv("X86SIM_A64_STRICT_MONITOR")) == 1;
@@ -749,6 +749,10 @@ static Handler timebase_handler(const std::string &n) {
         {"_mach_timebase_info", h_tb_info}, {"_mach_timebase_info_trap", h_tb_info}, {"_mach_get_times", h_tb_get_times},
         {"_mk_timer_cancel", h_tb_out<1>}, {"_mach_wait_until", h_tb_in<0>}, {"_mk_timer_arm", h_tb_in<1>},
         {"_mk_timer_arm_leeway", h_tb_in<2, 3>},
+        // x86Sim: mach eventlink deadlines (os_eventlink: AUAudioUnit's out-of-process render pipe); unconverted, the
+        // 24 MHz guest deadline was already past in Darling's ns clock and every render wait timed out at once
+        {"_mach_eventlink_wait_until", h_tb_in<4>}, {"_mach_eventlink_signal_wait_until", h_tb_in<5>},
+        {"___mach_eventlink_wait_until", h_tb_in<2>}, {"___mach_eventlink_signal_wait_until", h_tb_in<3>},
         {"_kevent", h_tb_kevent<32, 12, 16, -1>}, {"_kevent64", h_tb_kevent<48, 12, 16, 40>},
         {"_kevent_qos", h_tb_kevent<72, 24, 32, 48>}, {"_kevent_id", h_tb_kevent<72, 24, 32, 48>},
     };
