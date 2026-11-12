@@ -315,6 +315,13 @@ def main():
         disp[0]["width"], disp[0]["height"] = int(dt["w"]), int(dt["h"])
         sd = caps["capabilities"].get("ScreenDimensionsCapability", {})
         sd["main-screen-width"], sd["main-screen-height"] = dt["w"], dt["h"]
+    # x86Sim: no always-on display. With always-on-time (iPhone Pro, Apple Watch) a sleeping device's dimmed lock
+    # screen / watch face is rendered ahead as a flipbook, one frame per coming minute, which the hardware shows when
+    # each minute arrives. SimFramebuffer shows every frame as it is drawn, so the asleep screen (and the first frame
+    # after waking) showed clocks minutes ahead, then the real time. Asleep is now a dark screen, as on a phone
+    # without always-on. X86SIM_ALWAYS_ON=1 keeps the device type's value.
+    if os.environ.get("X86SIM_ALWAYS_ON") != "1" and "always-on-time" in caps.get("capabilities", {}):
+        caps["capabilities"]["always-on-time"] = False
     with open(capabilities, "wb") as f:
         plistlib.dump(caps, f)
     # Stand-in for the host's configd: configd_sim's SimulatorSupport plugin opens the
