@@ -17,6 +17,11 @@
 #import <Metal/Metal.h>
 #import <IOSurface/IOSurfaceRef.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
+// The iOS / tvOS / watchOS simulator SDKs' Metal headers leave MTLSharedTextureHandle out (the visionOS one has it);
+// the class is in every runtime's Metal and only used here as a pointer type.
+@class MTLSharedTextureHandle;
+#import <mach/mach.h>
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
@@ -424,6 +429,7 @@ static size_t vk_region_bytes(MTLPixelFormat f, MTLRegion r, NSUInteger bpr, NSU
 	NSUInteger _bufOffset, _bufBPR;
 	IOSurfaceRef _iosurface; // retained
 	NSUInteger _plane;
+	IOSurfaceRef _shareToken; // Platforms 2: newSharedTextureWithDescriptor:'s handle identity (retained), see there
 	// x86Sim: texture views: the parent (retained) and where the view starts in it
 	id _parent;
 	NSUInteger _parentLevel, _parentSlice;
@@ -480,9 +486,28 @@ static uint32_t vk_swizzle_bits(MTLTextureSwizzleChannels s) {
 - (BOOL)isFramebufferOnly { return NO; }
 - (BOOL)allowGPUOptimizedContents { return _allowOpt; }
 - (MTLTextureSwizzleChannels)swizzle { return _swizzle; }
-- (BOOL)isShareable { return NO; }
+- (BOOL)isShareable { return _iosurface != NULL || _shareToken != NULL; }  // Platforms 2
+- (NSUInteger)protectionOptions { return 0; }
 - (BOOL)isSparse { return NO; }
-- (IOSurfaceRef)iosurface { return _iosurface; }
+- (IOSurfaceRef)iosurface { return _iosurface ?: _shareToken; }  // Platforms 2: MTLSimDriver rebuilds a shared texture from it
+// Platforms 2: a shared texture's handle is its IOSurface (Metal's MTLSharedTextureHandle sends the surface's port)
+- (MTLSharedTextureHandle*)newSharedTextureHandle {
+	IOSurfaceRef s = _shareToken ?: _iosurface;
+	if (!s) return nil;
+	// Metal's -initWithIOSurface:label: checks the surface's kMetalRegistryID against its own device lookup, which here
+	// answers nil; its _priv ({surface, device, label}) is filled in directly (its encodeWithCoder: sends the surface's
+	// port; the receiving process's Metal reads kMetalRegistryID, set in newSharedTextureWithDescriptor:)
+	Class hc = objc_getClass("MTLSharedTextureHandle");
+	Ivar iv = class_getInstanceVariable(hc, "_priv");
+	if (!hc || !iv) return nil;
+	id h = class_createInstance(hc, 0);
+	struct { IOSurfaceRef surface; id device; id label; }* pv = calloc(1, 3 * sizeof(void*));
+	pv->surface = (IOSurfaceRef)CFRetain(s);
+	pv->device = [g_device retain];
+	pv->label = [_label copy];
+	*(void**)((char*)h + ivar_getOffset(iv)) = pv;
+	return (MTLSharedTextureHandle*)h;
+}
 - (NSUInteger)iosurfacePlane { return _plane; }
 - (id<MTLTexture>)parentTexture { return _parent; }
 - (id<MTLTexture>)rootResource { return _parent ? [_parent rootResource] ?: _parent : nil; }
@@ -544,6 +569,7 @@ static uint32_t vk_swizzle_bits(MTLTextureSwizzleChannels s) {
 	[_buffer release];
 	[_parent release];
 	if (_iosurface) CFRelease(_iosurface);
+	if (_shareToken) CFRelease(_shareToken);
 	[super dealloc];
 }
 // x86Sim: a texture over `buffer`'s bytes from `offset` (rows `bpr` apart); an IOSurface's plane when `surface` is set.
@@ -623,12 +649,23 @@ static uint32_t vk_swizzle_bits(MTLTextureSwizzleChannels s) {
 @interface VKMTLSharedEvent : VKMTLObject {
 @public
 	NSMutableArray* _listeners; // [value, block, listener]
+	mach_port_t _port;          // Platforms 2: what newSharedEventHandle hands out (see vk_event_for_port)
 }
 - (void)checkListeners;
 @end
 
 static NSHashTable* g_events; // weak VKMTLSharedEvent with listeners
 static pthread_mutex_t g_events_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Platforms 2 (visionOS): events and textures shared between processes (the compositor, wakeboardd, and its clients:
+// backboardd's RealityKit renderer asked for both and its compositor layer failed, -1000, so nothing was presented).
+// Every client's Metal goes through this process (MTLSimDriver -> metalhostd), so a handle only has to mean something
+// here: an event's handle carries a port this process holds the receive right of (a port keeps its name in a task, so
+// the handle that comes back through another process names the same event); a texture's carries its IOSurface.
+static NSMapTable* g_event_ports;   // port name -> weak VKMTLSharedEvent
+static NSMapTable* g_shared_tex;   // IOSurface ID of a shared texture's handle token -> weak VKMTLTexture
+static pthread_mutex_t g_shared_lock = PTHREAD_MUTEX_INITIALIZER;
+struct vk_event_handle_priv { uint32_t port; id label; uint64_t trace; };   // MTLSharedEventHandle's _priv
 
 @implementation VKMTLSharedEvent
 - (instancetype)initShared:(BOOL)shared {
@@ -642,11 +679,44 @@ static pthread_mutex_t g_events_lock = PTHREAD_MUTEX_INITIALIZER;
 	pthread_mutex_lock(&g_events_lock);
 	[g_events removeObject:self];
 	pthread_mutex_unlock(&g_events_lock);
+	if (_port) {
+		pthread_mutex_lock(&g_shared_lock);
+		[g_event_ports removeObjectForKey:(id)(uintptr_t)_port];
+		pthread_mutex_unlock(&g_shared_lock);
+		mach_port_mod_refs(mach_task_self(), _port, MACH_PORT_RIGHT_RECEIVE, -1);
+	}
 	vk_send(VKMTL_OBJ_DEL, &_vkid, 8);
 	[_listeners release];
 	[super dealloc];
 }
 - (id<MTLDevice>)device { return (id<MTLDevice>)g_device; }
+- (MTLSharedEventHandle*)newSharedEventHandle {
+	pthread_mutex_lock(&g_shared_lock);
+	if (!_port) {
+		mach_port_t p = MACH_PORT_NULL;
+		if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &p) == KERN_SUCCESS &&
+		    mach_port_insert_right(mach_task_self(), p, p, MACH_MSG_TYPE_MAKE_SEND) == KERN_SUCCESS) {
+			_port = p;
+			if (!g_event_ports) g_event_ports = [[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsOpaqueMemory | NSPointerFunctionsOpaquePersonality
+				valueOptions:NSPointerFunctionsWeakMemory] retain];
+			[g_event_ports setObject:self forKey:(id)(uintptr_t)p];
+		}
+	}
+	pthread_mutex_unlock(&g_shared_lock);
+	if (!_port) return nil;
+	// Metal's own handle class (its encodeWithCoder: sends the port), its _priv filled in as Metal would
+	Class hc = objc_getClass("MTLSharedEventHandle");
+	Ivar iv = class_getInstanceVariable(hc, "_priv");
+	if (!hc || !iv) return nil;
+	id h = class_createInstance(hc, 0);
+	struct vk_event_handle_priv* pv = calloc(1, sizeof(*pv));
+	pv->port = _port;
+	pv->label = [_label copy];
+	mach_port_mod_refs(mach_task_self(), _port, MACH_PORT_RIGHT_SEND, 1);   // the handle's own send right
+	*(void**)((char*)h + ivar_getOffset(iv)) = pv;
+	VKLOG("event %llu: shared handle with port %#x", _vkid, _port);
+	return (MTLSharedEventHandle*)h;
+}
 - (uint64_t)signaledValue {
 	uint32_t rs = 0;
 	uint64_t* r = vk_call(VKMTL_EVENT_GET, &_vkid, 8, &rs);
@@ -2016,6 +2086,62 @@ static NSUInteger vk_arg_offset(MTLStructType* st, NSUInteger idx, NSUInteger ba
 }
 - (id<MTLSharedEvent>)newSharedEvent { return (id<MTLSharedEvent>)[[VKMTLSharedEvent alloc] initShared:YES]; }
 - (id<MTLSharedEvent>)newSharedEventWithOptions:(NSUInteger)o { (void)o; return [self newSharedEvent]; }
+// Platforms 2: the event a handle from newSharedEventHandle names (see g_event_ports); an unknown one gets a new event
+- (id<MTLSharedEvent>)newSharedEventWithHandle:(MTLSharedEventHandle*)h {
+	mach_port_t p = h ? (mach_port_t)((uint32_t (*)(id, SEL))objc_msgSend)(h, sel_registerName("eventPort")) : 0;
+	return [self newSharedEventWithMachPort:p];
+}
+// MTLSimDriver sends the handle's port itself: a send right to a port this process made lands under the same name
+- (id<MTLSharedEvent>)newSharedEventWithMachPort:(mach_port_t)p {
+	pthread_mutex_lock(&g_shared_lock);
+	VKMTLSharedEvent* e = p ? [[g_event_ports objectForKey:(id)(uintptr_t)p] retain] : nil;
+	pthread_mutex_unlock(&g_shared_lock);
+	if (!e) VKLOG("newSharedEventWithMachPort: port %u is not one of ours: a new event", p);
+	else VKLOG("newSharedEventWithMachPort: port %#x is event %llu", p, e->_vkid);
+	return (id<MTLSharedEvent>)(e ?: [[VKMTLSharedEvent alloc] initShared:YES]);
+}
+// Platforms 2: a texture other processes can open (newSharedTextureHandle). Every process's Metal is this process, so it is
+// an ordinary texture (any type: the compositor's per-eye 2D arrays, which metal2vulkan can't put over an IOSurface's
+// pages: "can't create Layered Color texture"), and its handle carries a small IOSurface as an identity token:
+// newSharedTextureWithHandle: in any process answers with this same texture.
+- (id<MTLTexture>)newSharedTextureWithDescriptor:(MTLTextureDescriptor*)d {
+	VKMTLTexture* t = (VKMTLTexture*)[self newTextureWithDescriptor:d];
+	VKLOG("newSharedTextureWithDescriptor: type %lu format %lu %lux%lu array %lu storage %lu usage %#lx -> %s",
+		(unsigned long)d.textureType, (unsigned long)d.pixelFormat, (unsigned long)d.width, (unsigned long)d.height,
+		(unsigned long)d.arrayLength, (unsigned long)d.storageMode, (unsigned long)d.usage, t ? "ok" : "nil");
+	if (!t) return nil;
+	// the token has the texture's size (MTLSimDriver's client side builds its texture from the surface)
+	NSUInteger bpr = (d.width * 4 + 63) & ~(NSUInteger)63;
+	NSDictionary* props = @{ (id)kIOSurfaceWidth: @(d.width), (id)kIOSurfaceHeight: @(d.height), (id)kIOSurfaceBytesPerElement: @4,
+		(id)kIOSurfaceBytesPerRow: @(bpr), (id)kIOSurfaceAllocSize: @(bpr * d.height),
+		@"kMetalRegistryID": @(_registryID) };  // read back from the surface's "CreationProperties" (see below)
+	t->_shareToken = IOSurfaceCreate((CFDictionaryRef)props);
+	if (!t->_shareToken) { VKLOG("newSharedTextureWithDescriptor: no IOSurface for the handle"); return (id<MTLTexture>)t; }
+	// Metal's MTLSharedTextureHandle (in every process: the client side builds its own from the surface) takes the
+	// device from kMetalRegistryID in the surface's "CreationProperties" value (the dictionary it was created with) and
+	// answers nil when that is missing or another device's; also set as a plain value for older readers
+	IOSurfaceSetValue(t->_shareToken, CFSTR("kMetalRegistryID"), (CFTypeRef)@(_registryID));
+	pthread_mutex_lock(&g_shared_lock);
+	if (!g_shared_tex) g_shared_tex = [[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsOpaqueMemory | NSPointerFunctionsOpaquePersonality
+		valueOptions:NSPointerFunctionsWeakMemory] retain];
+	[g_shared_tex setObject:t forKey:(id)(uintptr_t)IOSurfaceGetID(t->_shareToken)];
+	VKLOG("shared texture %#llx: token surface %u", t->_vkid, IOSurfaceGetID(t->_shareToken));
+	pthread_mutex_unlock(&g_shared_lock);
+	return (id<MTLTexture>)t;
+}
+- (id<MTLTexture>)newSharedTextureWithHandle:(MTLSharedTextureHandle*)h {
+	IOSurfaceRef s = h ? ((IOSurfaceRef (*)(id, SEL))objc_msgSend)(h, sel_registerName("ioSurface")) : NULL;
+	if (!s) return nil;
+	pthread_mutex_lock(&g_shared_lock);
+	VKMTLTexture* t = [[g_shared_tex objectForKey:(id)(uintptr_t)IOSurfaceGetID(s)] retain];
+	pthread_mutex_unlock(&g_shared_lock);
+	VKLOG("newSharedTextureWithHandle: surface %u -> %s %#llx", IOSurfaceGetID(s), t ? "texture" : "no texture", t ? t->_vkid : 0);
+	if (t) return (id<MTLTexture>)t;
+	// a handle around another process's own IOSurface
+	MTLTextureDescriptor* d = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+		width:IOSurfaceGetWidth(s) height:IOSurfaceGetHeight(s) mipmapped:NO];
+	return [self newTextureWithDescriptor:d iosurface:s plane:0];
+}
 - (id<MTLEvent>)newEvent { return (id<MTLEvent>)[[VKMTLSharedEvent alloc] initShared:NO]; }
 - (id<MTLFence>)newFence { VKMTLFence* f = [[VKMTLFence alloc] init]; f->_vkid = vk_new_id(); return (id<MTLFence>)f; }
 - (id<MTLLibrary>)newLibraryWithData:(dispatch_data_t)data error:(NSError**)error {
@@ -2100,6 +2226,12 @@ static NSUInteger vk_arg_offset(MTLStructType* st, NSUInteger idx, NSUInteger ba
 // x86Sim: stage 5
 - (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor*)d iosurface:(IOSurfaceRef)s plane:(NSUInteger)plane {
 	if (!s) return nil;
+	// Platforms 2: MTLSimDriver opens a shared texture (newSharedTextureWithHandle: in the client) by sending its
+	// handle's surface here: a share token of newSharedTextureWithDescriptor: is that texture itself, not its pages
+	pthread_mutex_lock(&g_shared_lock);
+	VKMTLTexture* shared = g_shared_tex ? [[g_shared_tex objectForKey:(id)(uintptr_t)IOSurfaceGetID(s)] retain] : nil;
+	pthread_mutex_unlock(&g_shared_lock);
+	if (shared) { VKLOG("IOSurface %u is a shared texture's token: that texture", IOSurfaceGetID(s)); return (id<MTLTexture>)shared; }
 	// the surface's memory in this process (mapped from iosurfaced's MemoryObject): a buffer over it (memfd, syscall
 	// 599) and the plane's texture over that buffer -- the GPU renders into the same pages every process maps
 	void* base = IOSurfaceGetBaseAddress(s);

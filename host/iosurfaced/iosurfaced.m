@@ -185,6 +185,9 @@ static uint32_t surfCreate(CFDictionaryRef props, xpc_object_t clientShmem, Surf
 		if (s->mem == MAP_FAILED) { free(s); return kIOReturnNoMemory; }
 	}
 	s->values = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	// the kernel's IOSurface keeps the dictionary it was created with as a value (Metal's MTLSharedTextureHandle reads
+	// kMetalRegistryID from it to find the texture's device)
+	CFDictionarySetValue(s->values, CFSTR("CreationProperties"), props);
 	s->id = gNextID++;
 	if (gNextID == 0) gNextID = 1;
 	s->st.id = s->id;
