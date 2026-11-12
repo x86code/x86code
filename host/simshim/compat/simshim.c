@@ -531,6 +531,142 @@ __attribute__((constructor)) static void shim_re_init(void)
 	_dyld_register_func_for_add_image(shim_re_added);
 }
 
+// x86Sim Platforms 2 (visionOS): SurfBoard blanks the headset like a phone's auto-lock. Without user activity its
+// user-active display assertion lapses right after boot ("Display assertions updated ... displayActive: 0" ->
+// "Transitioning headset to not in use..." -> "Display will blank"), it locks the system and RealitySimulation puts its
+// black reveal dome back over everything ("SurfBoard Display Blank" obscure assertion): the simulator showed black.
+// A simulator display stays on (as the iOS simulator's never auto-locks). X86SIM_XR_BLANK=1 keeps SurfBoard's behavior.
+// -[SFBDisplayController _queue_blankHeadsetIfNeeded:] is objc_direct (no method to swizzle): its first instruction
+// (sub sp, sp, #0x50 at 0x22d278 in SurfBoardFramework 24N120) becomes ret.
+__attribute__((constructor)) static void shim_sfb_init(void)
+{
+	const char* e = getenv("X86SIM_XR_BLANK");
+	if ((e && *e == '1') || strcmp(getprogname(), "SurfBoard"))
+		return;
+	const struct mach_header* mh = NULL;
+	for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+		const char* n = _dyld_get_image_name(i);
+		size_t l = n ? strlen(n) : 0;
+		if (l >= 19 && !strcmp(n + l - 19, "/SurfBoardFramework")) { mh = _dyld_get_image_header(i); break; }
+	}
+	if (!mh) { fprintf(stderr, "simshim: SurfBoardFramework not loaded: headset blank kept\n"); return; }
+	// and -[SFBDisplayController _queue_acquireUserPresentDisplayBlankAssertionIfNeeded] (direct too, 0x22ca34: cbz x0),
+	// which obscures the display while no user presence is detected
+	uint32_t* insn = (uint32_t*)((uintptr_t)mh + 0x22d278);
+	uint32_t* insn2 = (uint32_t*)((uintptr_t)mh + 0x22ca34);
+	if (*insn != 0xd10143ffu || *insn2 != 0xb40006c0u) {
+		fprintf(stderr, "simshim: SurfBoard headset blank not found (%#x %#x): kept\n", *insn, *insn2);
+		return;
+	}
+	uintptr_t page = (uintptr_t)insn2 & ~(uintptr_t)4095;
+	if (mprotect((void*)page, 8192, PROT_READ | PROT_WRITE) != 0) { fprintf(stderr, "simshim: mprotect %d\n", errno); return; }
+	*insn = 0xd65f03c0u;   // ret
+	*insn2 = 0xd65f03c0u;  // ret
+	mprotect((void*)page, 8192, PROT_READ | PROT_EXEC);
+	sys_icache_invalidate(insn2, 0x848);
+	fprintf(stderr, "simshim: SurfBoard never blanks the headset (simulator display stays on)\n");
+}
+
+// x86Sim Platforms 2 (visionOS): a worn headset. SurfBoard counts a user as present from the headset's gaze or
+// proximity signals (in Xcode, Simulator.app feeds gaze samples: -[SFBHeadset _simulator_updateGazeSample:error:]).
+// With neither, the headset is never "in use": the system stays locked from boot ("Performing keybag lock
+// immediately", isLayoutLocked 1), the Digital Crown's Home UI is refused ("Cannot show home when device is not
+// allowing it") and the lock screen never comes up. Here the headset reports proximity, as one being worn does:
+// -[SFBHeadset isProximityPresent] answers YES and the presence monitor gets the don event its headset would send.
+// X86SIM_XR_PRESENCE=0: no simulated wearer.
+static Boolean (*shim_sfb_prox_orig)(id, SEL);
+static id (*shim_sfb_upm_init_orig)(id, SEL, id, id);
+static Boolean shim_sfb_prox(id self, SEL sel)
+{
+	(void) self; (void) sel;
+	return true;
+}
+static id shim_sfb_upm_init(id self, SEL sel, id headset, id queue)
+{
+	id m = shim_sfb_upm_init_orig(self, sel, headset, queue);
+	if (!m || !headset || !queue)
+		return m;
+	SEL don = sel_registerName("headset:proximityPresenceDidChange:timestamp:");
+	Method dm = class_getInstanceMethod(object_getClass(m), don);
+	if (!dm) { write(2, "simshim: SFBUserPresenceMonitor has no proximity handler\n", 57); return m; }
+	char t[16] = { 0 };
+	method_getArgumentType(dm, 4, t, sizeof t);
+	bool dbl = t[0] == 'd';
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), (dispatch_queue_t) queue, ^{
+		if (dbl)
+			((void (*)(id, SEL, id, BOOL, double)) objc_msgSend)(m, don, headset, YES, (double) clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1e9);
+		else
+			((void (*)(id, SEL, id, BOOL, uint64_t)) objc_msgSend)(m, don, headset, YES, mach_absolute_time());
+		write(2, "simshim: simulated headset worn (proximity present)\n", 52);
+	});
+	return m;
+}
+// and the unlock that follows a wearer on a device without a passcode: SurfBoard locks the keybag at boot and only a
+// lock screen interaction (SleepLockScreen, never shown here) asks to unlock. -[SFBLockScreenController
+// unlockWithRequest:completion:] with an SFBSUnlockRequest, sent on the display controller's queue.
+static void (*shim_sfb_setlsc_orig)(id, SEL, id);
+static void shim_sfb_setlsc(id self, SEL sel, id lsc)
+{
+	shim_sfb_setlsc_orig(self, sel, lsc);
+	if (!lsc)
+		return;
+	id q = ((id (*)(id, SEL)) objc_msgSend)(self, sel_registerName("queue"));
+	Class rc = objc_getClass("SFBSUnlockRequest");
+	if (!q || !rc) { write(2, "simshim: no queue or SFBSUnlockRequest: no boot unlock\n", 55); return; }
+	CFRetain((CFTypeRef) lsc);
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4 * NSEC_PER_SEC), (dispatch_queue_t) q, ^{
+		id req = ((id (*)(id, SEL, id)) objc_msgSend)(((id (*)(id, SEL)) objc_msgSend)((id) rc, sel_registerName("alloc")),
+			sel_registerName("initWithReason:"), (id) CFSTR("x86Sim simulated wearer"));
+		((void (*)(id, SEL, id, void (^)(id, id))) objc_msgSend)(lsc, sel_registerName("unlockWithRequest:completion:"), req,
+			^(id a, id b) {
+				char m[200];
+				int k = snprintf(m, sizeof m, "simshim: boot unlock finished (%p %p)\n", (void*) a, (void*) b);
+				write(2, m, k);
+			});
+		// then what a headset's transition to in use tells its observers: -[SFBDisplayController
+		// _observers_displayControllerDidUnblankHeadset:] (objc_direct: self in x0, the headset in x1). The headset
+		// already counts as in use here (queuedState 2: _queue_unblankHeadsetIfNeeded: returns at once), so the
+		// cover sheet never heard of a display that is on (_displayIsOn) and kept the layout locked (no Home View)
+		const struct mach_header* fh = NULL;
+		for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+			const char* n = _dyld_get_image_name(i);
+			size_t l = n ? strlen(n) : 0;
+			if (l >= 19 && !strcmp(n + l - 19, "/SurfBoardFramework")) { fh = _dyld_get_image_header(i); break; }
+		}
+		Ivar hv = class_getInstanceVariable(object_getClass(self), "_headset");
+		uint32_t* fn = fh ? (uint32_t*)((uintptr_t)fh + 0x22d904) : NULL;
+		if (!fn || !hv || *fn != 0xaa1e03e2u) { write(2, "simshim: headset unblank not found\n", 35); return; }
+		id hs = object_getIvar(self, hv);
+		((void (*)(id, id)) fn)(self, hs);
+		write(2, "simshim: display on (observers told)\n", 37);
+		write(2, "simshim: boot unlock requested\n", 31);
+	});
+}
+static void shim_sfb_presence_added(const struct mach_header* mh, intptr_t slide)
+{
+	static bool done;
+	(void) mh; (void) slide;
+	if (done)
+		return;
+	Class h = objc_getClass("SFBHeadset"), u = objc_getClass("SFBUserPresenceMonitor");
+	Method hp = h ? class_getInstanceMethod(h, sel_registerName("isProximityPresent")) : NULL;
+	Method ui = u ? class_getInstanceMethod(u, sel_registerName("initWithHeadset:queue:")) : NULL;
+	if (!hp || !ui)
+		return;
+	done = true;
+	shim_sfb_prox_orig = (Boolean (*)(id, SEL)) method_setImplementation(hp, (IMP) shim_sfb_prox);
+	shim_sfb_upm_init_orig = (id (*)(id, SEL, id, id)) method_setImplementation(ui, (IMP) shim_sfb_upm_init);
+	Class dc = objc_getClass("SFBDisplayController");
+	Method sl = dc ? class_getInstanceMethod(dc, sel_registerName("setLockScreenController:")) : NULL;
+	if (sl)
+		shim_sfb_setlsc_orig = (void (*)(id, SEL, id)) method_setImplementation(sl, (IMP) shim_sfb_setlsc);
+	write(2, "simshim: hooked SurfBoard headset presence\n", 43);
+}
+__attribute__((constructor)) static void shim_sfb_presence_init(void)
+{
+	const char* e = getenv("X86SIM_XR_PRESENCE");
+	if (!strcmp(getprogname(), "SurfBoard") && !(e && *e == '0'))
+		_dyld_register_func_for_add_image(shim_sfb_presence_added);
 }
 
 __attribute__((constructor)) static void shim_pb_init(void)
