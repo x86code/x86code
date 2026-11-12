@@ -51,6 +51,8 @@
 	</array>
 	<key>com.apple.private.tcc.manager</key>
 	<true/>
+	<key>com.apple.runningboard.terminateprocess</key>
+	<true/>
 	<key>com.apple.runningboard.process-state</key>
 	<true/>
 	<key>com.apple.springboard.frontmostApplication</key>

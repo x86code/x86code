@@ -132,6 +132,20 @@ static void answer(NSString* rid, NSDictionary* r) {
 
 static NSString* devPath(NSString* p) { return [p hasPrefix:@"/"] ? p : [home_ stringByAppendingPathComponent:p]; }
 
+static NSDictionary* rbsTerminate(NSString* bid) {
+	dlopen("/System/Library/PrivateFrameworks/RunningBoardServices.framework/RunningBoardServices", RTLD_NOW);
+	id pred = MSG(id, id, SEL, id)(NSClassFromString(@"RBSProcessPredicate"), sel_getUid("predicateMatchingBundleIdentifier:"), bid);
+	id ctx = MSG(id, id, SEL, id)(MSG(id, id, SEL)(NSClassFromString(@"RBSTerminateContext"), sel_getUid("alloc")),
+		sel_getUid("initWithExplanation:"), @"Termination requested by simulator host");
+	MSG(void, id, SEL, long)(ctx, sel_getUid("setReportType:"), 0);   // no crash report
+	MSG(void, id, SEL, long)(ctx, sel_getUid("setMaximumTerminationResistance:"), 40);   // up to a foreground app
+	id req = MSG(id, id, SEL, id, id)(MSG(id, id, SEL)(NSClassFromString(@"RBSTerminateRequest"), sel_getUid("alloc")),
+		sel_getUid("initWithPredicate:context:"), pred, ctx);
+	NSError* err = nil;
+	BOOL ok = req && MSG(BOOL, id, SEL, NSError* __autoreleasing*)(req, sel_getUid("execute:"), &err);
+	return ok ? @{ @"ok": @YES } : @{ @"ok": @NO, @"error": err ? err.description : @"RBSTerminateRequest failed" };
+}
+
 static NSDictionary* terminateApp(NSString* bid) {
 	dlopen("/System/Library/PrivateFrameworks/FrontBoardServices.framework/FrontBoardServices", RTLD_NOW);
 	id svc = MSG(id, id, SEL)(NSClassFromString(@"FBSSystemService"), sel_getUid("sharedService"));
@@ -145,7 +159,10 @@ static NSDictionary* terminateApp(NSString* bid) {
 	// reason 5 = FBSTerminationReasonUserInitiated? the Bridge passes its own; any reason terminates
 	MSG(void, id, SEL, id, long, BOOL, id, id)(svc, sel_getUid("terminateApplication:forReason:andReport:withDescription:completion:"),
 		bid, 5, NO, @"Termination requested by simulator host", completion);
-	dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC));
+	// Platforms 2: visionOS's SurfBoard (SFBSystemService) looks the caller up as an app ("Failed to find bundle record
+	// for com.x86sim.openurl") and then never calls the completion. RunningBoard terminates the app directly then
+	// (com.apple.runningboard.terminateprocess).
+	if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) != 0) r = rbsTerminate(bid);
 	return r;
 }
 
