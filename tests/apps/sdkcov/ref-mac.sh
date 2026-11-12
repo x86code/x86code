@@ -2,7 +2,7 @@
 # x86Sim sdkcov: the reference run on Apple's own simulator, on the Mac ($X86SIM_MAC, over ssh). Same app, same
 # runtime build where the Mac has it: what fails there too is Apple's behavior, not an x86Sim bug.
 # A temporary simulator device (sdkcov-ref-<platform>) is created, used and deleted; other devices are not touched.
-# Usage: tests/apps/sdkcov/ref-mac.sh [ios|tvos|watchos] [--no-build]   (default ios)
+# Usage: tests/apps/sdkcov/ref-mac.sh [ios|tvos|watchos|xros] [--no-build]   (default ios)
 # Env: RUNTIME (simctl runtime id, default the Mac's newest of the platform), SECS (default 900),
 #      OUT (default $X86SIM_SCRATCH/apps/sdkcov-<platform>-ref-<time>). Then report.py's report.md is in OUT.
 set -u
@@ -16,6 +16,8 @@ case $plat in
 	ios) rtname=iOS; dtype=com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro ;;
 	tvos) rtname=tvOS; dtype=com.apple.CoreSimulator.SimDeviceType.Apple-TV-4K-3rd-generation-1080p ;;
 	watchos) rtname=watchOS; dtype=com.apple.CoreSimulator.SimDeviceType.Apple-Watch-Series-11-46mm ;;
+	xros) rtname=visionOS,xrOS;   # simctl's platform name, by Xcode version
+		dtype=com.apple.CoreSimulator.SimDeviceType.Apple-Vision-Pro-4K ;;
 	*) echo "ref-mac: unknown platform $plat" >&2; exit 2 ;;
 esac
 OUT=${OUT:-$X86SIM_SCRATCH/apps/sdkcov-$plat-ref-$(date +%Y%m%d-%H%M%S)}; mkdir -p "$OUT"
@@ -28,7 +30,7 @@ plat=$1 rtname=$2 dtype=$3 rt=$4 secs=$5
 set -u
 W=$(mktemp -d /tmp/sdkcov-ref.XXXXXX); cd "$W"; tar xf - -C "$W"
 exec 3>&1 1>&2
-[ -n "$rt" ] || rt=$(xcrun simctl list runtimes -j | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin)['runtimes'] if x['platform']=='$rtname' and x['isAvailable']]; print(sorted(r, key=lambda x: [int(p) for p in x['version'].split('.')])[-1]['identifier'])")
+[ -n "$rt" ] || rt=$(xcrun simctl list runtimes -j | python3 -c "import json,sys; r=[x for x in json.load(sys.stdin)['runtimes'] if x['platform'] in '$rtname'.split(',') and x['isAvailable']]; print(sorted(r, key=lambda x: [int(p) for p in x['version'].split('.')])[-1]['identifier'])")
 dev=$(xcrun simctl create "sdkcov-ref-$plat" "$dtype" "$rt") || exit 1
 cleanup() { xcrun simctl shutdown "$dev" >/dev/null 2>&1; xcrun simctl delete "$dev" >/dev/null 2>&1; rm -rf "$W"; }
 trap cleanup EXIT

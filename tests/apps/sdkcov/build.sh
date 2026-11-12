@@ -1,13 +1,13 @@
 #!/bin/bash
 # x86Sim sdkcov: build the SDK coverage app for each platform's arm64 simulator with swiftc (no Xcode project) into
-# $X86SIM_SCRATCH/apps/sdkcov-<platform>.app (bundle id com.x86sim.test.sdkcov on all three).
-# Usage: tests/apps/sdkcov/build.sh [ios] [tvos] [watchos]   (default: all three)
+# $X86SIM_SCRATCH/apps/sdkcov-<platform>.app (bundle id com.x86sim.test.sdkcov on all four).
+# Usage: tests/apps/sdkcov/build.sh [ios] [tvos] [watchos] [xros]   (default: all four)
 # Linux (build/linux-env.sh) or the Mac (X86SIM_BUILD=mac, over ssh), as tests/apps/build.sh.
 set -e
 X86SIM_ROOT=${X86SIM_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 . "$X86SIM_ROOT/build/mac-env.sh"
 A=$X86SIM_ROOT/tests/apps; S=$A/sdkcov; OUT=$X86SIM_SCRATCH/apps; mkdir -p "$OUT"
-for p in ${*:-ios tvos watchos}; do
+for p in ${*:-ios tvos watchos xros}; do
 	case $p in
 	ios) sdk=iphonesimulator; tgt=arm64-apple-ios27.0-simulator; plat=iPhoneSimulator; fam='<integer>1</integer><integer>2</integer>'; extra= ;;
 	tvos) sdk=appletvsimulator; tgt=arm64-apple-tvos27.0-simulator; plat=AppleTVSimulator; fam='<integer>3</integer>'; extra= ;;
@@ -16,7 +16,10 @@ for p in ${*:-ios tvos watchos}; do
 		extra='<key>WKApplication</key><true/><key>WKWatchOnly</key><true/>'
 		# Xcode's watch SDK: the one in sdks/WatchSimulator.sdk is sim-sdk.py's substitute (macOS headers, no WatchKit)
 		[ "$X86SIM_BUILD" = linux ] && export SDK_WATCHOS=$X86SIM_ROOT/sdks/WatchSimulator-xcode.sdk ;;
-	*) echo "sdkcov build: unknown platform $p (ios, tvos, watchos)" >&2; exit 2 ;;
+	# Xcode's visionOS SDK: sdks/XRSimulator.sdk is sim-sdk.py's substitute (iOS's framework list, not visionOS's)
+	xros) sdk=xrsimulator; tgt=arm64-apple-xros27.0-simulator; plat=XRSimulator; fam='<integer>7</integer>'; extra=
+		[ "$X86SIM_BUILD" = linux ] && export SDK_XROS=$X86SIM_ROOT/sdks/XRSimulator-xcode.sdk ;;
+	*) echo "sdkcov build: unknown platform $p (ios, tvos, watchos, xros)" >&2; exit 2 ;;
 	esac
 	[ -f "$S/manifest-$p.json" ] || { echo "sdkcov build: no manifest-$p.json (gen-manifest.py $p)" >&2; exit 1; }
 	echo "== sdkcov $p" >&2

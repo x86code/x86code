@@ -222,8 +222,13 @@ extension Registry {
             try await Task.sleep(for: .milliseconds(500))
             let st = try OSLogStore(scope: .currentProcessIdentifier)
             let pos = st.position(date: Date().addingTimeInterval(-60))
-            let found = try st.getEntries(at: pos).contains { ($0 as? OSLogEntryLog)?.composedMessage.contains(marker) == true }
-            try expect(found, "own log entry not found in OSLogStore")
+            let all = try st.getEntries(at: pos).compactMap { $0 as? OSLogEntryLog }
+            let found = all.contains { $0.composedMessage.contains(marker) }
+            if !found {   // what the store has at all (no position), with dates: a wrong clock shows here
+                let any = try st.getEntries().compactMap { $0 as? OSLogEntryLog }
+                let mine = any.filter { $0.composedMessage.contains(marker) }
+                throw Fail("own log entry not found in OSLogStore since \(pos) (\(all.count) entries); without a position \(any.count) entries, marker \(mine.map { "at \($0.date)" }), now \(Date()), last: \(any.suffix(2).map { "\($0.date) \($0.subsystem): \($0.composedMessage.prefix(50))" })")
+            }
             return "found \(marker)"
         },
         check("Security", "random-keychain-certs") {

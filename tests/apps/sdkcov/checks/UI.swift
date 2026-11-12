@@ -137,7 +137,12 @@ extension Registry {
                     func tableView(_ t: UITableView, cellForRowAt i: IndexPath) -> UITableViewCell { UITableViewCell() } }
                 let ds = DS(); tv.dataSource = ds; tv.frame = CGRect(x: 0, y: 0, width: 200, height: 400); tv.layoutIfNeeded()
                 try expect(tv.numberOfRows(inSection: 0) == 100 && !tv.visibleCells.isEmpty, "table view")
+                #if os(visionOS)   // no UIScreen: windows live in space, sized by their scene
+                let ws = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+                return "\(UIDevice.current.model) \(UIDevice.current.systemName) \(UIDevice.current.systemVersion), scene \(ws?.coordinateSpace.bounds.size ?? .zero), traits \(UITraitCollection.current.displayScale)"
+                #else
                 return "\(UIDevice.current.model) \(UIDevice.current.systemName) \(UIDevice.current.systemVersion), screen \(UIScreen.main.bounds.size) @\(UIScreen.main.scale)x (native \(UIScreen.main.nativeScale)), traits \(UITraitCollection.current.displayScale)"
+                #endif
             }
         })
         c.append(check("UIKit", "window-scene-viewcontroller") {
@@ -152,7 +157,7 @@ extension Registry {
             }
         })
         #endif
-        #if canImport(UIKit) && os(iOS)
+        #if canImport(UIKit) && (os(iOS) || os(visionOS))
         c.append(check("UIKit", "pasteboard-text-input") {
             try await onMain {
                 UIPasteboard.general.string = "sdkcov"
@@ -163,7 +168,7 @@ extension Registry {
             }
         })
         #endif
-        #if canImport(WebKit) && os(iOS)
+        #if canImport(WebKit) && (os(iOS) || os(visionOS))
         c.append(check("WebKit", "webview-load-javascript", timeout: 120) {
             // in the key window, as an app shows one (WebKit throttles a web view that is in no window)
             let v = await onMain { () -> WKWebView in
@@ -198,7 +203,7 @@ extension Registry {
             return "62"
         })
         #endif
-        #if canImport(PencilKit) && os(iOS)
+        #if canImport(PencilKit) && (os(iOS) || os(visionOS))
         c.append(check("PencilKit", "drawing-roundtrip-image") {
             try await onMain {
                 let pts = (0..<20).map { PKStrokePoint(location: CGPoint(x: $0 * 5, y: $0 * 3), timeOffset: Double($0) * 0.01, size: CGSize(width: 4, height: 4), opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2) }
@@ -211,7 +216,7 @@ extension Registry {
             }
         })
         #endif
-        #if canImport(QuickLookThumbnailing) && os(iOS)
+        #if canImport(QuickLookThumbnailing) && (os(iOS) || os(visionOS))
         c.append(check("QuickLookThumbnailing", "png-thumbnail", timeout: 60) {
             let u = FileManager.default.temporaryDirectory.appendingPathComponent("sdkcov-thumb.png")
             try encode(textImage("QL", 400, 400, size: 120), .png).write(to: u)
@@ -222,27 +227,27 @@ extension Registry {
             return "\(t.cgImage.width)x\(t.cgImage.height) type \(t.type.rawValue)"
         })
         #endif
-        #if canImport(QuickLook) && os(iOS)
+        #if canImport(QuickLook) && (os(iOS) || os(visionOS))
         c.append(check("QuickLook", "preview-controller") { try await onMain { let q = QLPreviewController(); q.loadViewIfNeeded(); return "\(QLPreviewController.canPreview(URL(fileURLWithPath: "/x.pdf") as QLPreviewItem))" } })
         #endif
-        #if canImport(ContactsUI) && os(iOS)
+        #if canImport(ContactsUI) && (os(iOS) || os(visionOS))
         c.append(check("ContactsUI", "contact-view-controller") { try await onMain { let v = CNContactViewController(forNewContact: nil); v.loadViewIfNeeded(); return "ok" } })
         #endif
-        #if canImport(EventKitUI) && os(iOS)
+        #if canImport(EventKitUI) && (os(iOS) || os(visionOS))
         c.append(check("EventKitUI", "edit-view-controller") { try await onMain { let v = EKEventEditViewController(); v.loadViewIfNeeded(); return "ok" } })
         #endif
-        #if canImport(PhotosUI) && os(iOS)
+        #if canImport(PhotosUI) && (os(iOS) || os(visionOS))
         c.append(check("PhotosUI", "picker") {
             try await onMain { var cfg = PHPickerConfiguration(); cfg.selectionLimit = 2; cfg.filter = .images
                 let p = PHPickerViewController(configuration: cfg); p.loadViewIfNeeded(); return "ok" }
         })
         #endif
-        #if canImport(SafariServices) && os(iOS)
+        #if canImport(SafariServices) && (os(iOS) || os(visionOS))
         c.append(check("SafariServices", "safari-view-controller") {
             try await onMain { let s = SFSafariViewController(url: URL(string: "https://example.com")!); s.loadViewIfNeeded(); return "ok" }
         })
         #endif
-        #if canImport(MessageUI) && os(iOS)
+        #if canImport(MessageUI) && (os(iOS) || os(visionOS))
         c.append(check("MessageUI", "can-send") {
             let mail = MFMailComposeViewController.canSendMail(), text = MFMessageComposeViewController.canSendText()
             try skipIf(!mail && !text, "no Mail account / Messages in the Simulator")
@@ -261,7 +266,7 @@ extension Registry {
             }
         })
         #endif
-        #if canImport(VisionKit) && os(iOS)
+        #if canImport(VisionKit) && (os(iOS) || os(visionOS))
         c.append(check("VisionKit", "analyzer-scanner-support") {
             let scan = await onMain { DataScannerViewController.isSupported }
             let doc = VNDocumentCameraViewController.isSupported
@@ -269,7 +274,7 @@ extension Registry {
             return "scanner \(scan), document camera \(doc), image analyzer \(ImageAnalyzer.isSupported)"
         })
         #endif
-        #if canImport(RealityKit) && os(iOS)
+        #if canImport(RealityKit) && (os(iOS) || os(visionOS))
         c.append(check("RealityKit", "entities-meshes") {
             try await onMain {
                 let box = ModelEntity(mesh: .generateBox(size: 0.1), materials: [SimpleMaterial(color: .red, isMetallic: false)])
@@ -282,7 +287,7 @@ extension Registry {
             }
         })
         #endif
-        #if canImport(AuthenticationServices) && os(iOS)
+        #if canImport(AuthenticationServices) && (os(iOS) || os(visionOS))
         c.append(check("AuthenticationServices", "web-auth-session") {
             let s = ASWebAuthenticationSession(url: URL(string: "https://example.com/auth")!, callback: .customScheme("sdkcov")) { _, _ in }
             return "canStart \(await onMain { s.canStart })"

@@ -351,7 +351,7 @@ extension Registry {
             return "\(m.vertexCount) vertices"
         })
         #endif
-        #if canImport(OpenGLES)
+        #if canImport(OpenGLES) && !os(visionOS)   // visionOS ships the module, every API in it unavailable
         c.append(check("OpenGLES", "context-fbo-clear-readpixels", timeout: 60) {
             try await onMain {
                 guard let ctx = EAGLContext(api: .openGLES3) ?? EAGLContext(api: .openGLES2) else { throw Fail("no EAGLContext") }

@@ -95,7 +95,7 @@ extension Registry {
             return "fr, \(words) words, \(verbs) verb(s), word embedding \(emb.map { "dim \($0.dimension)" } ?? "not installed")"
         })
         #endif
-        #if canImport(FoundationModels) && os(iOS)
+        #if canImport(FoundationModels) && (os(iOS) || os(visionOS))
         c.append(check("FoundationModels", "system-model-availability", timeout: 60) {
             let m = SystemLanguageModel.default
             guard case .available = m.availability else { throw Skip("model \(m.availability) (Apple's simulator uses the host Mac's Apple Intelligence)") }
@@ -104,13 +104,13 @@ extension Registry {
             return "answer '\(r.content.prefix(40))'"
         })
         #endif
-        #if canImport(Translation) && os(iOS)
+        #if canImport(Translation) && os(iOS)   // visionOS: LanguageAvailability and TranslationSession unavailable
         c.append(check("Translation", "language-availability", timeout: 40) {
             let langs = await LanguageAvailability().supportedLanguages
             return "\(langs.count) supported languages"
         })
         #endif
-        #if canImport(ImagePlayground) && os(iOS)
+        #if canImport(ImagePlayground) && (os(iOS) || os(visionOS))
         c.append(check("ImagePlayground", "availability") {
             let ok = await onMain { ImagePlaygroundViewController.isAvailable }
             try skipIf(!ok, "Image Playground needs Apple Intelligence (not in the Simulator here)")

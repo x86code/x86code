@@ -9,7 +9,7 @@ public top-level library (usr/lib/*.tbd, not usr/lib/swift) of Xcode's simulator
   - whether the platform's simulator runtime ships the binary at all (the dyld_sim_shared_cache map, or a file under
     RuntimeRoot). Not shipped = not supported in the official simulator: the app reports SKIP for it.
 Writes manifest-<platform>.json next to this script (committed: the app's bundle carries it; regenerate after an SDK
-or runtime update). Usage: tests/apps/sdkcov/gen-manifest.py [ios tvos watchos ...]"""
+or runtime update). Usage: tests/apps/sdkcov/gen-manifest.py [ios tvos watchos xros ...]"""
 import glob, json, os, re, sys
 
 HERE = os.path.dirname(os.path.realpath(__file__))
@@ -19,6 +19,7 @@ PLATFORMS = {
     "ios": ("iPhoneSimulator.sdk", "ios-*-arm64", "arm64-ios-simulator"),
     "tvos": ("AppleTVSimulator.sdk", "tvos-*-arm64", "arm64-tvos-simulator"),
     "watchos": ("WatchSimulator-xcode.sdk", "watchos-*-arm64", "arm64-watchos-simulator"),
+    "xros": ("XRSimulator-xcode.sdk", "xros-*-arm64", "arm64-xros-simulator"),
 }
 # frameworks the SDK ships as headers / modules only (no binary to load); listed so the report says why
 NO_BINARY = "headers or Swift module only (no binary in the SDK)"

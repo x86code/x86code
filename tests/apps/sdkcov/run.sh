@@ -1,5 +1,5 @@
 #!/bin/bash
-# x86Sim sdkcov: build the SDK coverage app for a running device's platform (iOS, tvOS or watchOS, from
+# x86Sim sdkcov: build the SDK coverage app for a running device's platform (iOS, tvOS, watchOS or visionOS, from
 # <device>/runtime), install it, launch it and keep it going until it reports "done": a crash or the app's hang
 # watchdog ends the process, and the next launch resumes after the check that died (Harness.swift). Then the results,
 # the coverage JSON and a Markdown report (report.py) go to OUT, with a screenshot.
@@ -22,7 +22,7 @@ ONLY=
 while [ $# -gt 0 ]; do case $1 in --no-build) build=0 ;; --fresh) fresh=1 ;; --only) ONLY="--only $2"; shift ;;
 	*) echo "sdkcov: unknown option $1" >&2; exit 2 ;; esac; shift; done
 rt=$(cat "$X86SIM_DEVICE/runtime" 2>/dev/null); plat=${rt%%-*}
-case $plat in ios|tvos|watchos) ;; *) echo "sdkcov: $X86SIM_DEVICE: unsupported runtime '$rt'" >&2; exit 2 ;; esac
+case $plat in ios|tvos|watchos|xros) ;; *) echo "sdkcov: $X86SIM_DEVICE: unsupported runtime '$rt'" >&2; exit 2 ;; esac
 SECS=${SECS:-3600}; STALL=${STALL:-300}; RELAUNCH=${RELAUNCH:-40}
 OUT=${OUT:-$X86SIM_SCRATCH/apps/sdkcov-$plat-$(date +%Y%m%d-%H%M%S)}; mkdir -p "$OUT"
 BID=com.x86sim.test.sdkcov; APP=$X86SIM_SCRATCH/apps/sdkcov-$plat.app
@@ -36,6 +36,9 @@ rm -f "$X86SIM_DEVICE"/data/tmp/sdkcov-*.out "$X86SIM_DEVICE"/data/tmp/sdkcov-*.
 [ "$fresh" = 1 ] && rm -f "$RES" "$DATA/Documents/sdkcov-progress" "$DATA/Documents/sdkcov-coverage.json"
 # a finished previous run starts over by itself (Harness.prepare); an unfinished one resumes
 echo "sdkcov $plat on $(basename "$X86SIM_DEVICE"): results $RES"
+# WidgetKit needs chronod, which is the device's "widgets" feature (off by default: ~350-750 MB): on for sdkcov devices
+grep -qs '"widgets": *true' "$X86SIM_DEVICE/features.json" ||
+	echo "  note: feature \"widgets\" is off on this device: WidgetKit fails (x86sim-aot features, or features.json)"
 lines() { [ -f "$RES" ] && wc -l < "$RES" || echo 0; }
 done_() { [ -f "$RES" ] && grep -q "^X86TEST sdkcov done " "$RES"; }
 t0=$(date +%s); launches=0; last=$(lines); lastt=$t0

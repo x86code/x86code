@@ -150,8 +150,10 @@ extension Registry {
                 let a = CLLocation(latitude: 37.3349, longitude: -122.0090), b = CLLocation(latitude: 37.7749, longitude: -122.4194)
                 let d = a.distance(from: b)
                 try expect(abs(d - 60_000) < 5_000, "distance \(d)")
+                #if !os(visionOS)   // no region monitoring on visionOS
                 let region = CLCircularRegion(center: a.coordinate, radius: 100, identifier: "x")
                 try expect(region.contains(CLLocationCoordinate2D(latitude: 37.3350, longitude: -122.0090)), "region")
+                #endif
                 return "authorization \(st.rawValue), services \(CLLocationManager.locationServicesEnabled())"
             },
             check("StoreKit", "products-storefront", timeout: 40) {
@@ -301,8 +303,13 @@ extension Registry {
             func step<T>(_ n: String, _ f: () -> T) -> T { FileHandle.standardError.write("coremotion: \(n)\n".data(using: .utf8)!); return f() }
             let m = step("CMMotionManager()") { CMMotionManager() }
             let acc = step("accelerometer") { m.isAccelerometerAvailable }, gyro = step("gyro") { m.isGyroAvailable }
-            let dm = step("deviceMotion") { m.isDeviceMotionAvailable }, steps = step("pedometer") { CMPedometer.isStepCountingAvailable() }
+            let dm = step("deviceMotion") { m.isDeviceMotionAvailable }
+            #if os(visionOS)   // no pedometer or altimeter API on visionOS
+            let steps = false, alt = false
+            #else
+            let steps = step("pedometer") { CMPedometer.isStepCountingAvailable() }
             let alt = step("altimeter") { CMAltimeter.isRelativeAltitudeAvailable() }
+            #endif
             let any = acc || gyro || dm || steps || alt
             try skipIf(!any, "no motion sensors in the Simulator (Apple's has none either)")
             return "accelerometer \(m.isAccelerometerAvailable)"
@@ -336,10 +343,22 @@ extension Registry {
             return "world tracking"
         })
         #endif
+        #if canImport(ARKit) && os(visionOS)
+        c.append(check("ARKit", "data-providers") {
+            // visionOS ARKit: data providers run in an ARKitSession, and only inside an immersive space; here which
+            // ones the device supports (Apple's simulator: world tracking and planes, no hands / cameras)
+            let p: [(String, Bool)] = [("world", WorldTrackingProvider.isSupported), ("planes", PlaneDetectionProvider.isSupported),
+                                       ("scene", SceneReconstructionProvider.isSupported), ("hands", HandTrackingProvider.isSupported),
+                                       ("images", ImageTrackingProvider.isSupported), ("room", RoomTrackingProvider.isSupported)]
+            try skipIf(!p.contains { $0.1 }, "no ARKit data providers in the Simulator")
+            let session = ARKitSession(); _ = session
+            return p.map { "\($0.0) \($0.1)" }.joined(separator: ", ")
+        })
+        #endif
         #if canImport(PassKit)
         c.append(check("PassKit", "library-payments") {
             let pay = PKPaymentAuthorizationController.canMakePayments()
-            #if os(iOS)
+            #if os(iOS) || os(visionOS)
             let lib = PKPassLibrary.isPassLibraryAvailable()
             return "pass library \(lib), payments \(pay)"
             #else
@@ -347,7 +366,7 @@ extension Registry {
             #endif
         })
         #endif
-        #if canImport(CallKit) && os(iOS)
+        #if canImport(CallKit) && (os(iOS) || os(visionOS))
         c.append(check("CallKit", "provider-observer") {
             let p = CXProvider(configuration: CXProviderConfiguration()); p.invalidate()
             return "\(CXCallObserver().calls.count) calls"
@@ -365,7 +384,7 @@ extension Registry {
         #endif
         #if canImport(Intents)
         c.append(check("Intents", "preferences-interaction") {
-            #if os(iOS) || os(watchOS)
+            #if os(iOS) || os(watchOS) || os(visionOS)
             let st = INPreferences.siriAuthorizationStatus()
             let i = INSendMessageIntent(recipients: nil, outgoingMessageType: .outgoingMessageText, content: "x", speakableGroupName: nil, conversationIdentifier: nil, serviceName: nil, sender: nil, attachments: nil)
             try expect(i.content == "x", "intent")
@@ -424,21 +443,21 @@ extension Registry {
             final class D: NSObject, WCSessionDelegate {
                 var cont: CheckedContinuation<WCSessionActivationState, Never>?
                 func session(_ s: WCSession, activationDidCompleteWith st: WCSessionActivationState, error: Error?) { cont?.resume(returning: st); cont = nil }
-                #if os(iOS)
+                #if os(iOS) || os(visionOS)
                 func sessionDidBecomeInactive(_ s: WCSession) {}
                 func sessionDidDeactivate(_ s: WCSession) {}
                 #endif
             }
             let d = D()
             let st: WCSessionActivationState = await withCheckedContinuation { k in d.cont = k; WCSession.default.delegate = d; WCSession.default.activate() }
-            #if os(iOS)
+            #if os(iOS) || os(visionOS)
             return "state \(st.rawValue), paired \(WCSession.default.isPaired)"
             #else
             return "state \(st.rawValue), companion installed \(WCSession.default.isCompanionAppInstalled)"
             #endif
         })
         #endif
-        #if canImport(MetricKit) && os(iOS)
+        #if canImport(MetricKit) && (os(iOS) || os(visionOS))
         c.append(check("MetricKit", "manager") {
             final class S: NSObject, MXMetricManagerSubscriber {}
             let s = S(); MXMetricManager.shared.add(s); MXMetricManager.shared.remove(s)
@@ -448,10 +467,10 @@ extension Registry {
         #if canImport(ReplayKit) && !os(watchOS)
         c.append(check("ReplayKit", "recorder") { "available \(RPScreenRecorder.shared().isAvailable)" })
         #endif
-        #if canImport(SensitiveContentAnalysis) && os(iOS)
+        #if canImport(SensitiveContentAnalysis) && (os(iOS) || os(visionOS))
         c.append(check("SensitiveContentAnalysis", "policy") { "policy \(SCSensitivityAnalyzer().analysisPolicy.rawValue)" })
         #endif
-        #if canImport(SharedWithYou) && os(iOS)
+        #if canImport(SharedWithYou) && (os(iOS) || os(visionOS))
         c.append(check("SharedWithYou", "highlight-center") { await onMain { "\(SWHighlightCenter().highlights.count) highlights" } })
         #endif
         #if canImport(LinkPresentation) && !os(watchOS)
@@ -466,7 +485,7 @@ extension Registry {
         #if canImport(Accounts) && os(iOS)
         c.append(check("Accounts", "store") { "\(ACAccountStore().accounts?.count ?? 0) accounts visible" })
         #endif
-        #if canImport(CryptoTokenKit) && os(iOS)
+        #if canImport(CryptoTokenKit) && (os(iOS) || os(visionOS))
         c.append(check("CryptoTokenKit", "watcher") { "\(TKTokenWatcher().tokenIDs.count) tokens" })
         #endif
         #if canImport(VideoSubscriberAccount) && !os(watchOS)
@@ -475,7 +494,7 @@ extension Registry {
             return "ok"
         })
         #endif
-        #if canImport(NetworkExtension) && os(iOS)
+        #if canImport(NetworkExtension) && (os(iOS) || os(visionOS))
         c.append(check("NetworkExtension", "hotspot-helper-objects") {
             let cfg = NEHotspotConfiguration(ssid: "sdkcov")
             try expect(cfg.ssid == "sdkcov", "config")

@@ -20,9 +20,9 @@ and appends it to `Documents/x86test-results.txt` in the app's data container.
 Apps without the UIScene lifecycle trap in iOS 27's UIKit (`_UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`),
 so every app here uses scenes.
 
-## sdkcov: the whole SDK, on iOS, tvOS and watchOS
+## sdkcov: the whole SDK, on iOS, tvOS, watchOS and visionOS
 
-`sdkcov/` is one SwiftUI app, built from the same sources for the iOS, tvOS and watchOS simulators, that walks through
+`sdkcov/` is one SwiftUI app, built from the same sources for the iOS, tvOS, watchOS and visionOS simulators, that walks through
 everything the latest SDK (27.2) offers an app:
 
 1. **Every framework and library** in Xcode's simulator SDK (`System/Library/Frameworks/*`, including Swift cross-import
@@ -42,7 +42,7 @@ injected diagnostics libraries, and hardware the simulator lacks, reported as th
 entitlements Xcode embeds for its capabilities (`sdkcov.entitlements`: keychain, app groups, HealthKit, HomeKit,
 Siri, iCloud, push) in `__TEXT,__entitlements`.
 
-    tests/apps/sdkcov/build.sh [ios] [tvos] [watchos]
+    tests/apps/sdkcov/build.sh [ios] [tvos] [watchos] [xros]
     tests/apps/sdkcov/run.sh <device> [--no-build] [--fresh] [--only ID[,ID...]]
 
 `run.sh` picks the platform from the device's runtime, installs, launches, and relaunches until the app reports
@@ -50,6 +50,13 @@ Siri, iCloud, push) in `__TEXT,__entitlements`.
 it. Results, coverage JSON, `report.md` (`report.py`), the app's stdout / stderr per launch and a screenshot go to
 `$X86SIM_SCRATCH/apps/sdkcov-<platform>-<time>/`. `--only func:Metal,load:UIKit` runs just those checks once and
 prints their results (stderr only; the results file is left alone).
+
+watchOS and visionOS build against Xcode's own simulator SDKs, copied from the Mac to `sdks/WatchSimulator-xcode.sdk` and
+`sdks/XRSimulator-xcode.sdk` (`sdks/XRSimulator.sdk` is sim-sdk.py's substitute, which has iOS's framework list).
+`ref-mac.sh xros` needs a visionOS simulator runtime installed on the Mac.
+The sdkcov devices run with the "widgets" feature on (`features.json`), as WidgetKit needs chronod; run.sh says so
+when a device has it off. Boot them with `X86SIM_AUDIO=1` for the audio checks (simaudio: real-time output, PHASE,
+OpenAL, speech). The first speech synthesis after a boot can time out while its extension is translated.
 
 Building on Linux: the toolchain has no SwiftDataMacros plugin and its Foundation macros expand to the open-source
 module names, so `checks/Data.swift` writes out what `@Model` and `#Predicate` expand to.

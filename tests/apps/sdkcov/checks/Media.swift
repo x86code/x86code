@@ -140,7 +140,7 @@ extension Registry {
                 return "m4a \(try FileManager.default.attributesOfItem(atPath: m4a.path)[.size] ?? 0) B"
             },
             check("AVFAudio", "session-category") {
-                #if os(iOS) || os(tvOS) || os(watchOS)
+                #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
                 let s = AVAudioSession.sharedInstance()
                 try s.setCategory(.playback, mode: .default)
                 try expect(s.category == .playback, "category \(s.category)")
@@ -251,7 +251,11 @@ extension Registry {
                         if st == noErr, let sb { outs.append(sb) }
                     }
                 }
-                VTCompressionSessionCompleteFrames(s!, untilPresentationTimeStamp: .invalid); VTCompressionSessionInvalidate(s!)
+                VTCompressionSessionCompleteFrames(s!, untilPresentationTimeStamp: .invalid)
+                let doneAt = outs.count   // frames out when CompleteFrames returned (all of them, by its contract)
+                if let w = ProcessInfo.processInfo.environment["SDKCOV_VT_SLEEP"], let t = Double(w) { Thread.sleep(forTimeInterval: t) }
+                VTCompressionSessionInvalidate(s!)
+                try expect(doneAt == 10, "\(name): CompleteFrames returned with \(doneAt)/10 frames out")
                 try expect(outs.count == 10, "\(name) encoded \(outs.count) frames")
                 var d: VTDecompressionSession?
                 try expect(VTDecompressionSessionCreate(allocator: nil, formatDescription: CMSampleBufferGetFormatDescription(outs[0])!, decoderSpecification: nil, imageBufferAttributes: nil, outputCallback: nil, decompressionSessionOut: &d) == noErr, "\(name) decoder")
@@ -264,7 +268,7 @@ extension Registry {
             return res.joined(separator: ", ")
         })
         #endif
-        #if canImport(CoreMIDI) && os(iOS)
+        #if canImport(CoreMIDI) && (os(iOS) || os(visionOS))
         c.append(check("CoreMIDI", "virtual-loopback") {
             var client = MIDIClientRef(); let cs = MIDIClientCreateWithBlock("sdkcov" as CFString, &client, nil); try expect(cs == noErr, "MIDIClientCreate \(cs)")
             defer { MIDIClientDispose(client) }
