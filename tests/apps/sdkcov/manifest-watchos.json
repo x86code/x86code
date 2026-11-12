@@ -1,0 +1,3737 @@
+{
+ "platform": "watchos",
+ "sdk": "WatchSimulator-xcode 27.2",
+ "runtime": "watchos-27.2-24S118-arm64",
+ "items": [
+  {
+   "kind": "framework",
+   "name": "AVFAudio",
+   "path": "/System/Library/Frameworks/AVFAudio.framework/AVFAudio",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "AVAudioFile"
+    },
+    {
+     "objc": "AVAudioNode"
+    },
+    {
+     "sym": "AVFormatIDKey"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "AVFoundation",
+   "path": "/System/Library/Frameworks/AVFoundation.framework/AVFoundation",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "AVAsset"
+    },
+    {
+     "objc": "AVMovie"
+    },
+    {
+     "sym": "AVErrorPIDKey"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "AVKit",
+   "path": "/System/Library/Frameworks/AVKit.framework/AVKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "AVChapter"
+    },
+    {
+     "objc": "AVPlayerController"
+    },
+    {
+     "sym": "AVKitErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Accelerate",
+   "path": "/System/Library/Frameworks/Accelerate.framework/Accelerate",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "VVCOS"
+    },
+    {
+     "sym": "VVDIV"
+    },
+    {
+     "sym": "VVEXP"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Accessibility",
+   "path": "/System/Library/Frameworks/Accessibility.framework/Accessibility",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "AXScale"
+    },
+    {
+     "objc": "AXRequest"
+    },
+    {
+     "sym": "AXNameFromColor"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "AppIntents",
+   "path": "/System/Library/Frameworks/AppIntents.framework/AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "LNAppContext"
+    },
+    {
+     "objc": "LNClientConnection"
+    },
+    {
+     "sym": "LNProcessInstanceRegistryClientErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "AppIntentsTypeSupport",
+   "path": "/System/Library/Frameworks/AppIntentsTypeSupport.framework/AppIntentsTypeSupport",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s21AppIntentsTypeSupport0cD5ErrorOMa"
+    },
+    {
+     "sym": "$s21AppIntentsTypeSupport0A17EnumSpecificationVMa"
+    },
+    {
+     "sym": "$s21AppIntentsTypeSupport19DeferredIntentValueVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "AuthenticationServices",
+   "path": "/System/Library/Frameworks/AuthenticationServices.framework/AuthenticationServices",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "ASAuthorization"
+    },
+    {
+     "objc": "ASPasswordCredential"
+    },
+    {
+     "sym": "ASAuthorizationScopeEmail"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "BackgroundTasks",
+   "path": "/System/Library/Frameworks/BackgroundTasks.framework/BackgroundTasks",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "BGTask"
+    },
+    {
+     "objc": "BGTaskRequest"
+    },
+    {
+     "sym": "BGTaskSchedulerErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "BrowserEngineCore",
+   "path": "/System/Library/Frameworks/BrowserEngineCore.framework/BrowserEngineCore",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s17BrowserEngineCore10AuditTokenVMa"
+    },
+    {
+     "sym": "$s17BrowserEngineCore0aB11EntitlementOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "BrowserEngineKit",
+   "path": "/System/Library/Frameworks/BrowserEngineKit.framework/BrowserEngineKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "BEKeyEntry"
+    },
+    {
+     "objc": "BETextSuggestion"
+    },
+    {
+     "sym": "BEAccessibilityTraitVisited"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "BrowserKit",
+   "path": "/System/Library/Frameworks/BrowserKit.framework/BrowserKit",
+   "status": "test",
+   "probes": []
+  },
+  {
+   "kind": "framework",
+   "name": "CFNetwork",
+   "path": "/System/Library/Frameworks/CFNetwork.framework/CFNetwork",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NSHost"
+    },
+    {
+     "objc": "NSURLCache"
+    },
+    {
+     "sym": "kCFNIE"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CallKit",
+   "path": "/System/Library/Frameworks/CallKit.framework/CallKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CXCall"
+    },
+    {
+     "objc": "CXAction"
+    },
+    {
+     "sym": "CXErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CarKey",
+   "path": "/System/Library/Frameworks/CarKey.framework/CarKey",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s6CarKey0aB9ErrorCodeOMa"
+    },
+    {
+     "sym": "$s6CarKey13VehicleReportVMa"
+    },
+    {
+     "sym": "$s6CarKey14FunctionStatusVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Charts",
+   "path": "/System/Library/Frameworks/Charts.framework/Charts",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s6Charts4PlotVMa"
+    },
+    {
+     "sym": "$s6Charts5ChartVMa"
+    },
+    {
+     "sym": "$s6Charts7BarMarkVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "ClockKit",
+   "path": "/System/Library/Frameworks/ClockKit.framework/ClockKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CLKDate"
+    },
+    {
+     "objc": "CLKFont"
+    },
+    {
+     "sym": "CLKIsBridge"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CloudKit",
+   "path": "/System/Library/Frameworks/CloudKit.framework/CloudKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CKAsset"
+    },
+    {
+     "objc": "CKQuery"
+    },
+    {
+     "sym": "CKMock"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "ColorSync",
+   "path": "/System/Library/Frameworks/ColorSync.framework/ColorSync",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "kColorSyncGUID"
+    },
+    {
+     "sym": "kColorSyncCCVInfo"
+    },
+    {
+     "sym": "kColorSyncCLLInfo"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Combine",
+   "path": "/System/Library/Frameworks/Combine.framework/Combine",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s7Combine4FailVMa"
+    },
+    {
+     "sym": "$s7Combine4JustVMa"
+    },
+    {
+     "sym": "$s7Combine5EmptyVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Contacts",
+   "path": "/System/Library/Frameworks/Contacts.framework/Contacts",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CN"
+    },
+    {
+     "objc": "CNTCC"
+    },
+    {
+     "sym": "CNAnyLabel"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreAudio",
+   "path": "/System/Library/Frameworks/CoreAudio.framework/CoreAudio",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CATapDescription"
+    },
+    {
+     "sym": "AudioDeviceRun"
+    },
+    {
+     "sym": "AudioDeviceDuck"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreAudioTypes",
+   "status": "skip",
+   "reason": "headers or Swift module only (no binary in the SDK)"
+  },
+  {
+   "kind": "framework",
+   "name": "CoreBluetooth",
+   "path": "/System/Library/Frameworks/CoreBluetooth.framework/CoreBluetooth",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CBPeer"
+    },
+    {
+     "objc": "CBUUID"
+    },
+    {
+     "sym": "CBErrorF"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreData",
+   "path": "/System/Library/Frameworks/CoreData.framework/CoreData",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NSXPCStore"
+    },
+    {
+     "objc": "NSAtomicStore"
+    },
+    {
+     "sym": "NSStoreTypeKey"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreFoundation",
+   "path": "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NSSet"
+    },
+    {
+     "objc": "NSURL"
+    },
+    {
+     "sym": "CFLog"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreGraphics",
+   "path": "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CGBitmapFormat"
+    },
+    {
+     "objc": "CGRemotePDFPageProxy"
+    },
+    {
+     "sym": "CGCFEqual"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreLocation",
+   "path": "/System/Library/Frameworks/CoreLocation.framework/CoreLocation",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CLPair"
+    },
+    {
+     "objc": "CLVisit"
+    },
+    {
+     "sym": "CLClientLog"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreLocationUI",
+   "path": "/System/Library/Frameworks/CoreLocationUI.framework/CoreLocationUI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CLLocationButton"
+    },
+    {
+     "objc": "CLLocationButtonTag"
+    },
+    {
+     "sym": "CoreLocationUIVersionNumber"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreMIDI",
+   "path": "/System/Library/Frameworks/CoreMIDI.framework/CoreMIDI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MIDICIDevice"
+    },
+    {
+     "objc": "MIDICIProfile"
+    },
+    {
+     "sym": "MIDISend"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreML",
+   "path": "/System/Library/Frameworks/CoreML.framework/CoreML",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MLKey"
+    },
+    {
+     "objc": "MLTask"
+    },
+    {
+     "sym": "MLModelAuthorKey"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreMedia",
+   "path": "/System/Library/Frameworks/CoreMedia.framework/CoreMedia",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "fig_log"
+    },
+    {
+     "sym": "CMTagHash"
+    },
+    {
+     "sym": "CMTimeAdd"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreMotion",
+   "path": "/System/Library/Frameworks/CoreMotion.framework/CoreMotion",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CMBody"
+    },
+    {
+     "objc": "CMFall"
+    },
+    {
+     "sym": "CMFileSize"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreServices",
+   "path": "/System/Library/Frameworks/CoreServices.framework/CoreServices",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "FSNode"
+    },
+    {
+     "objc": "LSRecord"
+    },
+    {
+     "sym": "LSInit"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreText",
+   "path": "/System/Library/Frameworks/CoreText.framework/CoreText",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CTEmojiImageAsset"
+    },
+    {
+     "objc": "CTEmojiImageStrike"
+    },
+    {
+     "sym": "CTRunDraw"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreTransferable",
+   "path": "/System/Library/Frameworks/CoreTransferable.framework/CoreTransferable",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "CoreTransferableVersionNumber"
+    },
+    {
+     "sym": "$s16CoreTransferable0B5ErrorOMa"
+    },
+    {
+     "sym": "$s16CoreTransferable18DataRepresentationVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CoreVideo",
+   "path": "/System/Library/Frameworks/CoreVideo.framework/CoreVideo",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "kCVZeroTime"
+    },
+    {
+     "sym": "CVBufferRetain"
+    },
+    {
+     "sym": "CVBufferRelease"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CreateMLComponents",
+   "path": "/System/Library/Frameworks/CreateMLComponents.framework/CreateMLComponents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s18CreateMLComponents5EventVMa"
+    },
+    {
+     "sym": "$s18CreateMLComponents8ReshaperVMa"
+    },
+    {
+     "sym": "$s18CreateMLComponents9AugmenterVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CryptoKit",
+   "path": "/System/Library/Frameworks/CryptoKit.framework/CryptoKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s9CryptoKit3AESOMa"
+    },
+    {
+     "sym": "$s9CryptoKit3KEMOMa"
+    },
+    {
+     "sym": "$s9CryptoKit3VRFOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "CryptoTokenKit",
+   "path": "/System/Library/Frameworks/CryptoTokenKit.framework/CryptoTokenKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "TKToken"
+    },
+    {
+     "objc": "TKSEPKey"
+    },
+    {
+     "sym": "TKErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "DataDetection",
+   "path": "/System/Library/Frameworks/DataDetection.framework/DataDetection",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "DDMatch"
+    },
+    {
+     "objc": "DDMatchLink"
+    },
+    {
+     "sym": "$s13DataDetection0A8DetectorOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "DeveloperToolsSupport",
+   "path": "/System/Library/Frameworks/DeveloperToolsSupport.framework/DeveloperToolsSupport",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s7SwiftUI13PreviewLayoutOMa"
+    },
+    {
+     "sym": "$s21DeveloperToolsSupport7PreviewVMa"
+    },
+    {
+     "sym": "$s21DeveloperToolsSupport11LibraryItemVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "DeviceActivity",
+   "path": "/System/Library/Frameworks/DeviceActivity.framework/DeviceActivity",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s14DeviceActivity0aB4NameVMa"
+    },
+    {
+     "sym": "$s14DeviceActivity7FeatureCMa"
+    },
+    {
+     "sym": "$s14DeviceActivity0aB5EventVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "DeviceCheck",
+   "path": "/System/Library/Frameworks/DeviceCheck.framework/DeviceCheck",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "DCDevice"
+    },
+    {
+     "objc": "DCAppAttestService"
+    },
+    {
+     "sym": "DCErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "EnergyKit",
+   "path": "/System/Library/Frameworks/EnergyKit.framework/EnergyKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s9EnergyKit0A5TrendVMa"
+    },
+    {
+     "sym": "$s9EnergyKit0A5VenueVMa"
+    },
+    {
+     "sym": "$s9EnergyKit0aB5ErrorOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "EventKit",
+   "path": "/System/Library/Frameworks/EventKit.framework/EventKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "EKDiff"
+    },
+    {
+     "objc": "EKAlarm"
+    },
+    {
+     "sym": "EKBundle"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "ExtensionFoundation",
+   "path": "/System/Library/Frameworks/ExtensionFoundation.framework/ExtensionFoundation",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "EXXPCUtil"
+    },
+    {
+     "objc": "EXPKService"
+    },
+    {
+     "sym": "EXExtensionMain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "ExtensionKit",
+   "path": "/System/Library/Frameworks/ExtensionKit.framework/ExtensionKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "EXHostViewController"
+    },
+    {
+     "sym": "$s12ExtensionKit4RoleVMa"
+    },
+    {
+     "sym": "$s12ExtensionKit5_RoleVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "FamilyControls",
+   "path": "/System/Library/Frameworks/FamilyControls.framework/FamilyControls",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s14FamilyControls7AppInfoCMa"
+    },
+    {
+     "sym": "$s14FamilyControls7FeatureVMa"
+    },
+    {
+     "sym": "$s14FamilyControls0A6CircleCMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "FinanceKit",
+   "path": "/System/Library/Frameworks/FinanceKit.framework/FinanceKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "FKAmount"
+    },
+    {
+     "objc": "FKAccount"
+    },
+    {
+     "sym": "FKIntegerHash"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Foundation",
+   "path": "/System/Library/Frameworks/Foundation.framework/Foundation",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NSHost"
+    },
+    {
+     "objc": "NSLock"
+    },
+    {
+     "sym": "NSLog"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "FoundationModels",
+   "path": "/System/Library/Frameworks/FoundationModels.framework/FoundationModels",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s16FoundationModels6PromptVMa"
+    },
+    {
+     "sym": "$s16FoundationModels9_DSLValueVMa"
+    },
+    {
+     "sym": "$s16FoundationModels10AttachmentVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "GameKit",
+   "path": "/System/Library/Frameworks/GameKit.framework/GameKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "GKGameSPI"
+    },
+    {
+     "objc": "GKPlayerSPI"
+    },
+    {
+     "sym": "$sSo21GKChallengeDefinitionCMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "GeoToolbox",
+   "path": "/System/Library/Frameworks/GeoToolbox.framework/GeoToolbox",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s10GeoToolbox15PlaceDescriptorVMa"
+    },
+    {
+     "sym": "$s10GeoToolbox15PlaceDescriptorV2__CMa"
+    },
+    {
+     "sym": "$s10GeoToolbox15PlaceDescriptorV0C14RepresentationOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "HealthKit",
+   "path": "/System/Library/Frameworks/HealthKit.framework/HealthKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "HKPPT"
+    },
+    {
+     "objc": "HKUnit"
+    },
+    {
+     "sym": "HKDateMax"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "HealthKitUI",
+   "path": "/System/Library/Frameworks/HealthKitUI.framework/HealthKitUI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "HKActivityRingView"
+    },
+    {
+     "sym": "HKHealthKitUIFrameworkBundle"
+    },
+    {
+     "sym": "$sSo24UISceneConnectionOptionsC11HealthKitUIE33shouldHandleActiveWorkoutRecoverySbvg"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "HomeKit",
+   "path": "/System/Library/Frameworks/HomeKit.framework/HomeKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "HMHome"
+    },
+    {
+     "objc": "HMRoom"
+    },
+    {
+     "sym": "HMProxify"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "ImageIO",
+   "path": "/System/Library/Frameworks/ImageIO.framework/ImageIO",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "kIsSRGB"
+    },
+    {
+     "sym": "kIsNotICC"
+    },
+    {
+     "sym": "kIsAdobeRGB"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Intents",
+   "path": "/System/Library/Frameworks/Intents.framework/Intents",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "INCar"
+    },
+    {
+     "objc": "INFile"
+    },
+    {
+     "sym": "INIsHomepod"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "LinkPresentation",
+   "path": "/System/Library/Frameworks/LinkPresentation.framework/LinkPresentation",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "LPAudio"
+    },
+    {
+     "objc": "LPEvent"
+    },
+    {
+     "sym": "nameForStyle"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "LinkSecurity",
+   "path": "/System/Library/Frameworks/LinkSecurity.framework/LinkSecurity",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "LSLinkSecurityManager"
+    },
+    {
+     "sym": "$sSo21LSLinkSecurityManagerCMa"
+    },
+    {
+     "sym": "$s12LinkSecurity0aB9ConstantsOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "LiveCommunicationKit",
+   "path": "/System/Library/Frameworks/LiveCommunicationKit.framework/LiveCommunicationKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s20LiveCommunicationKit6HandleVMa"
+    },
+    {
+     "sym": "$s20LiveCommunicationKit10XPCWrapperCMa"
+    },
+    {
+     "sym": "$s20LiveCommunicationKit6HandleV4KindOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "LocalAuthentication",
+   "path": "/System/Library/Frameworks/LocalAuthentication.framework/LocalAuthentication",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "LAContext"
+    },
+    {
+     "objc": "LAStorage"
+    },
+    {
+     "sym": "LAErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "ManagedSettings",
+   "path": "/System/Library/Frameworks/ManagedSettings.framework/ManagedSettings",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s15ManagedSettings0abB0VMa"
+    },
+    {
+     "sym": "$s15ManagedSettings5TokenVMa"
+    },
+    {
+     "sym": "$s15ManagedSettings04NewsB0VMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "MapKit",
+   "path": "/System/Library/Frameworks/MapKit.framework/MapKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MKRoute"
+    },
+    {
+     "objc": "MKShape"
+    },
+    {
+     "sym": "kOpacityKey"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Matter",
+   "path": "/System/Library/Frameworks/Matter.framework/Matter",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MTRDevice"
+    },
+    {
+     "objc": "MTRCluster"
+    },
+    {
+     "sym": "MTRDataKey"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "MatterSupport",
+   "path": "/System/Library/Frameworks/MatterSupport.framework/MatterSupport",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MTSXPCServer"
+    },
+    {
+     "objc": "MTSAuthorization"
+    },
+    {
+     "sym": "MTSErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "MediaIntents",
+   "path": "/System/Library/Frameworks/MediaIntents.framework/MediaIntents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s12MediaIntents11AudioSearchVMa"
+    },
+    {
+     "sym": "$s12MediaIntents11VideoSearchVMa"
+    },
+    {
+     "sym": "$s12MediaIntents11AudioSearchV5ErrorOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "MediaPlayer",
+   "path": "/System/Library/Frameworks/MediaPlayer.framework/MediaPlayer",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MPAVItem"
+    },
+    {
+     "objc": "MPAVRoute"
+    },
+    {
+     "sym": "MPErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "MobileCoreServices",
+   "path": "/System/Library/Frameworks/MobileCoreServices.framework/MobileCoreServices",
+   "status": "test",
+   "probes": []
+  },
+  {
+   "kind": "framework",
+   "name": "MusicKit",
+   "path": "/System/Library/Frameworks/MusicKit.framework/MusicKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MusicKit_SoftLinking"
+    },
+    {
+     "objc": "MusicKit_SoftLinking_CatalogID"
+    },
+    {
+     "sym": "MusicKit_SoftLinking_LibraryErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "MusicUnderstanding",
+   "path": "/System/Library/Frameworks/MusicUnderstanding.framework/MusicUnderstanding",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s18MusicUnderstanding4BeatVMa"
+    },
+    {
+     "sym": "$s18MusicUnderstanding4HintVMa"
+    },
+    {
+     "sym": "$s18MusicUnderstanding5DequeVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "NaturalLanguage",
+   "path": "/System/Library/Frameworks/NaturalLanguage.framework/NaturalLanguage",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NLModel"
+    },
+    {
+     "objc": "NLTagger"
+    },
+    {
+     "sym": "NLTagDash"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "NearbyInteraction",
+   "path": "/System/Library/Frameworks/NearbyInteraction.framework/NearbyInteraction",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NIHeading"
+    },
+    {
+     "objc": "NISession"
+    },
+    {
+     "sym": "NIErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Network",
+   "path": "/System/Library/Frameworks/Network.framework/Network",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NWPath"
+    },
+    {
+     "objc": "NWBrowser"
+    },
+    {
+     "sym": "in_pseudo"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "NetworkExtension",
+   "path": "/System/Library/Frameworks/NetworkExtension.framework/NetworkExtension",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NEIPC"
+    },
+    {
+     "objc": "NEVPN"
+    },
+    {
+     "sym": "trimURL"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "NowPlaying",
+   "path": "/System/Library/Frameworks/NowPlaying.framework/NowPlaying",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s10NowPlaying7ArtworkVMa"
+    },
+    {
+     "sym": "$s10NowPlaying9MediaTypeOMa"
+    },
+    {
+     "sym": "$s10NowPlaying11BookContentVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "OSLog",
+   "path": "/System/Library/Frameworks/OSLog.framework/OSLog",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "OSLogEntry"
+    },
+    {
+     "objc": "OSLogStore"
+    },
+    {
+     "sym": "convertEventProxyToEntry"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "PassKit",
+   "path": "/System/Library/Frameworks/PassKit.framework/PassKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "PKDiff"
+    },
+    {
+     "objc": "PKPass"
+    },
+    {
+     "sym": "PKIsTV"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "PhotosUI",
+   "path": "/System/Library/Frameworks/PhotosUI.framework/PhotosUI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "PUPickerOtherFilter"
+    },
+    {
+     "objc": "PUPickerCompoundFilter"
+    },
+    {
+     "sym": "PHPickerModeMax"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "PushKit",
+   "path": "/System/Library/Frameworks/PushKit.framework/PushKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "PKPushPayload"
+    },
+    {
+     "objc": "PKPushRegistry"
+    },
+    {
+     "sym": "PKPushTypeVoIP"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "QuartzCore",
+   "path": "/System/Library/Frameworks/QuartzCore.framework/QuartzCore",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CALayer"
+    },
+    {
+     "objc": "CAState"
+    },
+    {
+     "sym": "CAPointZero"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "RelevanceKit",
+   "path": "/System/Library/Frameworks/RelevanceKit.framework/RelevanceKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "RKRelevantContext"
+    },
+    {
+     "objc": "RKDateRelevantContext"
+    },
+    {
+     "sym": "$sSo17RKRelevantContextCMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SafetyKit",
+   "path": "/System/Library/Frameworks/SafetyKit.framework/SafetyKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SAError"
+    },
+    {
+     "objc": "SAClient"
+    },
+    {
+     "sym": "SAErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SceneKit",
+   "path": "/System/Library/Frameworks/SceneKit.framework/SceneKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SCNBox"
+    },
+    {
+     "objc": "SCNCone"
+    },
+    {
+     "sym": "SCNErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Security",
+   "path": "/System/Library/Frameworks/Security.framework/Security",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SecABC"
+    },
+    {
+     "objc": "SFSQLite"
+    },
+    {
+     "sym": "oidFee"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SecurityUI",
+   "path": "/System/Library/Frameworks/SecurityUI.framework/SecurityUI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SFCertificatePresentationRequest"
+    },
+    {
+     "objc": "SFCertificatePresentationController"
+    },
+    {
+     "sym": "$s10SecurityUI5SFLogOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "ShazamKit",
+   "path": "/System/Library/Frameworks/ShazamKit.framework/ShazamKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SHError"
+    },
+    {
+     "objc": "SHMatch"
+    },
+    {
+     "sym": "SHErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SoundAnalysis",
+   "path": "/System/Library/Frameworks/SoundAnalysis.framework/SoundAnalysis",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SNFileItem"
+    },
+    {
+     "objc": "SNTimeUtils"
+    },
+    {
+     "sym": "SNErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SpriteKit",
+   "path": "/System/Library/Frameworks/SpriteKit.framework/SpriteKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SKNode"
+    },
+    {
+     "objc": "SKView"
+    },
+    {
+     "sym": "skCurrentTime"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "StateReporting",
+   "path": "/System/Library/Frameworks/StateReporting.framework/StateReporting",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SRObjcWrapper"
+    },
+    {
+     "objc": "SRNotification"
+    },
+    {
+     "sym": "SREmitStateSignpost"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "StoreKit",
+   "path": "/System/Library/Frameworks/StoreKit.framework/StoreKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SKAccount"
+    },
+    {
+     "objc": "SKPayment"
+    },
+    {
+     "sym": "SKErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SwiftData",
+   "path": "/System/Library/Frameworks/SwiftData.framework/SwiftData",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s9SwiftData6SchemaCMa"
+    },
+    {
+     "sym": "$s9SwiftData0aB5ErrorVMa"
+    },
+    {
+     "sym": "$s9SwiftData0B10StoreErrorOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SwiftUI",
+   "path": "/System/Library/Frameworks/SwiftUI.framework/SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SwiftUIGlue2"
+    },
+    {
+     "sym": "SwiftUIGlue2Class"
+    },
+    {
+     "sym": "SwiftUITextAnimationProviderClass"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "SwiftUICore",
+   "path": "/System/Library/Frameworks/SwiftUICore.framework/SwiftUICore",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SwiftUICoreGlue"
+    },
+    {
+     "objc": "SwiftUICoreGlue2"
+    },
+    {
+     "sym": "SwiftUICoreTextAnimationProviderClass"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Symbols",
+   "path": "/System/Library/Frameworks/Symbols.framework/Symbols",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NSSymbolEffect"
+    },
+    {
+     "objc": "NSSymbolPulseEffect"
+    },
+    {
+     "sym": "$s7Symbols17DrawLayerBehaviorOMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "TabularData",
+   "path": "/System/Library/Frameworks/TabularData.framework/TabularData",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s11TabularData5OrderOMa"
+    },
+    {
+     "sym": "$s11TabularData6ColumnVMa"
+    },
+    {
+     "sym": "$s11TabularData0B5FrameVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "TipKit",
+   "path": "/System/Library/Frameworks/TipKit.framework/TipKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s6TipKit4TipsOMa"
+    },
+    {
+     "sym": "$s6TipKit03AnyA0VMa"
+    },
+    {
+     "sym": "$s6TipKit0A4ViewVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Translation",
+   "path": "/System/Library/Frameworks/Translation.framework/Translation",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "LTTextUtilities"
+    },
+    {
+     "sym": "kLTAssetMinimumSize"
+    },
+    {
+     "sym": "kLTAssetReservedSize"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "UIKit",
+   "path": "/System/Library/Frameworks/UIKit.framework/UIKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "UIKey"
+    },
+    {
+     "objc": "UINib"
+    },
+    {
+     "sym": "UIApp"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "UniformTypeIdentifiers",
+   "path": "/System/Library/Frameworks/UniformTypeIdentifiers.framework/UniformTypeIdentifiers",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "UTType"
+    },
+    {
+     "objc": "UTTypeCodingBox"
+    },
+    {
+     "sym": "UTTypeAVI"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "UserNotifications",
+   "path": "/System/Library/Frameworks/UserNotifications.framework/UserNotifications",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "UNOneTimeCode"
+    },
+    {
+     "objc": "UNNotification"
+    },
+    {
+     "sym": "UNCCatchMe"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "UserNotificationsUI",
+   "path": "/System/Library/Frameworks/UserNotificationsUI.framework/UserNotificationsUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "UNLogExtensions"
+    },
+    {
+     "sym": "UNLogExtensionsHost"
+    },
+    {
+     "sym": "UNLogExtensionsService"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "Vision",
+   "path": "/System/Library/Frameworks/Vision.framework/Vision",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "VNPoint"
+    },
+    {
+     "objc": "VNCircle"
+    },
+    {
+     "sym": "VNErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "WatchConnectivity",
+   "path": "/System/Library/Frameworks/WatchConnectivity.framework/WatchConnectivity",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "WCMessage"
+    },
+    {
+     "objc": "WCSession"
+    },
+    {
+     "sym": "wc_log"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "WatchKit",
+   "path": "/System/Library/Frameworks/WatchKit.framework/WatchKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "WKError"
+    },
+    {
+     "objc": "WKImage"
+    },
+    {
+     "sym": "TopKey"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "WeatherKit",
+   "path": "/System/Library/Frameworks/WeatherKit.framework/WeatherKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s10WeatherKit0A0VMa"
+    },
+    {
+     "sym": "$s10WeatherKit4NewsVMa"
+    },
+    {
+     "sym": "$s10WeatherKit4WindVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "WidgetKit",
+   "path": "/System/Library/Frameworks/WidgetKit.framework/WidgetKit",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CHKWidgetEnvironment"
+    },
+    {
+     "objc": "CHKWidgetPersonality"
+    },
+    {
+     "sym": "WGWidgetUserInfoKeyKind"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "WorkoutKit",
+   "path": "/System/Library/Frameworks/WorkoutKit.framework/WorkoutKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s10WorkoutKit0A4GoalOMa"
+    },
+    {
+     "sym": "$s10WorkoutKit0A4PlanVMa"
+    },
+    {
+     "sym": "$s10WorkoutKit0A4StepVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_AVKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_AVKit_SwiftUI.framework/_AVKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s14_AVKit_SwiftUI11VideoPlayerVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_AppIntents_HealthKit",
+   "path": "/System/Library/Frameworks/_AppIntents_HealthKit.framework/_AppIntents_HealthKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s10AppIntents12AudioContextV01_aB10_HealthKitE21WorkoutIntensityLevelVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_AppIntents_SwiftUI",
+   "path": "/System/Library/Frameworks/_AppIntents_SwiftUI.framework/_AppIntents_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s19_AppIntents_SwiftUI10IntentViewVMa"
+    },
+    {
+     "sym": "$s19_AppIntents_SwiftUI11SiriTipViewVMa"
+    },
+    {
+     "sym": "$s19_AppIntents_SwiftUI14CardSnippet_V0VMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_AppIntents_UIKit",
+   "path": "/System/Library/Frameworks/_AppIntents_UIKit.framework/_AppIntents_UIKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s17_AppIntents_UIKit0C12BridgeLoaderCMa"
+    },
+    {
+     "sym": "$s17_AppIntents_UIKit01_A15IntentExecutionVMa"
+    },
+    {
+     "sym": "$s17_AppIntents_UIKit0A20EntityViewAnnotationCMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_AuthenticationServices_SwiftUI",
+   "path": "/System/Library/Frameworks/_AuthenticationServices_SwiftUI.framework/_AuthenticationServices_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s31_AuthenticationServices_SwiftUI03WebA7SessionVMa"
+    },
+    {
+     "sym": "$s31_AuthenticationServices_SwiftUI21ASAuthorizationResultOMa"
+    },
+    {
+     "sym": "$s31_AuthenticationServices_SwiftUI21SignInWithAppleButtonVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_ClockKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_ClockKit_SwiftUI.framework/_ClockKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s17_ClockKit_SwiftUI10_NilHiddenVMa"
+    },
+    {
+     "sym": "$s17_ClockKit_SwiftUI25ComplicationRenderingModeOMa"
+    },
+    {
+     "sym": "$s17_ClockKit_SwiftUI27_ComplicationPreviewContextVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_Contacts_AppIntents",
+   "path": "/System/Library/Frameworks/_Contacts_AppIntents.framework/_Contacts_AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s20_Contacts_AppIntents21CNPostalAddressEntityVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_CoreData_CloudKit",
+   "path": "/System/Library/Frameworks/_CoreData_CloudKit.framework/_CoreData_CloudKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$sSo36NSPersistentCloudKitContainerOptionsC010_CoreData_bC0E13databaseScopeSo010CKDatabaseI0VvM"
+    },
+    {
+     "sym": "$sSo36NSPersistentCloudKitContainerOptionsC010_CoreData_bC0E13databaseScopeSo010CKDatabaseI0Vvg"
+    },
+    {
+     "sym": "$sSo36NSPersistentCloudKitContainerOptionsC010_CoreData_bC0E13databaseScopeSo010CKDatabaseI0Vvs"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_CoreLocationUI_SwiftUI",
+   "path": "/System/Library/Frameworks/_CoreLocationUI_SwiftUI.framework/_CoreLocationUI_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s021_CoreLocationUI_SwiftC00B6ButtonVMa"
+    },
+    {
+     "sym": "$s021_CoreLocationUI_SwiftC00B6ButtonV5TitleVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_DataDetection_SwiftUI",
+   "path": "/System/Library/Frameworks/_DataDetection_SwiftUI.framework/_DataDetection_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s7SwiftUI4ViewP015_DataDetection_aB0E04dataE0_7optionsQr0dE00D8DetectorO9MatchTypeV_AI7OptionsVtF"
+    },
+    {
+     "sym": "$s7SwiftUI4ViewP015_DataDetection_aB0E04dataE0_7optionsQr0dE00D8DetectorO9MatchTypeV_AI7OptionsVtFQOMQ"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_GeoToolbox_AppIntents",
+   "path": "/System/Library/Frameworks/_GeoToolbox_AppIntents.framework/_GeoToolbox_AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s22_GeoToolbox_AppIntents21PlaceDescriptorEntityVMa"
+    },
+    {
+     "sym": "$s22_GeoToolbox_AppIntents21PlaceDescriptorEntityV0e14RepresentationG0VMa"
+    },
+    {
+     "sym": "$s22_GeoToolbox_AppIntents21PlaceDescriptorEntityV010Supportinge14RepresentationG0VMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_HomeKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_HomeKit_SwiftUI.framework/_HomeKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s16_HomeKit_SwiftUI10CameraViewVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_Intents_TipKit",
+   "path": "/System/Library/Frameworks/_Intents_TipKit.framework/_Intents_TipKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s15_Intents_TipKit04Siric6IntentB0Mp"
+    },
+    {
+     "sym": "$s15_Intents_TipKit04Siric6IntentB0TL"
+    },
+    {
+     "sym": "$s15_Intents_TipKit04Siric6IntentB0PxycfCTj"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_LinkPresentation_AppIntents",
+   "path": "/System/Library/Frameworks/_LinkPresentation_AppIntents.framework/_LinkPresentation_AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s28_LinkPresentation_AppIntents0A14MetadataEntityVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_LocationEssentials",
+   "path": "/System/Library/Frameworks/_LocationEssentials.framework/_LocationEssentials",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CLFloor"
+    },
+    {
+     "objc": "CLLocation"
+    },
+    {
+     "sym": "CLTimeIntervalMax"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_MapKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_MapKit_SwiftUI.framework/_MapKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s15_MapKit_SwiftUI0A0VMa"
+    },
+    {
+     "sym": "$s15_MapKit_SwiftUI0A3PinVMa"
+    },
+    {
+     "sym": "$s15_MapKit_SwiftUI6MarkerVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_MediaIntents_AppIntents",
+   "path": "/System/Library/Frameworks/_MediaIntents_AppIntents.framework/_MediaIntents_AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s017_MediaIntents_AppB014TVSeasonEntityVMa"
+    },
+    {
+     "sym": "$s017_MediaIntents_AppB016VideoImageEntityVMa"
+    },
+    {
+     "sym": "$s017_MediaIntents_AppB017AudioSearchEntityVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_MediaPlayer_AppIntents",
+   "path": "/System/Library/Frameworks/_MediaPlayer_AppIntents.framework/_MediaPlayer_AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MPAppEntityIdentifier"
+    },
+    {
+     "sym": "$s23_MediaPlayer_AppIntents21MPAppEntityIdentifierCMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_MusicKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_MusicKit_SwiftUI.framework/_MusicKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s17_MusicKit_SwiftUI0A5AngelCMa"
+    },
+    {
+     "sym": "$s17_MusicKit_SwiftUI01_A6PickerVMa"
+    },
+    {
+     "sym": "$s17_MusicKit_SwiftUI12ArtworkImageVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_NowPlaying_AppIntents",
+   "path": "/System/Library/Frameworks/_NowPlaying_AppIntents.framework/_NowPlaying_AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s10NowPlaying25MediaContentRepresentableP01_aB11_AppIntentsE20appEntityIdentifiersSay0fG00I10IdentifierVGvM"
+    },
+    {
+     "sym": "$s10NowPlaying25MediaContentRepresentableP01_aB11_AppIntentsE20appEntityIdentifiersSay0fG00I10IdentifierVGvg"
+    },
+    {
+     "sym": "$s10NowPlaying25MediaContentRepresentableP01_aB11_AppIntentsE20appEntityIdentifiersSay0fG00I10IdentifierVGvs"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_PassKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_PassKit_SwiftUI.framework/_PassKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "PKPassKitSwiftUIObjcBridge"
+    },
+    {
+     "sym": "$s16_PassKit_SwiftUI03AddA14ToWalletButtonVMa"
+    },
+    {
+     "sym": "$s16_PassKit_SwiftUI012PayWithAppleE6ButtonVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_PhotosUI_SwiftUI",
+   "path": "/System/Library/Frameworks/_PhotosUI_SwiftUI.framework/_PhotosUI_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s015_PhotosUI_SwiftB00A6PickerVMa"
+    },
+    {
+     "sym": "$s015_PhotosUI_SwiftB00A10PickerItemVMa"
+    },
+    {
+     "sym": "$s015_PhotosUI_SwiftB00A11PickerStyleVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_RelevanceKit_MapKit",
+   "path": "/System/Library/Frameworks/_RelevanceKit_MapKit.framework/_RelevanceKit_MapKit",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s10AppIntents15RelevantContextV017_RelevanceKit_MapF0E8location8categoryACSgSo25MKPointOfInterestCategorya_tFZ"
+    },
+    {
+     "sym": "$s10AppIntents15RelevantContextV017_RelevanceKit_MapF0E8location8category12countryCodesACSgSo25MKPointOfInterestCategorya_ShySSGSgtFZ"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_SceneKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_SceneKit_SwiftUI.framework/_SceneKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s17_SceneKit_SwiftUI0A4ViewVMa"
+    },
+    {
+     "sym": "$s17_SceneKit_SwiftUI0A4ViewV7OptionsVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_SpriteKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_SpriteKit_SwiftUI.framework/_SpriteKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s18_SpriteKit_SwiftUI0A4ViewVMa"
+    },
+    {
+     "sym": "$s18_SpriteKit_SwiftUI0A4ViewV7OptionsVMa"
+    },
+    {
+     "sym": "$s18_SpriteKit_SwiftUI0A4ViewV12DebugOptionsVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_StoreKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_StoreKit_SwiftUI.framework/_StoreKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SubscriptionOfferCodeViewController"
+    },
+    {
+     "sym": "$s17_StoreKit_SwiftUI0A4ViewVMa"
+    },
+    {
+     "sym": "$s17_StoreKit_SwiftUI11ProductViewVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_SwiftData_CoreData",
+   "path": "/System/Library/Frameworks/_SwiftData_CoreData.framework/_SwiftData_CoreData",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$sSo20NSManagedObjectModelC015_SwiftData_CoreE0E011makeManagedbC03for10mergedWithABSg0dE06SchemaC_AGtF"
+    },
+    {
+     "sym": "$sSo20NSManagedObjectModelC015_SwiftData_CoreE0E011makeManagedbC03for10mergedWithABSg0dE06SchemaC_AGtFZ"
+    },
+    {
+     "sym": "$sSo20NSManagedObjectModelC015_SwiftData_CoreE0E011makeManagedbC03for10mergedWithABSg0dE0010PersistentC0_pXpd_AGtFZ"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_SwiftData_SwiftUI",
+   "path": "/System/Library/Frameworks/_SwiftData_SwiftUI.framework/_SwiftData_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s011_SwiftData_A2UI5QueryVMa"
+    },
+    {
+     "sym": "$s011_SwiftData_A2UI13ModelDocumentVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_UserNotifications_AppIntents",
+   "path": "/System/Library/Frameworks/_UserNotifications_AppIntents.framework/_UserNotifications_AppIntents",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$sSo21UNNotificationContentC29_UserNotifications_AppIntentsE21_appEntityIdentifiersSay0eF00H10IdentifierVGvg"
+    },
+    {
+     "sym": "$sSo21UNNotificationContentC29_UserNotifications_AppIntentsE21_appEntityIdentifiersSay0eF00H10IdentifierVGvpMV"
+    },
+    {
+     "sym": "$sSo28UNMutableNotificationContentC29_UserNotifications_AppIntentsE20appEntityIdentifiersSay0fG00I10IdentifierVGvM"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_WatchKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_WatchKit_SwiftUI.framework/_WatchKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s17_WatchKit_SwiftUI14NowPlayingViewVMa"
+    }
+   ]
+  },
+  {
+   "kind": "framework",
+   "name": "_WorkoutKit_SwiftUI",
+   "path": "/System/Library/Frameworks/_WorkoutKit_SwiftUI.framework/_WorkoutKit_SwiftUI",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "$s7SwiftUI4ViewP012_WorkoutKit_aB0E14workoutPreview_11isPresentedQr0dE00D4PlanV_AA7BindingVySbGtF"
+    },
+    {
+     "sym": "$s7SwiftUI4ViewP012_WorkoutKit_aB0E14workoutPreview_11isPresentedQr0dE00D4PlanV_AA7BindingVySbGtFQOMQ"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAWDSupport",
+   "path": "/usr/lib/libAWDSupport.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "setupAWDConnection"
+    },
+    {
+     "sym": "teardownAWDConnection"
+    },
+    {
+     "sym": "_ZN3awd15getAWDTimestampEv"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAWDSupportFramework",
+   "path": "/usr/lib/libAWDSupportFramework.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "AWDTuple"
+    },
+    {
+     "objc": "AWDPushSent"
+    },
+    {
+     "sym": "AWDTupleReadFrom"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAXSafeCategoryBundle",
+   "path": "/usr/lib/libAXSafeCategoryBundle.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "UIAccessibilitySafeCategory"
+    },
+    {
+     "sym": "UIAccessibilityInstallSafeCategory"
+    },
+    {
+     "sym": "AXSetValidationErrorLoggingFunction"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAXSpeechManager",
+   "path": "/usr/lib/libAXSpeechManager.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "AXSpeechTransformText"
+    },
+    {
+     "sym": "AXSpeechTransformTextWithLanguage"
+    },
+    {
+     "sym": "AXSpeechLanguageCanonicalFormToGeneralLanguage"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAccessibility",
+   "path": "/usr/lib/libAccessibility.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "AccessibilitySupportOverrides"
+    },
+    {
+     "sym": "kAXAACEntitlement"
+    },
+    {
+     "sym": "AXSVoltaDataDirectory"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAppPatch",
+   "path": "/usr/lib/libAppPatch.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "MIApplyAppPatch"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAppleArchive",
+   "path": "/usr/lib/libAppleArchive.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "AAHeaderClear"
+    },
+    {
+     "sym": "AAHeaderClone"
+    },
+    {
+     "sym": "AEAStreamSign"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAppleEXR",
+   "path": "/usr/lib/libAppleEXR.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "axr_data_create"
+    },
+    {
+     "sym": "axr_get_version"
+    },
+    {
+     "sym": "axr_decoder_copy"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAudioDSPCore",
+   "path": "/usr/lib/libAudioDSPCore.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZN2IR6IRDataD1Ev"
+    },
+    {
+     "sym": "_ZN2IR6IRDataD2Ev"
+    },
+    {
+     "sym": "_ZN2IR6IRDataC1ERKS0_"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libAudioStatistics",
+   "path": "/usr/lib/libAudioStatistics.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "CAReporter"
+    },
+    {
+     "objc": "CATestReporter"
+    },
+    {
+     "sym": "CAReportingTestName"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libBacktraceRecording",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libCRFSuite",
+   "path": "/usr/lib/libCRFSuite.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "svm_train"
+    },
+    {
+     "sym": "svm_predict"
+    },
+    {
+     "sym": "maxent_train"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libCTGreenTeaLogger",
+   "path": "/usr/lib/libCTGreenTeaLogger.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "getCTGreenTeaOsLogHandle"
+    },
+    {
+     "sym": "ct_green_tea_logger_create"
+    },
+    {
+     "sym": "ct_green_tea_logger_destroy"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libChineseTokenizer",
+   "path": "/usr/lib/libChineseTokenizer.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "ChineseTokenizerCreate"
+    },
+    {
+     "sym": "ChineseTokenizerRelease"
+    },
+    {
+     "sym": "ChineseTokenizerSetString"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libCoreEntitlements",
+   "path": "/usr/lib/libCoreEntitlements.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "CECRuntime"
+    },
+    {
+     "sym": "CEValidate"
+    },
+    {
+     "sym": "kCENoError"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libCoreEntitlements_V2",
+   "path": "/usr/lib/libCoreEntitlements_V2.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "CEElementPrint"
+    },
+    {
+     "sym": "CEStringCompare"
+    },
+    {
+     "sym": "CEElementGetBool"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libDetachedCertificates",
+   "path": "/usr/lib/libDetachedCertificates.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "DetachedCertificateEntry"
+    },
+    {
+     "objc": "DetachedCertificatesFile"
+    },
+    {
+     "sym": "kDetachedCertificatesErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libDetachedCertificatesLookup",
+   "path": "/usr/lib/libDetachedCertificatesLookup.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "DetachedCertificatesLookup"
+    },
+    {
+     "sym": "kDetachedCertificatesLookupErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libFosl_dynamic",
+   "path": "/usr/lib/libFosl_dynamic.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "fosl_filter_addChild"
+    },
+    {
+     "sym": "fosl_filter_dumpGraph"
+    },
+    {
+     "sym": "fosl_filter_assignRoot"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libLeaksAtExit",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libLogRedirect",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libMainThreadChecker",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libMobileGestalt",
+   "path": "/usr/lib/libMobileGestalt.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "OS_MobileGestalt"
+    },
+    {
+     "sym": "MGCopyAnswer"
+    },
+    {
+     "sym": "MGCacheDestroy"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libMobileGestaltExtensions",
+   "path": "/usr/lib/libMobileGestaltExtensions.dylib",
+   "status": "test",
+   "probes": []
+  },
+  {
+   "kind": "library",
+   "name": "libParallelCompression",
+   "path": "/usr/lib/libParallelCompression.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "BXDiff5"
+    },
+    {
+     "sym": "BXPatch5"
+    },
+    {
+     "sym": "BXPatchFile"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libRPAC",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libSecureMAHelper",
+   "path": "/usr/lib/libSecureMAHelper.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SecureMAHelper"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libSoftwareUpdateSSO",
+   "path": "/usr/lib/libSoftwareUpdateSSO.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "SoftwareUpdateSSO"
+    },
+    {
+     "objc": "SoftwareUpdateExtensibleSSOAuthenticator"
+    },
+    {
+     "sym": "copyDawToken"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libSpatial",
+   "path": "/usr/lib/libSpatial.dylib",
+   "status": "test",
+   "probes": []
+  },
+  {
+   "kind": "library",
+   "name": "libSystem.B",
+   "path": "/usr/lib/libSystem.B.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "mach_init_routine"
+    },
+    {
+     "sym": "libSystem_init_after_boot_tasks_4launchd"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libSystem.B_asan",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libTLE",
+   "path": "/usr/lib/libTLE.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "LWCR"
+    },
+    {
+     "objc": "LWCRFact"
+    },
+    {
+     "sym": "LWCRErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libTelephonyUtilDynamic",
+   "path": "/usr/lib/libTelephonyUtilDynamic.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZN3ctu3hexEa"
+    },
+    {
+     "sym": "_ZN3ctu3hexEc"
+    },
+    {
+     "sym": "_ZN3ctu3hexEh"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libThaiTokenizer",
+   "path": "/usr/lib/libThaiTokenizer.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "ThaiTokenizerCreate"
+    },
+    {
+     "sym": "ThaiTokenizerDestroy"
+    },
+    {
+     "sym": "ThaiTokenizerSetString"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libViewDebuggerSupport",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libapp_launch_measurement",
+   "path": "/usr/lib/libapp_launch_measurement.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "alm_app_did_present"
+    },
+    {
+     "sym": "alm_app_will_launch"
+    },
+    {
+     "sym": "alm_is_internal_app"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libapple_nghttp2",
+   "path": "/usr/lib/libapple_nghttp2.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "nghttp2_version"
+    },
+    {
+     "sym": "nghttp2_is_fatal"
+    },
+    {
+     "sym": "nghttp2_strerror"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libarchive.2",
+   "path": "/usr/lib/libarchive.2.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "archive_free"
+    },
+    {
+     "sym": "archive_errno"
+    },
+    {
+     "sym": "archive_format"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libate",
+   "path": "/usr/lib/libate.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "at_encoder_create"
+    },
+    {
+     "sym": "at_block_get_features"
+    },
+    {
+     "sym": "at_encoder_get_version"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libboringssl",
+   "path": "/usr/lib/libboringssl.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "HMAC"
+    },
+    {
+     "sym": "BN_dup"
+    },
+    {
+     "sym": "BN_new"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libbsm.0",
+   "path": "/usr/lib/libbsm.0.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "endac"
+    },
+    {
+     "sym": "setac"
+    },
+    {
+     "sym": "au_open"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libbz2.1.0",
+   "path": "/usr/lib/libbz2.1.0.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "BZ2_bzRead"
+    },
+    {
+     "sym": "BZ2_bzopen"
+    },
+    {
+     "sym": "BZ2_bzread"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libc++.1",
+   "path": "/usr/lib/libc++.1.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZTIa"
+    },
+    {
+     "sym": "_ZTIb"
+    },
+    {
+     "sym": "_ZTIc"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libc++abi",
+   "path": "/usr/lib/libc++abi.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZTIa"
+    },
+    {
+     "sym": "_ZTIb"
+    },
+    {
+     "sym": "_ZTIc"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcharset.1",
+   "path": "/usr/lib/libcharset.1.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "locale_charset"
+    },
+    {
+     "sym": "libcharset_set_relocation_prefix"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcmark-gfm",
+   "path": "/usr/lib/libcmark-gfm.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "cmark_isalnum"
+    },
+    {
+     "sym": "cmark_isalpha"
+    },
+    {
+     "sym": "cmark_isdigit"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcmph",
+   "path": "/usr/lib/libcmph.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "cmph_new"
+    },
+    {
+     "sym": "cmph_dump"
+    },
+    {
+     "sym": "cmph_load"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcompression",
+   "path": "/usr/lib/libcompression.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "cosl_codec_map"
+    },
+    {
+     "sym": "cosl_codec_unmap"
+    },
+    {
+     "sym": "cosmix_codec_map"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcoreroutine",
+   "path": "/usr/lib/libcoreroutine.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "RTXPC"
+    },
+    {
+     "objc": "RTStore"
+    },
+    {
+     "sym": "kMaxAge"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcoretls",
+   "path": "/usr/lib/libcoretls.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "CurvesCount"
+    },
+    {
+     "sym": "KnownCurves"
+    },
+    {
+     "sym": "KnownSigAlgs"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcoretls_cfhelpers",
+   "path": "/usr/lib/libcoretls_cfhelpers.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "tls_helper_set_peer_pubkey"
+    },
+    {
+     "sym": "tls_helper_create_peer_trust"
+    },
+    {
+     "sym": "tls_helper_set_identity_from_array"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libcupolicy",
+   "path": "/usr/lib/libcupolicy.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "perform_first_network_use_flow"
+    },
+    {
+     "sym": "network_usage_policy_create_client"
+    },
+    {
+     "sym": "network_usage_policy_destroy_client"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libdns_services",
+   "path": "/usr/lib/libdns_services.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "dnssd_retain"
+    },
+    {
+     "sym": "dnssd_release"
+    },
+    {
+     "sym": "advertising_proxy_stop"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libedit.3",
+   "path": "/usr/lib/libedit.3.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "el_end"
+    },
+    {
+     "sym": "el_get"
+    },
+    {
+     "sym": "el_set"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libexpat.1",
+   "path": "/usr/lib/libexpat.1.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "XML_Parse"
+    },
+    {
+     "sym": "XML_GetBase"
+    },
+    {
+     "sym": "XML_MemFree"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libexslt.0",
+   "path": "/usr/lib/libexslt.0.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "exsltDynRegister"
+    },
+    {
+     "sym": "exsltRegisterAll"
+    },
+    {
+     "sym": "exsltStrRegister"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libffi-trampolines",
+   "path": "/usr/lib/libffi-trampolines.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "ffi_closure_trampoline_table_page"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libffi",
+   "path": "/usr/lib/libffi.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "ffi_call"
+    },
+    {
+     "sym": "ffi_prep_cif"
+    },
+    {
+     "sym": "ffi_raw_call"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libform.5.4",
+   "path": "/usr/lib/libform.5.4.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "form_sub"
+    },
+    {
+     "sym": "form_win"
+    },
+    {
+     "sym": "new_form"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libgermantok",
+   "path": "/usr/lib/libgermantok.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "germantok_tokenize"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libgmalloc",
+   "status": "skip",
+   "reason": "Xcode diagnostics library (injected by a scheme option, not app API)"
+  },
+  {
+   "kind": "library",
+   "name": "libheimdal-asn1",
+   "path": "/usr/lib/libheimdal-asn1.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "asn1_abort"
+    },
+    {
+     "sym": "der_get_oid"
+    },
+    {
+     "sym": "der_get_tag"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libheimdalasn1",
+   "path": "/usr/lib/libheimdalasn1.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "asn1_abort"
+    },
+    {
+     "sym": "heim_any_cmp"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libhvf",
+   "path": "/usr/lib/libhvf.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "HVF_part_count"
+    },
+    {
+     "sym": "HVF_glyph_count"
+    },
+    {
+     "sym": "HVF_table_version"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libiconv.2",
+   "path": "/usr/lib/libiconv.2.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "iconv"
+    },
+    {
+     "sym": "iconvctl"
+    },
+    {
+     "sym": "iconvlist"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libicucore.A",
+   "path": "/usr/lib/libicucore.A.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "u_init"
+    },
+    {
+     "sym": "u_digit"
+    },
+    {
+     "sym": "res_read"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "liblangid",
+   "path": "/usr/lib/liblangid.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "langid_reset"
+    },
+    {
+     "sym": "textcat_Init"
+    },
+    {
+     "sym": "langid_create"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "liblzma.5",
+   "path": "/usr/lib/liblzma.5.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "lzma_end"
+    },
+    {
+     "sym": "lzma_code"
+    },
+    {
+     "sym": "lzma_crc32"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libmarisa",
+   "path": "/usr/lib/libmarisa.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZN6marisa4TrieC1Ev"
+    },
+    {
+     "sym": "_ZN6marisa4TrieC2Ev"
+    },
+    {
+     "sym": "_ZN6marisa4TrieD1Ev"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libmdns",
+   "path": "/usr/lib/libmdns.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "mdns_equal"
+    },
+    {
+     "sym": "mdns_retain"
+    },
+    {
+     "sym": "mdns_release"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libmecab",
+   "path": "/usr/lib/libmecab.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "mecab_do"
+    },
+    {
+     "sym": "mecab_new"
+    },
+    {
+     "sym": "mecab_new2"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libmecabra",
+   "path": "/usr/lib/libmecabra.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "MecabraFacemarkCandidate"
+    },
+    {
+     "sym": "MecabraCreate"
+    },
+    {
+     "sym": "MecabraRelease"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libmenu.5.4",
+   "path": "/usr/lib/libmenu.5.4.dylib",
+   "status": "skip",
+   "reason": "not in the watchos 27.2 simulator runtime"
+  },
+  {
+   "kind": "library",
+   "name": "libmorphun",
+   "path": "/usr/lib/libmorphun.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "mccf_quote"
+    },
+    {
+     "sym": "mdv_create"
+    },
+    {
+     "sym": "minf_clone"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libmrc",
+   "path": "/usr/lib/libmrc.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "mrc_retain"
+    },
+    {
+     "sym": "mrc_release"
+    },
+    {
+     "sym": "mrc_dns_proxy_create"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libncurses.5.4",
+   "path": "/usr/lib/libncurses.5.4.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "BC"
+    },
+    {
+     "sym": "PC"
+    },
+    {
+     "sym": "SP"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libnetworkextension",
+   "path": "/usr/lib/libnetworkextension.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "NEFNVHash"
+    },
+    {
+     "objc": "NEBitVector"
+    },
+    {
+     "sym": "NEFlowOpen"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libobjc-trampolines",
+   "path": "/usr/lib/libobjc-trampolines.dylib",
+   "status": "test",
+   "probes": []
+  },
+  {
+   "kind": "library",
+   "name": "libobjc.A",
+   "path": "/usr/lib/libobjc.A.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "Object"
+    },
+    {
+     "objc": "NSObject"
+    },
+    {
+     "sym": "NXMapGet"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libpanel.5.4",
+   "path": "/usr/lib/libpanel.5.4.dylib",
+   "status": "skip",
+   "reason": "not in the watchos 27.2 simulator runtime"
+  },
+  {
+   "kind": "library",
+   "name": "libperfcheck",
+   "path": "/usr/lib/libperfcheck.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "run_easyperf"
+    },
+    {
+     "sym": "ep_session_end"
+    },
+    {
+     "sym": "pc_session_end"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libprequelite",
+   "path": "/usr/lib/libprequelite.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "objc": "PQLResultSet"
+    },
+    {
+     "objc": "PQLConnection"
+    },
+    {
+     "sym": "PQLSqliteErrorDomain"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libprotobuf-lite",
+   "path": "/usr/lib/libprotobuf-lite.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZN20wireless_diagnostics6google8protobuf6ghtonlEj"
+    },
+    {
+     "sym": "_ZTIN20wireless_diagnostics6google8protobuf7ClosureE"
+    },
+    {
+     "sym": "_ZTSN20wireless_diagnostics6google8protobuf7ClosureE"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libprotobuf",
+   "path": "/usr/lib/libprotobuf.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZTIN20wireless_diagnostics6google8protobuf7MessageE"
+    },
+    {
+     "sym": "_ZTSN20wireless_diagnostics6google8protobuf7MessageE"
+    },
+    {
+     "sym": "_ZTVN20wireless_diagnostics6google8protobuf7MessageE"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libquic",
+   "path": "/usr/lib/libquic.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "qpod_conn_free"
+    },
+    {
+     "sym": "qpod_conn_create"
+    },
+    {
+     "sym": "qpod_conn_decode_datagram"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libresolv.9",
+   "path": "/usr/lib/libresolv.9.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "dns_free"
+    },
+    {
+     "sym": "dns_open"
+    },
+    {
+     "sym": "dns_query"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libskit",
+   "path": "/usr/lib/libskit.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "_ZN4skit5Alias4initEv"
+    },
+    {
+     "sym": "_ZN4skit5Alias5closeEv"
+    },
+    {
+     "sym": "_ZN4skit6isimilEPKcS1_"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libsqlite3",
+   "path": "/usr/lib/libsqlite3.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "sqlite3_key"
+    },
+    {
+     "sym": "sqlite3_log"
+    },
+    {
+     "sym": "sqlite3_sql"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libtidy.A",
+   "path": "/usr/lib/libtidy.A.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "tidyIsEOF"
+    },
+    {
+     "sym": "tidyCreate"
+    },
+    {
+     "sym": "tidyStatus"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libusrtcp",
+   "path": "/usr/lib/libusrtcp.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "tcp_next_mtu"
+    },
+    {
+     "sym": "nw_tcp_init_globals"
+    },
+    {
+     "sym": "nw_tcp_destroy_globals"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libutil",
+   "path": "/usr/lib/libutil.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "tzlink"
+    },
+    {
+     "sym": "getmntopts"
+    },
+    {
+     "sym": "freemntopts"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libxml2.2",
+   "path": "/usr/lib/libxml2.2.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "comment"
+    },
+    {
+     "sym": "namePop"
+    },
+    {
+     "sym": "nodePop"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libxpc_datastores",
+   "path": "/usr/lib/libxpc_datastores.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "xpc_datastore_copy_state"
+    },
+    {
+     "sym": "xpc_datastore_publisher_create"
+    },
+    {
+     "sym": "xpc_datastore_subscriber_create"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libxslt.1",
+   "path": "/usr/lib/libxslt.1.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "xsltIf"
+    },
+    {
+     "sym": "xsltCopy"
+    },
+    {
+     "sym": "xsltInit"
+    }
+   ]
+  },
+  {
+   "kind": "library",
+   "name": "libz.1",
+   "path": "/usr/lib/libz.1.dylib",
+   "status": "test",
+   "probes": [
+    {
+     "sym": "crc32"
+    },
+    {
+     "sym": "gzeof"
+    },
+    {
+     "sym": "gzgetc"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- sdkcov: what goes into the code signature itself, as Xcode signs a simulator build ("Sign to Run Locally").
+     The capabilities (sdkcov.entitlements) go only into __TEXT,__entitlements, which the simulator reads: macOS
+     refuses to exec an ad-hoc signature that claims restricted entitlements (OS_REASON_EXEC 8, security policy). -->
+<plist version="1.0"><dict>
+	<key>com.apple.security.get-task-allow</key><true/>
+</dict></plist>

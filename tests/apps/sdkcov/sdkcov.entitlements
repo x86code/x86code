@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- sdkcov: what Xcode embeds for a simulator build (__TEXT,__entitlements) with these capabilities enabled -->
+<plist version="1.0"><dict>
+	<key>application-identifier</key><string>com.x86sim.test.sdkcov</string>
+	<key>keychain-access-groups</key><array><string>com.x86sim.test.sdkcov</string></array>
+	<key>com.apple.security.get-task-allow</key><true/>
+	<key>com.apple.security.application-groups</key><array><string>group.com.x86sim.test.sdkcov</string></array>
+	<key>com.apple.developer.healthkit</key><true/>
+	<key>com.apple.developer.healthkit.access</key><array/>
+	<key>com.apple.developer.homekit</key><true/>
+	<key>com.apple.developer.siri</key><true/>
+	<key>aps-environment</key><string>development</string>
+	<key>com.apple.developer.icloud-container-identifiers</key><array><string>iCloud.com.x86sim.test.sdkcov</string></array>
+	<key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>
+	<key>com.apple.developer.ubiquity-kvstore-identifier</key><string>com.x86sim.test.sdkcov</string>
+	<key>com.apple.developer.game-center</key><true/>
+	<key>com.apple.developer.usernotifications.time-sensitive</key><true/>
+</dict></plist>
