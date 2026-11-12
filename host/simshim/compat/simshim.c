@@ -396,6 +396,91 @@ static void shim_pb_added(const struct mach_header* mh, intptr_t slide)
 	method_setImplementation(m, (IMP) shim_pb_sleep);
 	write(2, "simshim: hooked PBPowerManager sleepSystemWithReason:completion:\n", 65);
 }
+// x86Sim Platforms 2 (visionOS): wakeboardd (the compositor) opens the named semaphore "wakeboardd.first-boot" and,
+// when it has no count (the first wakeboardd since the device booted), keeps the display "pulsing until system shell
+// (backboardd) comes up". Here that never ended: its real-time render loop never started, so backboardd's compositor
+// layer timed out every 10 s (com.apple.compositor.layer -1000) and nothing was ever drawn. The semaphore is given its
+// count before wakeboardd looks, as on its later starts. X86SIM_XR_PULSE=1 keeps the first-boot pulse.
+// DEBUG (Platforms 2): log compositor-layer errors with their userInfo (the underlying error a -1000 wraps)
+static id (*orig_err)(id, SEL, id, long, id);
+static id dbg_err(id cls, SEL sel, id domain, long code, id info)
+{
+	if (code == -1000 && info) {
+		id d = ((id (*)(id, SEL))objc_msgSend)(info, sel_registerName("description"));
+		const char* c = d ? ((const char* (*)(id, SEL))objc_msgSend)(d, sel_registerName("UTF8String")) : "?";
+		fprintf(stderr, "simshim: -1000 userInfo: %s\n", c);
+	}
+	return orig_err(cls, sel, domain, code, info);
+}
+
+static id (*orig_nst)(id, SEL, id);
+static id dbg_nst(id self, SEL sel, id desc)
+{
+	id r = orig_nst(self, sel, desc);
+	fprintf(stderr, "simshim: MTLSimDevice newSharedTextureWithDescriptor -> %p\n", (void*)r);
+	return r;
+}
+static id (*orig_tinit)(id, SEL, id, unsigned long, void*, unsigned long, void*, id, id, BOOL);
+static id dbg_tinit(id self, SEL sel, id desc, unsigned long fmt, void* surf, unsigned long plane, void* ref, id heap, id dev, BOOL shareable)
+{
+	id r = orig_tinit(self, sel, desc, fmt, surf, plane, ref, heap, dev, shareable);
+	fprintf(stderr, "simshim: MTLSimTexture init iosurface %p plane %lu ref %p shareable %d -> %p\n", surf, plane, ref, shareable, (void*)r);
+	return r;
+}
+static void dbg_add_image(const struct mach_header* mh, intptr_t slide)
+{
+	(void)mh; (void)slide;
+	static int done;
+	Class d = objc_getClass("MTLSimDevice"), t = objc_getClass("MTLSimTexture");
+	if (done || !d || !t) return;
+	done = 1;
+	Method m = class_getInstanceMethod(d, sel_registerName("newSharedTextureWithDescriptor:"));
+	if (m) orig_nst = (void*)method_setImplementation(m, (IMP)dbg_nst);
+	m = class_getInstanceMethod(t, sel_registerName("initWithDescriptor:decompressedPixelFormat:iosurface:plane:textureRef:heap:device:shareable:"));
+	if (m) orig_tinit = (void*)method_setImplementation(m, (IMP)dbg_tinit);
+	fprintf(stderr, "simshim: MTLSimDriver debug hooks %p %p\n", (void*)orig_nst, (void*)orig_tinit);
+}
+
+__attribute__((constructor)) static void shim_wb_init(void)
+{
+	const char* e = getenv("X86SIM_XR_PULSE");
+	if (strcmp(getprogname(), "wakeboardd") || (e && *e == '1')) return;
+	if (getenv("X86SIM_XR_ERRLOG")) {
+		Method m = class_getClassMethod(objc_getClass("NSError"), sel_registerName("errorWithDomain:code:userInfo:"));
+		if (m) orig_err = (void*)method_setImplementation(m, (IMP)dbg_err);
+		_dyld_register_func_for_add_image(dbg_add_image);
+	}
+	sem_unlink("wakeboard.is-running");   // left by a wakeboardd that crashed: its successor got EACCES and aborted
+	sem_t* s = sem_open("wakeboardd.first-boot", O_CREAT, 0644, 1);
+	if (s == SEM_FAILED) { fprintf(stderr, "simshim: wakeboardd.first-boot: %d\n", errno); return; }
+	sem_trywait(s);   // take the count if there is one, then give one back: exactly one either way
+	sem_post(s);
+	fprintf(stderr, "simshim: wakeboardd.first-boot given a count (no boot pulse)\n");
+	// EXPERIMENT (Platforms 2): the compositor's state machine goes to Run (7) only while its "run requested" byte is
+	// set (a layer asked for the display); otherwise it settles in Idle / DisplayOff and its real-time render context
+	// never starts, so no layer ever gets the frame pacing it waits for. The read of that byte (ldarb w23 at
+	// 0x10001a4f4 in wakeboardd 24N120) becomes mov w23, #1.
+	const char* r = getenv("X86SIM_XR_RUN");
+	if (r && *r == '0') return;
+	const struct mach_header* mh = NULL;
+	for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+		const char* n = _dyld_get_image_name(i);
+		if (n && strlen(n) >= 23 && !strcmp(n + strlen(n) - 23, "/usr/libexec/wakeboardd")) { mh = _dyld_get_image_header(i); break; }
+	}
+	if (!mh) { fprintf(stderr, "simshim: wakeboardd image not found\n"); return; }
+	// and from Idle the target is 4 - display-on (DisplayOff, or Idle): mov w8, #4 at 0x10001a4a0 becomes #7 (Run)
+	uint32_t* insn = (uint32_t*)((uintptr_t)mh + (0x10001a4f4 - 0x100000000));
+	uint32_t* insn2 = (uint32_t*)((uintptr_t)mh + (0x10001a4a0 - 0x100000000));
+	if (*insn != 0x08dffd17u || *insn2 != 0x52800088u) { fprintf(stderr, "simshim: wakeboardd run check not found (%#x %#x)\n", *insn, *insn2); return; }
+	uintptr_t page = (uintptr_t)insn2 & ~(uintptr_t)4095;
+	if (mprotect((void*)page, 8192, PROT_READ | PROT_WRITE) != 0) { fprintf(stderr, "simshim: mprotect %d\n", errno); return; }
+	*insn = 0x52800037u;    // mov w23, #1
+	*insn2 = 0x528000e8u;   // mov w8, #7
+	mprotect((void*)page, 8192, PROT_READ | PROT_EXEC);
+	sys_icache_invalidate(insn2, 0x60);
+	fprintf(stderr, "simshim: wakeboardd always runs its compositor\n");
+}
+
 // x86Sim Platforms 2 (visionOS): RealityKit's spatial audio. When its PHASE engine fails to start (here AudioToolbox's
 // AQME finds no "Default-InputOutput" device: AudioIOUnit::Initialize -10851), REPHASEContext still turns every
 // scene-understanding mesh into an audio occluder, and -[PHASEMaterial initWithEngine:...] throws "Cannot create a
@@ -444,6 +529,8 @@ static void shim_re_added(const struct mach_header* mh, intptr_t slide)
 __attribute__((constructor)) static void shim_re_init(void)
 {
 	_dyld_register_func_for_add_image(shim_re_added);
+}
+
 }
 
 __attribute__((constructor)) static void shim_pb_init(void)
