@@ -759,8 +759,8 @@ impl App {
                             ui.painter().text(egui::pos2(x, r.center().y), egui::Align2::LEFT_CENTER, t, mono.clone(), pal().ink_3);
                         }
                         x += tw;
-                        let g = galley_trunc(ui, &l.source, mono.clone(), pal().ink_2, srcw - 8.0);
-                        ui.painter().galley(egui::pos2(x, r.center().y - g.size().y / 2.0), g, pal().ink_2);
+                        let g = galley_trunc(ui, &l.source, mono.clone(), pal().cyan, srcw - 8.0);
+                        ui.painter().galley(egui::pos2(x, r.center().y - g.size().y / 2.0), g, pal().cyan);
                         x += srcw;
                         let low = msg.to_ascii_lowercase();
                         let col = if low.contains("error") || low.contains("fail") || low.contains("crash") { pal().crit_ink } else if low.contains("warn") { pal().warn } else { pal().ink };
@@ -811,9 +811,9 @@ impl App {
                 let bx = r.left() + name_w + 8.0;
                 let track = egui::Rect::from_min_size(egui::pos2(bx, r.center().y - 2.0), egui::vec2(bar_w, 4.0));
                 p.rect_filled(track, 0.0, pal().raised);
-                p.rect_filled(egui::Rect::from_min_size(track.min, egui::vec2(((pr.pss_mb / max) as f32 * bar_w).max(2.0), 4.0)), 0.0, pal().accent);
+                p.rect_filled(egui::Rect::from_min_size(track.min, egui::vec2(((pr.pss_mb / max) as f32 * bar_w).max(2.0), 4.0)), 0.0, pal().blue);
                 p.text(egui::pos2(r.right() - cpu_w - 8.0, r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.0} MB", pr.pss_mb), font(T_SMALL), pal().ink_2);
-                p.text(egui::pos2(r.right(), r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.0}%", pr.cpu_pct), font(T_SMALL), if pr.cpu_pct > 50.0 { pal().warn } else { pal().ink_2 });
+                p.text(egui::pos2(r.right(), r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.0}%", pr.cpu_pct), font(T_SMALL), if pr.cpu_pct > 50.0 { pal().orange } else { pal().ink_2 });
                 resp.on_hover_text(format!("{} · pid {}", pr.comm, pr.pid));
             }
             if s.procs.len() > 25 {

@@ -54,8 +54,23 @@ impl Theme {
     pub fn shell_f32(&self, section: &str, key: &str, default: f32) -> f32 {
         self.shell.get(&format!("{section}.{key}")).and_then(|v| v.parse().ok()).unwrap_or(default)
     }
+    /// A shell.toml colour. Values like `hyprland.active-border` refer to another key (the `[hyprland]` section);
+    /// those are followed, and a gradient gives its first stop.
     pub fn shell_color(&self, section: &str, key: &str) -> Option<Color32> {
-        self.shell.get(&format!("{section}.{key}")).and_then(|v| parse_color(v))
+        let mut v = self.shell.get(&format!("{section}.{key}"))?;
+        for _ in 0..4 {
+            match self.shell.get(v.as_str()) {
+                Some(next) if !v.starts_with('#') => v = next,
+                _ => break,
+            }
+        }
+        parse_color(v)
+    }
+    /// A shell.toml colour at its `<prefix>alpha` companion (`background` + `background-alpha`).
+    pub fn shell_color_a(&self, section: &str, key: &str) -> Option<Color32> {
+        let c = self.shell_color(section, key)?;
+        let a = self.shell_f32(section, &format!("{key}-alpha"), 1.0);
+        Some(Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (c.a() as f32 * a.clamp(0.0, 1.0)).round() as u8))
     }
     pub fn is_light(&self) -> bool {
         self.colors.get("mode").is_some_and(|m| m == "light")
@@ -232,5 +247,8 @@ mod tests {
         assert_eq!(parse_color("rgba(798186ee) rgba(caccccee)"), Some(Color32::from_rgba_unmultiplied(0x79, 0x81, 0x86, 0xee)));
         assert_eq!(parse_color("rgb(1e1e1e)"), Some(Color32::from_rgb(0x1e, 0x1e, 0x1e)));
         assert_eq!(parse_color("hyprland.active-border"), None);
+        let th = Theme { colors: HashMap::new(), shell: parse_toml("[hyprland]\nactive-border = \"rgba(798186ee) rgba(caccccee)\"\n[menu]\nborder = \"hyprland.active-border\"\nbackground = \"#2c2525\"\nbackground-alpha = 0.5\n") };
+        assert_eq!(th.shell_color("menu", "border"), Some(Color32::from_rgba_unmultiplied(0x79, 0x81, 0x86, 0xee)));
+        assert_eq!(th.shell_color_a("menu", "background").map(|c| c.a()), Some(128));
     }
 }

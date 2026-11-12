@@ -37,6 +37,17 @@ pub struct Palette {
     pub ink_3: Color32,        // tertiary text, icons at rest
     pub accent: Color32,       // the theme's accent: progress, selection stroke
     pub accent_ink: Color32,   // the accent as text (the foreground when the accent can't be read)
+    pub hilite: Color32,       // the chosen item's text: the current page, a hovered menu row ([menu] selected-text)
+    pub hilite_fill: Color32,  // a hovered menu row ([menu] selected-background at its alpha)
+    pub popup: Color32,        // menus, dropdowns, tooltips, dialogs ([popups] background)
+    pub popup_border: Color32, // their edge ([popups] border: Hyprland's active border)
+    pub toast: Color32,        // a passing message ([notifications] background)
+    pub toast_border: Color32,
+    // the theme's other hues, each readable on the background (else secondary text): logs, meters, statuses
+    pub blue: Color32,
+    pub cyan: Color32,
+    pub magenta: Color32,
+    pub orange: Color32,
     pub good: Color32,
     pub warn: Color32,
     pub crit: Color32,
@@ -118,7 +129,35 @@ impl Palette {
             focus_color: t.shell_color("controls", "focus-border"),
             scrim_color: t.shell_color("menu", "scrim"),
         };
-        Palette::derive(bg, dark, darker, fg, accent, selection, active, [t.color("red"), t.color("bright_red")], [t.color("yellow"), t.color("bright_yellow")], [t.color("green"), t.color("bright_green")], &a, radius, true, t.is_light())
+        let mut p = Palette::derive(bg, dark, darker, fg, accent, selection, active, [t.color("red"), t.color("bright_red")], [t.color("yellow"), t.color("bright_yellow")], [t.color("green"), t.color("bright_green")], &a, radius, true, t.is_light());
+        // the theme's hues (a theme may call any colour "blue": readable on the background, or the next one)
+        let hue = |names: &[&str], fallback: Color32| pick(&names.iter().map(|n| t.color(n)).collect::<Vec<_>>(), bg, 3.0, fallback);
+        p.blue = hue(&["blue", "bright_blue"], p.ink_2);
+        p.cyan = hue(&["cyan", "bright_cyan"], p.ink_2);
+        p.magenta = hue(&["magenta", "bright_magenta"], p.ink_2);
+        p.orange = hue(&["orange", "bright_red", "red"], p.warn);
+        // the surfaces Omarchy's shell draws: menus and popups, notifications, the chosen row's text
+        let readable = |c: Option<Color32>, on: Color32, min: f32| c.filter(|c| contrast(*c, on) >= min);
+        if let Some(c) = t.shell_color_a("popups", "background").or_else(|| t.shell_color_a("menu", "background")) {
+            p.popup = c;
+        }
+        if let Some(c) = t.shell_color_a("popups", "border").or_else(|| t.shell_color_a("menu", "border")) {
+            p.popup_border = c;
+        }
+        if let Some(c) = t.shell_color_a("notifications", "background") {
+            p.toast = c;
+        }
+        if let Some(c) = t.shell_color_a("notifications", "border") {
+            p.toast_border = c;
+        }
+        if let Some(c) = readable(t.shell_color("menu", "selected-text").or_else(|| t.shell_color("launcher", "selected-text")), p.popup, 3.0) {
+            p.hilite = c;
+        }
+        if let Some(c) = t.shell_color_a("menu", "selected-background") {
+            p.hilite_fill = c;
+        }
+        p.selection = alpha(selection, t.shell_f32("controls", "selection-fill-alpha", 0.85).max(0.35));
+        p
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -137,6 +176,8 @@ impl Palette {
         let warn = pick(&[yellows[0], yellows[1]], bg, 3.0, ink_2);
         let good = pick(&[greens[0], greens[1]], bg, 3.0, ink_2);
         let accent_ink = if contrast(accent, bg) >= 4.0 { accent } else { fg };
+        let hue = |c: Color32| pick(&[Some(c)], bg, 3.0, ink_2);
+        let (blue, cyan, magenta, orange) = if light { (rgb(0x2f6fb5), rgb(0x1f7f86), rgb(0x8a4fb0), rgb(0xb45a1b)) } else { (rgb(0x61afef), rgb(0x56b6c2), rgb(0xc678dd), rgb(0xe5995c)) };
         Palette {
             window: dark,
             canvas: bg,
@@ -154,6 +195,16 @@ impl Palette {
             ink_3,
             accent,
             accent_ink,
+            hilite: accent_ink,
+            hilite_fill: alpha(control, a.hover),
+            popup: bg,
+            popup_border: active,
+            toast: bg,
+            toast_border: active,
+            blue: hue(blue),
+            cyan: hue(cyan),
+            magenta: hue(magenta),
+            orange: hue(orange),
             good,
             warn,
             crit,
@@ -472,19 +523,19 @@ fn style(ctx: &egui::Context, p: &Palette) {
         s.interaction.tooltip_delay = 0.35;
         let v = &mut s.visuals;
         v.panel_fill = p.canvas;
-        v.window_fill = p.canvas;
+        v.window_fill = p.popup;
         v.extreme_bg_color = p.well;
         v.faint_bg_color = p.raised;
         v.code_bg_color = p.well;
         v.override_text_color = None;
         v.hyperlink_color = p.accent_ink;
         v.weak_text_color = Some(p.ink_3);
-        v.selection.bg_fill = alpha(p.selection, 0.85);
+        v.selection.bg_fill = if p.selection.a() == 255 { alpha(p.selection, 0.85) } else { p.selection };
         v.selection.stroke = Stroke::new(1.0_f32, p.ink);
         v.window_corner_radius = p.radius.into();
         v.menu_corner_radius = p.radius.into();
         // popups and tooltips wear Hyprland's active border, as Omarchy's own flyouts do
-        v.window_stroke = Stroke::new(1.0_f32, p.active);
+        v.window_stroke = Stroke::new(1.0_f32, p.popup_border);
         v.window_shadow = egui::Shadow::NONE;
         v.popup_shadow = egui::Shadow::NONE;
         v.window_highlight_topmost = false;
@@ -1106,8 +1157,8 @@ pub fn nav_item(ui: &mut egui::Ui, ic: &str, label: &str, on: bool, trailing: &s
     } else if resp.hovered() {
         p.rect_filled(rect, radius_sm(), pal.hover);
     }
-    let col = if on || resp.hovered() { pal.ink } else { pal.ink_2 };
-    p.text(rect.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, ic, ifont(14.0), if on { pal.ink } else { pal.ink_3 });
+    let col = if on { pal.hilite } else if resp.hovered() { pal.ink } else { pal.ink_2 };
+    p.text(rect.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, ic, ifont(14.0), if on { pal.hilite } else { pal.ink_3 });
     p.text(rect.left_center() + egui::vec2(30.0, 0.0), egui::Align2::LEFT_CENTER, label, font(T_BODY), col);
     let mut right = rect.right() - 8.0;
     if !key.is_empty() {
@@ -1250,8 +1301,8 @@ pub fn phase_look(phase: x86sim_core::instance::Phase, runtime_present: bool) ->
     match phase {
         Phase::Running => ("Running", p.good),
         Phase::Starting => ("Starting", p.warn),
-        Phase::Stopping => ("Stopping", p.warn),
-        Phase::Off if !runtime_present => ("Version not installed", p.warn),
+        Phase::Stopping => ("Stopping", p.orange),
+        Phase::Off if !runtime_present => ("Version not installed", p.magenta),
         Phase::Off => ("Off", p.ink_3),
     }
 }
@@ -1259,7 +1310,7 @@ pub fn phase_look(phase: x86sim_core::instance::Phase, runtime_present: bool) ->
 /// The frame of every modal dialog: flat, Hyprland's active border, no shadow.
 pub fn modal_frame() -> egui::Frame {
     let p = pal();
-    egui::Frame::new().fill(p.canvas).stroke(Stroke::new(1.0_f32, p.active)).corner_radius(radius()).inner_margin(20)
+    egui::Frame::new().fill(p.popup).stroke(Stroke::new(1.0_f32, p.popup_border)).corner_radius(radius()).inner_margin(20)
 }
 
 /// A modal with the theme's scrim behind it.
@@ -1273,10 +1324,11 @@ pub fn menu_row(ui: &mut egui::Ui, ic: &str, label: &str, hint: &str, enabled: b
     let w = ui.available_width().max(200.0);
     let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 26.0), if enabled { Sense::click() } else { Sense::hover() });
     let p = ui.painter();
-    if enabled && resp.hovered() {
-        p.rect_filled(r, radius_sm(), pal.hover);
+    let hot = enabled && resp.hovered();
+    if hot {
+        p.rect_filled(r, radius_sm(), pal.hilite_fill);
     }
-    let col = if !enabled { pal.ink_3 } else if danger { pal.crit_ink } else { pal.ink };
+    let col = if !enabled { pal.ink_3 } else if danger { pal.crit_ink } else if hot { pal.hilite } else { pal.ink };
     p.text(r.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, ic, ifont(13.0), if enabled && !danger { pal.ink_2 } else { col });
     p.text(r.left_center() + egui::vec2(30.0, 0.0), egui::Align2::LEFT_CENTER, label, font(T_BODY), col);
     if !hint.is_empty() {
@@ -1313,7 +1365,7 @@ mod tests {
         for c in [p.ink, p.ink_2, p.ink_3, p.accent_ink, p.crit_ink] {
             assert!(contrast(c, p.canvas) >= 4.0, "{c:?}");
         }
-        for c in [p.good, p.warn, p.crit] {
+        for c in [p.good, p.warn, p.crit, p.blue, p.cyan, p.magenta, p.orange, p.hilite] {
             assert!(contrast(c, p.canvas) >= 3.0, "{c:?}");
         }
         assert_eq!(p.crit, rgb(0xde6145));
@@ -1328,7 +1380,7 @@ mod tests {
             for c in [p.ink, p.ink_2, p.ink_3, p.accent_ink, p.crit_ink] {
                 assert!(contrast(c, p.canvas) >= 4.0, "{c:?} on {:?}", p.canvas);
             }
-            for c in [p.good, p.warn, p.crit, p.accent] {
+            for c in [p.good, p.warn, p.crit, p.accent, p.blue, p.cyan, p.magenta, p.orange, p.hilite] {
                 assert!(contrast(c, p.canvas) >= 3.0, "{c:?} on {:?}", p.canvas);
             }
         }

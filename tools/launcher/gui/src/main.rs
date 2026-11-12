@@ -581,7 +581,7 @@ impl App {
                 for (k, what) in rows {
                     ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(150.0, 18.0), egui::Sense::hover());
-                        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, *k, font(T_SMALL), pal().ink);
+                        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, *k, font(T_SMALL), pal().hilite);
                         ui.label(muted(*what));
                     });
                 }
@@ -782,14 +782,14 @@ impl eframe::App for App {
             egui::Area::new("toast".into()).anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(NAV_W / 2.0, -20.0)).order(egui::Order::Foreground).show(ctx, |ui| {
                 // a flyout as Omarchy's: the canvas with Hyprland's active border, no shadow
                 egui::Frame::new()
-                    .fill(pal().canvas)
-                    .stroke(egui::Stroke::new(1.0_f32, pal().active))
+                    .fill(pal().toast)
+                    .stroke(egui::Stroke::new(1.0_f32, pal().toast_border))
                     .corner_radius(radius())
                     .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
                         ui.set_max_width((ui.ctx().content_rect().width() - NAV_W - 2.0 * S6).clamp(240.0, 560.0));
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(icon::INFO).family(icons()).size(15.0).color(pal().ink_2));
+                            ui.label(egui::RichText::new(icon::INFO).family(icons()).size(15.0).color(pal().cyan));
                             ui.add(egui::Label::new(body(&self.message)).wrap());
                         });
                     });
