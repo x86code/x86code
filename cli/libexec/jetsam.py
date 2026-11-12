@@ -125,7 +125,16 @@ START = time.time()
 # Platforms 1: the watch's and the TV's own UI apps too (Carousel and the watch face ClockFace; PineBoard and the
 # HeadBoard home screen): always up, so with them "the app in the foreground" every idle daemon waited 600 s, not 30.
 NEVER = ("SpringBoard.app/", "PosterBoard.app/", "InputUI.app/", "Campo.app/", "Carousel.app/", "ClockFace.app/",
-         "PineBoard.app/", "HeadBoard.app/")
+         "PineBoard.app/", "HeadBoard.app/",
+         # Platforms 2: visionOS's SpringBoard (it has no visible scene until the compositor runs: killed at 90 s)
+         "SurfBoard.app/", "RealityEnvironment.app/",
+         # visionOS's system shell runs as separate apps (keyboard, notifications, HUD, Home View, ...), off screen
+         # (role 3) between uses, as SpringBoard-hosted UI is on iOS. Taken for background apps, each was killed every
+         # 30-60 s and relaunched at once, with a memory warning each time: RealityKit and CoreAnimation purged their
+         # caches every few seconds and the Home View's icons went black for good.
+         "RealityLauncher.app/", "RealityChrome.app/", "RealityHUD.app/", "RealityKeyboard.app/",
+         "RealityNotifications.app/", "RealityCoverSheet.app/", "RealityControlCenter.app/",
+         "RealityBreakthrough.app/", "RealityWidgets.app/")
 # The wallpaper's poster extension: SpringBoard asks it for the lock screen at every wake and unlock. Reclaimed as a
 # suspended extension, it was killed and relaunched in a loop ("came back 0 s after its kill") and an unlock that hit
 # the gap never undimmed, then froze. A device keeps the active poster's extension alive too.
