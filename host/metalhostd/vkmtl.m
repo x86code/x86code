@@ -1658,6 +1658,217 @@ static void vk_cb_done(uint64_t cbid, uint32_t status, uint32_t error, double st
 // ---------------------------------------------------------------------------------------------------------
 // Device
 
+// ---------------------------------------------------------------------------------------------------------
+// Platforms 2 (visionOS): heaps and argument buffers. RealityKit's compositor (and other visionOS system code) makes
+// MTLHeaps and argument encoders from shader reflection; iOS / tvOS / watchOS never did. Without them the device answered
+// nil and the client's MTLSimDriver crashed (backboardd at MTLSimDriver+0xf1c, restarted in a loop).
+
+// A heap hands out ordinary buffers and textures (mtlvk allocates each on its own); its sizes are bookkeeping only.
+@interface VKMTLHeap : VKMTLObject {
+@public
+	MTLHeapDescriptor* _desc;
+	NSUInteger _used;
+}
+@end
+
+@implementation VKMTLHeap
+- (void)dealloc { [_desc release]; [super dealloc]; }
+- (id<MTLDevice>)device { return (id<MTLDevice>)g_device; }
+- (MTLStorageMode)storageMode { return _desc.storageMode; }
+- (MTLCPUCacheMode)cpuCacheMode { return _desc.cpuCacheMode; }
+- (MTLHazardTrackingMode)hazardTrackingMode { return _desc.hazardTrackingMode; }
+- (MTLResourceOptions)resourceOptions { return _desc.resourceOptions; }
+- (MTLHeapType)type { return _desc.type; }
+- (NSUInteger)size { return _desc.size; }
+- (NSUInteger)usedSize { return _used; }
+- (NSUInteger)currentAllocatedSize { return _desc.size; }
+- (NSUInteger)maxAvailableSizeWithAlignment:(NSUInteger)a { (void)a; return _used < _desc.size ? _desc.size - _used : 0; }
+- (MTLPurgeableState)setPurgeableState:(MTLPurgeableState)s { (void)s; return MTLPurgeableStateNonVolatile; }
+- (id<MTLBuffer>)newBufferWithLength:(NSUInteger)len options:(MTLResourceOptions)o {
+	_used += (len + 4095) & ~(NSUInteger)4095;
+	return [(id<MTLDevice>)g_device newBufferWithLength:len options:o];
+}
+- (id<MTLBuffer>)newBufferWithLength:(NSUInteger)len options:(MTLResourceOptions)o offset:(NSUInteger)off {
+	(void)off; return [self newBufferWithLength:len options:o];
+}
+- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor*)d {
+	static int n;
+	if (n++ < 200 && d.width >= 1024) VKLOG("heap %p texture %lux%lu f%lu (type %ld heap)", (void*)self, (unsigned long)d.width, (unsigned long)d.height, (unsigned long)d.pixelFormat, (long)_desc.type);
+	_used += [(id<MTLDevice>)g_device heapTextureSizeAndAlignWithDescriptor:d].size;
+	return [(id<MTLDevice>)g_device newTextureWithDescriptor:d];
+}
+- (id<MTLTexture>)newTextureWithDescriptor:(MTLTextureDescriptor*)d offset:(NSUInteger)off {
+	id<MTLTexture> t = [self newTextureWithDescriptor:d];
+	static int n;
+	if (n++ < 400) VKLOG("heap %p placement texture +%lu %lux%lu f%lu type %lu usage %#lx -> %#llx", (void*)self, (unsigned long)off,
+		(unsigned long)d.width, (unsigned long)d.height, (unsigned long)d.pixelFormat, (unsigned long)d.textureType, (unsigned long)d.usage,
+		((VKMTLTexture*)t)->_vkid);
+	return t;
+}
+@end
+
+// Argument buffers are laid out as the shader's struct (air.struct_type_info, which metal2vulkan reads): each member at
+// its own offset, a buffer as its 8-byte GPU address, a texture or sampler as its 8-byte resource ID. Metal's own
+// MTLEmulationIndirectArgumentBufferLayout groups buffers, then textures, then samplers instead, which is not what
+// the translated shaders read.
+static NSUInteger vk_data_size(MTLDataType t) {
+	switch (t) {
+	case MTLDataTypeBool: case MTLDataTypeChar: case MTLDataTypeUChar: return 1;
+	case MTLDataTypeBool2: case MTLDataTypeChar2: case MTLDataTypeUChar2: case MTLDataTypeShort: case MTLDataTypeUShort: case MTLDataTypeHalf: return 2;
+	case MTLDataTypeBool3: case MTLDataTypeChar3: case MTLDataTypeUChar3: case MTLDataTypeBool4: case MTLDataTypeChar4: case MTLDataTypeUChar4:
+	case MTLDataTypeShort2: case MTLDataTypeUShort2: case MTLDataTypeHalf2: case MTLDataTypeFloat: case MTLDataTypeInt: case MTLDataTypeUInt: return 4;
+	case MTLDataTypeShort3: case MTLDataTypeUShort3: case MTLDataTypeHalf3: case MTLDataTypeShort4: case MTLDataTypeUShort4: case MTLDataTypeHalf4:
+	case MTLDataTypeFloat2: case MTLDataTypeInt2: case MTLDataTypeUInt2: case MTLDataTypeLong: case MTLDataTypeULong: return 8;
+	case MTLDataTypeFloat3: case MTLDataTypeInt3: case MTLDataTypeUInt3: case MTLDataTypeFloat4: case MTLDataTypeInt4: case MTLDataTypeUInt4:
+	case MTLDataTypeLong2: case MTLDataTypeULong2: case MTLDataTypeFloat2x2: return 16;
+	case MTLDataTypeLong3: case MTLDataTypeULong3: case MTLDataTypeLong4: case MTLDataTypeULong4: case MTLDataTypeFloat2x3: case MTLDataTypeFloat2x4: return 32;
+	case MTLDataTypeFloat3x3: case MTLDataTypeFloat3x4: return 48;
+	case MTLDataTypeFloat4x4: return 64;
+	default: return 8;  // pointers, textures, samplers, pipelines, tables: 8-byte handles
+	}
+}
+
+static NSUInteger vk_struct_size(MTLStructType* st);
+static NSUInteger vk_member_size(MTLStructMember* m) {
+	MTLArrayType* a = m.arrayType;
+	if (a) return a.arrayLength * (a.stride ?: vk_data_size(a.elementType));
+	if (m.dataType == MTLDataTypeStruct && m.structType) return vk_struct_size(m.structType);
+	return vk_data_size(m.dataType);
+}
+static NSUInteger vk_struct_size(MTLStructType* st) {
+	NSUInteger end = 0;
+	for (MTLStructMember* m in st.members) end = MAX(end, m.offset + vk_member_size(m));
+	return (end + 7) & ~(NSUInteger)7;
+}
+
+// The byte offset of argument [[id(idx)]] in a struct at `base`, or NSNotFound; *member gets the member found.
+static NSUInteger vk_arg_offset(MTLStructType* st, NSUInteger idx, NSUInteger base, MTLStructMember** member) {
+	for (MTLStructMember* m in st.members) {
+		NSUInteger ai = m.argumentIndex;
+		MTLArrayType* a = m.arrayType;
+		if (a) {
+			NSUInteger step = a.argumentIndexStride ?: 1, n = a.arrayLength;
+			if (idx >= ai && idx < ai + n * step && (idx - ai) % step == 0) {
+				if (member) *member = m;
+				return base + m.offset + ((idx - ai) / step) * (a.stride ?: vk_data_size(a.elementType));
+			}
+			continue;
+		}
+		if (m.dataType == MTLDataTypeStruct && m.structType) {
+			NSUInteger r = vk_arg_offset(m.structType, idx, base + m.offset, member);
+			if (r != NSNotFound) return r;
+			continue;
+		}
+		if (ai == idx) {
+			if (member) *member = m;
+			return base + m.offset;
+		}
+	}
+	return NSNotFound;
+}
+
+// Also Metal's own view of a layout (_MTLIndirectArgumentBufferLayout: the bridge runs in its client's process, where
+// Metal.framework asks the layout itself); a VKMTLObject, so anything not answered here is logged, not an abort.
+@interface VKMTLArgumentLayout : VKMTLObject {
+@public
+	MTLStructType* _st;
+	NSUInteger _length;
+}
+@end
+
+@implementation VKMTLArgumentLayout
+- (instancetype)initWithStructType:(MTLStructType*)st {
+	self = [super init];
+	_st = [st retain];
+	_length = vk_struct_size(st);
+	return self;
+}
+- (void)dealloc { [_st release]; [super dealloc]; }
+- (MTLStructType*)structType { return _st; }
+- (NSUInteger)encodedLength { return _length; }
+- (NSUInteger)stride { return _length; }
+- (NSUInteger)alignment { return 8; }
+- (id)device { return g_device; }
+- (BOOL)bufferLayoutMatchesFrontEndLayout { return YES; }  // the struct's own offsets, as the shaders read them
+- (uint32_t)hashValue { return 0; }
+- (uint32_t)hashOffset { return 0; }
+- (uint32_t)hashMask { return 0; }
+- (uint32_t)hashSignature { return 0; }
+- (NSUInteger)offsetAt:(NSUInteger)i { NSUInteger o = vk_arg_offset(_st, i, 0, NULL); return o == NSNotFound ? 0 : o; }
+- (NSUInteger)constantOffsetAtIndex:(NSUInteger)i { return [self offsetAt:i]; }
+- (NSUInteger)offsetForBuffer:(NSUInteger)i { return [self offsetAt:i]; }
+- (NSUInteger)offsetForTexture:(NSUInteger)i { return [self offsetAt:i]; }
+- (NSUInteger)offsetForSampler:(NSUInteger)i { return [self offsetAt:i]; }
+- (NSUInteger)offsetForConstant:(NSUInteger)i { return [self offsetAt:i]; }
+// what an argument buffer holds at an index: the 8-byte address / resource ID written there
+- (uint64_t)valueAt:(NSUInteger)i in:(id<MTLBuffer>)b offset:(NSUInteger)o {
+	NSUInteger at = vk_arg_offset(_st, i, o, NULL);
+	uint64_t v = 0;
+	if (b && [b contents] && at != NSNotFound && at + 8 <= [b length]) memcpy(&v, (uint8_t*)[b contents] + at, 8);
+	return v;
+}
+- (uint64_t)virtualAddressForBufferAtIndex:(NSUInteger)i inIndirectArgumentBuffer:(id<MTLBuffer>)b atOffset:(NSUInteger)o { return [self valueAt:i in:b offset:o]; }
+- (uint64_t)uniqueIdentifierForTextureAtIndex:(NSUInteger)i inIndirectArgumentBuffer:(id<MTLBuffer>)b atOffset:(NSUInteger)o { return [self valueAt:i in:b offset:o]; }
+- (uint64_t)uniqueIdentifierForSamplerAtIndex:(NSUInteger)i inIndirectArgumentBuffer:(id<MTLBuffer>)b atOffset:(NSUInteger)o { return [self valueAt:i in:b offset:o]; }
+- (uint64_t)uniqueIdentifierForRenderPipelineAtIndex:(NSUInteger)i inIndirectArgumentBuffer:(id<MTLBuffer>)b atOffset:(NSUInteger)o { return [self valueAt:i in:b offset:o]; }
+- (uint64_t)uniqueIdentifierForComputePipelineAtIndex:(NSUInteger)i inIndirectArgumentBuffer:(id<MTLBuffer>)b atOffset:(NSUInteger)o { return [self valueAt:i in:b offset:o]; }
+@end
+
+@interface VKMTLArgumentEncoder : VKMTLObject {
+@public
+	VKMTLArgumentLayout* _layout;
+	uint8_t* _base;
+}
+@end
+
+@implementation VKMTLArgumentEncoder
+- (instancetype)initWithLayout:(VKMTLArgumentLayout*)l {
+	self = [super init];
+	_layout = [l retain];
+	return self;
+}
+- (void)dealloc { [_layout release]; [super dealloc]; }
+- (id<MTLDevice>)device { return (id<MTLDevice>)g_device; }
+- (id)layout { return _layout; }
+- (NSUInteger)encodedLength { return _layout->_length; }
+- (NSUInteger)alignment { return 8; }
+- (void)setArgumentBuffer:(id<MTLBuffer>)b offset:(NSUInteger)off { _base = b ? (uint8_t*)[b contents] + off : NULL; }
+- (void)setArgumentBuffer:(id<MTLBuffer>)b startOffset:(NSUInteger)start arrayElement:(NSUInteger)e {
+	_base = b ? (uint8_t*)[b contents] + start + e * _layout->_length : NULL;
+}
+- (void)put:(uint64_t)v atIndex:(NSUInteger)i {
+	NSUInteger o = vk_arg_offset(_layout->_st, i, 0, NULL);
+	if (!_base || o == NSNotFound || o + 8 > _layout->_length) { VKLOG("argument encoder: no slot for index %lu", (unsigned long)i); return; }
+	memcpy(_base + o, &v, 8);
+}
+- (void)setBuffer:(id<MTLBuffer>)b offset:(NSUInteger)off atIndex:(NSUInteger)i { [self put:(b ? [b gpuAddress] + off : 0) atIndex:i]; }
+- (void)setBuffers:(const id<MTLBuffer> __unsafe_unretained*)b offsets:(const NSUInteger*)o withRange:(NSRange)r {
+	for (NSUInteger k = 0; k < r.length; k++) [self setBuffer:b[k] offset:o[k] atIndex:r.location + k];
+}
+- (void)setTexture:(id<MTLTexture>)t atIndex:(NSUInteger)i { [self put:(t ? [t gpuResourceID]._impl : 0) atIndex:i]; }
+- (void)setTextures:(const id<MTLTexture> __unsafe_unretained*)t withRange:(NSRange)r {
+	for (NSUInteger k = 0; k < r.length; k++) [self setTexture:t[k] atIndex:r.location + k];
+}
+- (void)setSamplerState:(id<MTLSamplerState>)s atIndex:(NSUInteger)i { [self put:(s ? [s gpuResourceID]._impl : 0) atIndex:i]; }
+- (void)setSamplerStates:(const id<MTLSamplerState> __unsafe_unretained*)s withRange:(NSRange)r {
+	for (NSUInteger k = 0; k < r.length; k++) [self setSamplerState:s[k] atIndex:r.location + k];
+}
+- (void*)constantDataAtIndex:(NSUInteger)i {
+	NSUInteger o = vk_arg_offset(_layout->_st, i, 0, NULL);
+	return _base && o != NSNotFound ? _base + o : NULL;
+}
+- (id<MTLArgumentEncoder>)newArgumentEncoderForBufferAtIndex:(NSUInteger)i {
+	MTLStructMember* m = nil;
+	if (vk_arg_offset(_layout->_st, i, 0, &m) == NSNotFound || !m) return nil;
+	MTLStructType* inner = m.pointerType.elementStructType ?: m.structType;
+	if (!inner) return nil;
+	VKMTLArgumentLayout* l = [[VKMTLArgumentLayout alloc] initWithStructType:inner];
+	VKMTLArgumentEncoder* e = [[VKMTLArgumentEncoder alloc] initWithLayout:l];
+	[l release];
+	return (id<MTLArgumentEncoder>)e;
+}
+@end
+
 @implementation VKMTLDevice
 - (NSString*)name { return _name; }
 - (uint64_t)registryID { return _registryID; }
@@ -1701,6 +1912,25 @@ static void vk_cb_done(uint64_t cbid, uint32_t status, uint32_t error, double st
 }
 - (NSUInteger)maxArgumentBufferSamplerCount { return 1024; }
 - (MTLArgumentBuffersTier)argumentBuffersSupport { return MTLArgumentBuffersTier2; }
+// Platforms 2: heaps and argument encoders from reflection (see VKMTLHeap / VKMTLArgumentEncoder)
+- (id<MTLHeap>)newHeapWithDescriptor:(MTLHeapDescriptor*)d {
+	VKMTLHeap* h = [[VKMTLHeap alloc] init];
+	h->_desc = [d copy];
+	return (id<MTLHeap>)h;
+}
+// Metal.framework's own (_MTLDevice: it only parses the reflection data)
+- (MTLStructType*)newStructTypeWithSerializedData:(NSData*)data {
+	static IMP imp;
+	if (!imp) imp = class_getMethodImplementation(objc_getClass("_MTLDevice"), @selector(newStructTypeWithSerializedData:));
+	return imp ? ((MTLStructType* (*)(id, SEL, NSData*))imp)(self, _cmd, data) : nil;
+}
+- (id)newIndirectArgumentBufferLayoutWithStructType:(MTLStructType*)st {
+	return st ? [[VKMTLArgumentLayout alloc] initWithStructType:st] : nil;
+}
+- (id<MTLArgumentEncoder>)newArgumentEncoderWithLayout:(id)layout {
+	if (![layout isKindOfClass:[VKMTLArgumentLayout class]]) { VKLOG("newArgumentEncoderWithLayout: not our layout (%s)", object_getClassName(layout)); return nil; }
+	return (id<MTLArgumentEncoder>)[[VKMTLArgumentEncoder alloc] initWithLayout:layout];
+}
 - (MTLReadWriteTextureTier)readWriteTextureSupport { return MTLReadWriteTextureTier2; }
 - (BOOL)areProgrammableSamplePositionsSupported { return NO; }
 - (BOOL)areRasterOrderGroupsSupported { return NO; }
