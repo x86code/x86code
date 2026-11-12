@@ -82,7 +82,8 @@ def main():
                 bundles.append(b)
     # Platforms 1: (bundle, platform) for every device type; iOS first, as before
     plat = {b: None for b in bundles}
-    for fam, key in ((3, "tvos"), (4, "watchos")):
+    # Platforms 2: Apple Vision Pro (product family 7, "xros")
+    for fam, key in ((3, "tvos"), (4, "watchos"), (7, "xros")):
         # newest first, as Xcode's own lists show them (model identifier generation, then name)
         cands = []
         for p in sorted(files):
@@ -123,7 +124,7 @@ def main():
                 json.dump(ints(caps), f, indent=1, sort_keys=True)
     with open(os.path.join(LIB, "devicetypes-a64.json"), "w") as f:
         json.dump(out, f, indent=1)
-    print(f"{sum(1 for v in out.values() if 'platform' in v)} of them Apple TV / Apple Watch")
+    print(f"{sum(1 for v in out.values() if 'platform' in v)} of them Apple TV / Apple Watch / Apple Vision Pro")
     print(f"{len(out)} device types ({len(written)} capability files) for iOS {rtver} {rt['buildversion']}")
 
 

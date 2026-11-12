@@ -816,5 +816,16 @@
   "suffix": "",
   "json": "devicetype-watch7,3.json",
   "platform": "watchos"
+ },
+ "Apple Vision Pro": {
+  "model": "RealityDevice14,1",
+  "class": "N301",
+  "w": "3840",
+  "h": "2160",
+  "scale": "2.000000",
+  "pitch": "264.000000",
+  "suffix": "",
+  "json": "devicetype-realitydevice14,1.json",
+  "platform": "xros"
  }
 }

@@ -74,18 +74,18 @@ def device_type(device):
 
 
 def runtime_platform(root=None):
-    """Platforms 1: "ios", "tvos" or "watchos", from the runtime's SystemVersion.plist ProductName."""
+    """Platforms 1: "ios", "tvos", "watchos" or (Platforms 2) "xros", from the runtime's SystemVersion.plist ProductName."""
     try:
         with open(os.path.join(root or RUNTIME, "System/Library/CoreServices/SystemVersion.plist"), "rb") as f:
             name = plistlib.load(f).get("ProductName", "")
     except (OSError, plistlib.InvalidFileException):
         return "ios"
-    return {"Apple TVOS": "tvos", "Watch OS": "watchos"}.get(name, "ios")
+    return {"Apple TVOS": "tvos", "Watch OS": "watchos", "xrOS": "xros", "visionOS": "xros"}.get(name, "ios")
 
 
 PLATFORM = runtime_platform()
 # Platforms 1: the platform's name in SIMULATOR_VERSION_INFO, as CoreSimulator writes it
-PLATFORM_NAME = {"ios": "iOS", "tvos": "tvOS", "watchos": "watchOS"}[PLATFORM]
+PLATFORM_NAME = {"ios": "iOS", "tvos": "tvOS", "watchos": "watchOS", "xros": "xrOS"}[PLATFORM]
 
 
 def host_path(rel):

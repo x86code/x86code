@@ -203,7 +203,7 @@ std::vector<std::string> cache_exports(const std::string &cache_path, const std:
     const uint8_t *h = files[0].p;
     {
         uint32_t plat; memcpy(&plat, h + 0xD8, 4);  // dyld_cache_header.platform
-        if (plat == 7 || plat == 8 || plat == 9) g_cache_platform = plat;
+        if (plat == 7 || plat == 8 || plat == 9 || plat == 12) g_cache_platform = plat;  // Platforms 2: 12 visionOS
     }
     uint32_t io, ic; memcpy(&io, h + 0x1C0, 4); memcpy(&ic, h + 0x1C4, 4);
     std::vector<std::string> out;

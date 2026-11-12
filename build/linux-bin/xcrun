@@ -1,6 +1,6 @@
 #!/bin/sh
 # x86Sim: xcrun for the Linux build (build/linux-env.sh). Maps
-# `xcrun [-sdk iphonesimulator|appletvsimulator|watchsimulator|macosx] <tool> args` to
+# `xcrun [-sdk iphonesimulator|appletvsimulator|watchsimulator|xrsimulator|macosx] <tool> args` to
 #   clang    Linux clang + ld64.lld with -isysroot sdks/<sdk>; without -target, one is made from -arch and
 #            -mios-simulator-version-min / -mmacosx-version-min (defaults x86_64, iOS 17.0 / macOS 10.15)
 #   swiftc   build/linux-swiftc.sh -sdk sdks/<sdk> args
@@ -14,6 +14,7 @@ while :; do case $1 in
 	-f|--find) echo "$2"; exit 0 ;;
 	--show-sdk-path) case $sdk in iphonesimulator*) echo "$X/sdks/iPhoneSimulator.sdk" ;;
 		appletvsimulator*) echo "$X/sdks/AppleTVSimulator.sdk" ;; watchsimulator*) echo "$X/sdks/WatchSimulator.sdk" ;;
+		xrsimulator*) echo "$X/sdks/XRSimulator.sdk" ;;
 		*) echo "$X/sdks/MacOSX.sdk" ;; esac; exit 0 ;;
 	*) break ;;
 esac; done
@@ -21,6 +22,7 @@ case $sdk in
 	iphonesimulator*) SDK=${SDK_IOS:-$X/sdks/iPhoneSimulator.sdk}; os=ios; ver=17.0; env=-simulator ;;
 	appletvsimulator*) SDK=${SDK_TVOS:-$X/sdks/AppleTVSimulator.sdk}; os=tvos; ver=17.0; env=-simulator ;;
 	watchsimulator*) SDK=${SDK_WATCHOS:-$X/sdks/WatchSimulator.sdk}; os=watchos; ver=10.0; env=-simulator ;;
+	xrsimulator*) SDK=${SDK_XROS:-$X/sdks/XRSimulator.sdk}; os=xros; ver=1.0; env=-simulator ;;
 	macosx*) SDK=${SDK_MAC:-$X/sdks/MacOSX.sdk}; os=macos; ver=10.15; env= ;;
 	*) echo "xcrun (linux): unsupported sdk $sdk" >&2; exit 1 ;;
 esac

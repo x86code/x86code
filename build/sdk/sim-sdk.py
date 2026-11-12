@@ -17,7 +17,7 @@ need Xcode's SDK.
 Platforms 1: the same for tvOS and watchOS (AppleTVSimulator.sdk / WatchSimulator.sdk), from a tvos-/watchos- runtime:
 --platform tvos|watchos, or the platform of --runtime's dir name.
 
-Usage: build/sdk/sim-sdk.py [--platform ios|tvos|watchos] [--runtime runtimes/<dir>] [--mac-sdk sdks/MacOSX.sdk]
+Usage: build/sdk/sim-sdk.py [--platform ios|tvos|watchos|xros] [--runtime runtimes/<dir>] [--mac-sdk sdks/MacOSX.sdk]
                             [--out sdks/<Platform>Simulator.sdk] [--force]"""
 import argparse, glob, json, mmap, os, plistlib, re, shutil, struct, sys
 
@@ -31,6 +31,8 @@ PLATFORMS = {
     "tvos": ("arm64-tvos-simulator", "AppleTVSimulator.sdk", "appletvsimulator", "tvOS", "tvos", "8", "tvossim"),
     "watchos": ("arm64-watchos-simulator", "WatchSimulator.sdk", "watchsimulator", "watchOS", "watchos", "9",
                 "watchossim"),
+    # Platforms 2: visionOS (LC_BUILD_VERSION platform 12, XROS_SIMULATOR)
+    "xros": ("arm64-xros-simulator", "XRSimulator.sdk", "xrsimulator", "visionOS", "xros", "12", "xrossim"),
 }
 
 # (header relative to the SDK, macOS text, iOS text): iOS headers that differ from macOS in a way our code sees
@@ -241,7 +243,7 @@ def runtime_version(rt):
         with open(os.path.join(rt, "RuntimeRoot/System/Library/CoreServices/SystemVersion.plist"), "rb") as f:
             return plistlib.load(f)["ProductVersion"]
     except (OSError, KeyError):
-        m = re.search(r"(?:ios|tvos|watchos)-([0-9.]+)-", os.path.basename(rt.rstrip("/")))
+        m = re.search(r"(?:ios|tvos|watchos|xros)-([0-9.]+)-", os.path.basename(rt.rstrip("/")))
         return m[1] if m else "0.0"
 
 
@@ -315,6 +317,12 @@ def main():
             "ClangRuntimeLibraryPlatformName": rtname, "PlatformFamilyName": disp,
             "MinimumDeploymentTarget": "12.0", "MaximumDeploymentTarget": f"{ver}.99", "DefaultDeploymentTarget": ver}},
     }
+    # Platforms 2: clang infers visionOS availability from the headers' iOS annotations through SDKSettings.json's
+    # VersionMap (iOS_xrOS ...); without it every API was "not available on visionOS". The map is Xcode's (versions only).
+    if sysname == "xros":
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "xros-versionmap.json")) as f:
+            settings["VersionMap"] = json.load(f)
+        settings["SupportedTargets"][canon]["MinimumDeploymentTarget"] = "1.0"
     with open(os.path.join(tmp, "SDKSettings.json"), "w") as f:
         json.dump(settings, f, indent=1)
     if os.path.lexists(out):

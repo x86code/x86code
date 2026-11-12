@@ -38,6 +38,8 @@ PLATFORMS = {
     "ios": ("com.apple.platform.iphoneos", "com.apple.MobileAsset.iOSSimulatorRuntime", "iOS"),
     "tvos": ("com.apple.platform.appletvos", "com.apple.MobileAsset.appleTVOSSimulatorRuntime", "tvOS"),
     "watchos": ("com.apple.platform.watchos", "com.apple.MobileAsset.watchOSSimulatorRuntime", "watchOS"),
+    # Platforms 2: visionOS (catalogue platform xros; its .simruntime is "xrOS <version>.simruntime")
+    "xros": ("com.apple.platform.xros", "com.apple.MobileAsset.xrOSSimulatorRuntime", "xrOS"),
 }
 
 

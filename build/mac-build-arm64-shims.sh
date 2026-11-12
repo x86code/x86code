@@ -12,7 +12,9 @@ case ${X86SIM_PLATFORM:-ios} in
 ios) SIMSDK=iphonesimulator; T="-target arm64-apple-ios17.0-simulator"; SUF= ;;
 tvos) SIMSDK=appletvsimulator; T="-target arm64-apple-tvos17.0-simulator"; SUF=-tvos ;;
 watchos) SIMSDK=watchsimulator; T="-target arm64-apple-watchos10.0-simulator"; SUF=-watchos ;;
-*) echo "X86SIM_PLATFORM: ios, tvos or watchos" >&2; exit 1 ;;
+# Platforms 2: visionOS
+xros) SIMSDK=xrsimulator; T="-target arm64-apple-xros1.0-simulator"; SUF=-xros ;;
+*) echo "X86SIM_PLATFORM: ios, tvos, watchos or xros" >&2; exit 1 ;;
 esac
 W=$(mktemp -d "$X86SIM_SCRATCH/macbuild.XXXXXX"); trap 'rm -rf "$W"' EXIT
 CC="xcrun -sdk $SIMSDK clang $T"

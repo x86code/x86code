@@ -12,6 +12,7 @@ for t in hello bench threads signals fp16 fp16v sharestress icstress fusestress 
 # executable of its own platform
 xcrun -sdk appletvsimulator clang -arch arm64 -mtvos-simulator-version-min=17.0 -O2 -o "$O/icstress-tvos.sim" "$S/icstress.c"
 xcrun -sdk watchsimulator clang -arch arm64 -mwatchos-simulator-version-min=10.0 -O2 -o "$O/icstress-watchos.sim" "$S/icstress.c"
+xcrun -sdk xrsimulator clang -target arm64-apple-xros1.0-simulator -O2 -o "$O/icstress-xros.sim" "$S/icstress.c"
 $MAC -o "$O/bench.mac" "$S/bench.c"
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=17.0 -O1 -fobjc-arc -framework Foundation -o "$O/cfprobe.sim" "$S/cfprobe.m"
 xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=17.0 -O1 -fobjc-arc -framework Foundation -o "$O/threxit.sim" "$S/threxit.m"

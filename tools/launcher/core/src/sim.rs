@@ -84,13 +84,14 @@ pub fn device_runtime(dev: &Path) -> PathBuf {
 }
 
 /// Platforms 1: the runtimes/ dir prefixes ("ios", "tvos", "watchos"), as cli/libexec/arm64/runtime-fetch.py names them
-pub const PLATFORMS: [&str; 3] = ["ios", "tvos", "watchos"];
+pub const PLATFORMS: [&str; 4] = ["ios", "tvos", "watchos", "xros"];
 
 /// Platforms 1: "ios" -> "iOS", "tvos" -> "tvOS", "watchos" -> "watchOS"
 pub fn platform_name(platform: &str) -> &'static str {
     match platform {
         "tvos" => "tvOS",
         "watchos" => "watchOS",
+        "xros" => "visionOS",
         _ => "iOS",
     }
 }
@@ -100,6 +101,7 @@ pub fn platform_default_build(platform: &str) -> (&'static str, &'static str) {
     match platform {
         "tvos" => ("27.2", "24K150"),
         "watchos" => ("27.2", "24S118"),
+        "xros" => ("27.2", "24N120"),
         _ => (crate::setup::DEFAULT_VERSION, crate::setup::DEFAULT_BUILD),
     }
 }
@@ -155,9 +157,11 @@ pub fn model_platform(model_id: &str) -> &'static str {
     match m.get(model_id).map(|s| s.as_str()) {
         Some("tvos") => "tvos",
         Some("watchos") => "watchos",
+        Some("xros") => "xros",
         Some(_) => "ios",
         None if model_id.starts_with("AppleTV") => "tvos",
         None if model_id.starts_with("Watch") => "watchos",
+        None if model_id.starts_with("RealityDevice") => "xros",
         None => "ios",
     }
 }
@@ -196,6 +200,7 @@ fn load_models() -> Vec<(String, String)> {
     let group = |m: &(String, String)| match v.get(&m.0).and_then(|t| t["platform"].as_str()) {
         Some("tvos") => 2,
         Some("watchos") => 3,
+        Some("xros") => 4,
         _ if m.0.starts_with("iPhone") => 0,
         _ => 1,
     };

@@ -39,7 +39,7 @@ DEFAULT_RT = "ios-27.2-24B8117-arm64"
 MAX_SLUG = 24  # device-a64-<slug>: see create
 
 
-PLATFORM_NAMES = {"ios": "iOS", "tvos": "tvOS", "watchos": "watchOS"}
+PLATFORM_NAMES = {"ios": "iOS", "tvos": "tvOS", "watchos": "watchOS", "xros": "visionOS"}
 
 
 def platform_of_model(t):
@@ -92,7 +92,7 @@ def cmd_list():
         if d.startswith("device-a64") and os.path.exists(os.path.join(p, "sim.env")):
             e = env_of(p)
             m = e.get("SIMULATOR_MODEL_IDENTIFIER", "")
-            rt = re.match(r"(ios|tvos|watchos)-([0-9.]+)-", runtime_of(p))
+            rt = re.match(r"(ios|tvos|watchos|xros)-([0-9.]+)-", runtime_of(p))
             print(f"{d:24} {names.get(m, m):24} {e.get('SIMULATOR_MAINSCREEN_WIDTH')}x{e.get('SIMULATOR_MAINSCREEN_HEIGHT')}"
                   f"  {PLATFORM_NAMES[rt[1]] if rt else 'iOS':7} {rt[2] if rt else '?':5} {e.get('SIMULATOR_DEVICE_NAME', '')}")
 

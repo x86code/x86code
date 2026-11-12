@@ -89,7 +89,7 @@ pub fn catalogue(refresh: bool) -> Vec<Catalogue> {
             let gb = gb_i.checked_sub(1).and_then(|i| f.get(i)).and_then(|x| x.parse().ok()).unwrap_or(0.0);
             let name = f[1..gb_i.saturating_sub(1)].join(" ");
             let version = name.split_whitespace().find(|w| w.starts_with("27")).unwrap_or("").to_string();
-            let platform = if name.starts_with("tvOS") { "tvos" } else if name.starts_with("watchOS") { "watchos" } else { "ios" }.to_string();
+            let platform = if name.starts_with("tvOS") { "tvos" } else if name.starts_with("watchOS") { "watchos" } else if name.starts_with("visionOS") { "xros" } else { "ios" }.to_string();
             v.push(Catalogue { version, build, name, gb, platform });
         }
     }

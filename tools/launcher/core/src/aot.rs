@@ -1627,6 +1627,8 @@ fn builder_exe(runtime_root: &Path) -> &'static str {
         "tests/arm64/icstress-tvos.sim"
     } else if sv.contains("Watch OS") || sv.contains("watchOS") {
         "tests/arm64/icstress-watchos.sim"
+    } else if sv.contains("xrOS") || sv.contains("visionOS") {
+        "tests/arm64/icstress-xros.sim"
     } else {
         "tests/arm64/icstress.sim"
     }
