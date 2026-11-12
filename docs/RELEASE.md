@@ -1,7 +1,7 @@
 # x86Sim releases: one AppImage, set up by the launcher
 
 Goal: download one file, run it, and get a booted phone with as little work as possible. GitHub CI builds it.
-Releases are **pre-releases** (`v<version>-pre<N>`) until this is settled.
+Full releases are tagged `v<version>` (first: `v0.1.0`, 2026-11-11); pre-releases `v<version>-pre<N>`.
 
 Status (2026-11-08): the build, the AppImage, the setup wizard (GUI + `x86sim-aot setup` CLI), the no-root "userns"
 mode and the CI workflows are written. Tested locally: the Ubuntu 24.04 build (docker, the same script CI runs), the
@@ -133,7 +133,8 @@ it stays in the sidebar afterwards. The same steps from a terminal: `x86sim.AppI
   check of the CI build).
 - `.github/workflows/build.yml` (reusable): free disk, shallow recursive submodules with SSH URLs rewritten to HTTPS
   (the forks are public), packages, ccache + cargo caches, build, AppImage, artifact. `ci.yml`: every push to main / PR.
-  `release.yml`: tag `v*-pre*` (or manual run with a tag) → GitHub **pre-release** with AppImage, zsync, SHA256SUMS.
+  `release.yml`: tag `v<version>` → GitHub release (marked latest), `v<version>-pre<N>` → pre-release (or a manual
+  run naming a tag); each with AppImage, zsync, SHA256SUMS.
 
 Measured locally (Ryzen 7 9800X3D, `-j8`, a phone running alongside): Darling 26k targets ≈ 8.5 min wall, 50 CPU-min
 summed over jobs; arm64jit + arm64host < 1 min; mtlvk ≈ 1.5 min; launcher < 30 s; packing ≈ 1 min. Estimate on a
@@ -163,5 +164,5 @@ Our own code: GPL-3.0-or-later (LICENSE); bundled components and their licenses 
 4. **Distro floor: Ubuntu 24.04+** (glibc 2.39): also Debian 13, Fedora 39+, Arch.
 5. **Pre-translate: on by default.** The setup page starts it on its own once iOS and Darling are ready
    (`Setup::aot_auto`); phones work while it runs.
-6. **First tag**: `v0.1.0-pre1` (the workflow publishes only `v*-pre*` tags).
+6. **First tag**: `v0.1.0-pre1`; first full release `v0.1.0`.
 7. **Pushing**: the gh token has `workflow` scope; push innermost first (darlingserver, darling, then this repo).

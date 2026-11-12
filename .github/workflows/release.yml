@@ -1,14 +1,14 @@
-# x86Sim release: a tag v<version>-pre<N> (or a manual run naming one) builds the AppImage and publishes a GitHub
-# *pre-release* with the AppImage, its .zsync (for AppImageUpdate) and SHA256SUMS. Full releases (tags without -pre)
-# are not published by this workflow yet, on purpose.
+# x86Sim release: a tag v<version> (full release) or v<version>-pre<N> (pre-release), or a manual run naming one, builds
+# the AppImage and publishes a GitHub release with the AppImage, its .zsync (for AppImageUpdate) and SHA256SUMS. A full
+# release is marked latest; the launcher's stable channel follows those, its pre channel both.
 name: release
 on:
   push:
-    tags: ["v*-pre*"]
+    tags: ["v[0-9]*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: pre-release tag to create, e.g. v0.1.0-pre1 (made on the selected commit)
+        description: release tag to create, e.g. v0.1.0 or v0.1.0-pre1 (made on the selected commit)
         required: true
 permissions:
   contents: write
@@ -29,8 +29,13 @@ jobs:
       - name: Check the tag
         run: |
           T="${{ github.event_name == 'push' && github.ref_name || inputs.tag }}"
-          case "$T" in v*-pre*) ;; *) echo "only pre-release tags (v*-pre*) are published here: $T"; exit 1 ;; esac
-          echo "TAG=$T" >> "$GITHUB_ENV"
+          case "$T" in
+            v[0-9]*.[0-9]*-pre[0-9]*) PRE=true; KIND="Pre-release build" ;;
+            v[0-9]*.[0-9]*) case "$T" in *-*) echo "not a release tag (v<version> or v<version>-pre<N>): $T"; exit 1 ;; esac
+              PRE=false; KIND="Release" ;;
+            *) echo "not a release tag (v<version> or v<version>-pre<N>): $T"; exit 1 ;;
+          esac
+          { echo "TAG=$T"; echo "PRE=$PRE"; echo "KIND=$KIND"; } >> "$GITHUB_ENV"
           ls -la dist
           (cd dist && sha256sum -c SHA256SUMS)
       - uses: softprops/action-gh-release@v2
@@ -38,12 +43,12 @@ jobs:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ github.sha }}
           name: x86Sim ${{ env.TAG }}
-          prerelease: true
+          prerelease: ${{ env.PRE == 'true' }}
           # the repo has immutable releases: assets go up while it is a draft, then it is published (next step)
           draft: true
           generate_release_notes: true
           body: |
-            Pre-release build. Download the AppImage, `chmod +x` it and run it: the Setup page checks this computer,
+            ${{ env.KIND }}. Download the AppImage, `chmod +x` it and run it: the Setup page checks this computer,
             prepares the simulator host (no root where user namespaces are available, otherwise one password prompt),
             downloads iOS 27.2 from Apple (about 8 GB), pre-translates it and makes your first phone.
           files: |
@@ -51,7 +56,12 @@ jobs:
             dist/*.zsync
             dist/SHA256SUMS
 
-      - name: Publish the pre-release
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$TAG" -R "${{ github.repository }}" --draft=false --prerelease
+        run: |
+          if [ "$PRE" = true ]; then
+            gh release edit "$TAG" -R "${{ github.repository }}" --draft=false --prerelease
+          else
+            gh release edit "$TAG" -R "${{ github.repository }}" --draft=false --prerelease=false --latest
+          fi
