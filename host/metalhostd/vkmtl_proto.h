@@ -126,6 +126,7 @@ enum {
 	VKMTL_C_CS_USE = 19,        // {u64 resource, u32 usage (MTLResourceUsage), u32 isTexture}
 	VKMTL_C_CS_END = 20,        // {}
 	VKMTL_C_CS_BUFFER_OFFSET = 21, // {u64 offset, u32 index, u32 pad}
+	VKMTL_C_CS_DISPATCH_INDIRECT = 22, // {u64 indirectBuffer, u64 indirectOffset, u64 group[3]}  (MTLDispatchThreadgroupsIndirectArguments)
 	// render encoder (stage 5): VKMTL_C_RENDER_PASS begins it, then state and draws, then RE_END
 	// (stage: 0 vertex, 1 fragment)
 	VKMTL_C_RE_PIPELINE = 30,   // {u64 renderPipelineState}
@@ -153,6 +154,8 @@ enum {
 	VKMTL_C_RE_DRAW_INDIRECT = 50, // {u32 primitive, u32 pad, u64 indirectBuffer, u64 indirectOffset}
 	VKMTL_C_RE_DRAW_INDEXED_INDIRECT = 51, // {u32 primitive, u32 indexType, u64 indexBuffer, u64 indexOffset,
 	                                       //  u64 indirectBuffer, u64 indirectOffset}
+	VKMTL_C_RE_VIEWPORTS = 52,  // {u32 count, u32 pad, f64 viewport[count][6]}  (x, y, w, h, znear, zfar each; [[viewport_array_index]])
+	VKMTL_C_RE_SCISSORS = 53,   // {u32 count, u32 pad, u64 rect[count][4]}
 };
 
 // VKMTL_RPS_NEW

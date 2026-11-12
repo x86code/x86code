@@ -1109,7 +1109,7 @@ impl State {
                     }
                     dump_targets.clear();
                 }
-                C_CS_PIPELINE..=C_CS_USE | C_CS_BUFFER_OFFSET => {
+                C_CS_PIPELINE..=C_CS_USE | C_CS_BUFFER_OFFSET | C_CS_DISPATCH_INDIRECT => {
                     if dump_dir.is_some() {
                         self.dump_compute_command(id, kind, body, &mut dump_targets);
                     }
@@ -1141,7 +1141,7 @@ impl State {
                         npass += 1;
                     }
                 }
-                C_RE_PIPELINE..=C_RE_USE | C_RE_DRAW_INDIRECT | C_RE_DRAW_INDEXED_INDIRECT => {
+                C_RE_PIPELINE..=C_RE_USE | C_RE_DRAW_INDIRECT | C_RE_DRAW_INDEXED_INDIRECT | C_RE_VIEWPORTS | C_RE_SCISSORS => {
                     let Enc::Render(re) = &mut enc else {
                         return Err(format!("render command {kind} outside a render encoder"));
                     };
@@ -1380,6 +1380,13 @@ impl State {
                     enc.dispatch_threadgroups(grid, group).map_err(e)?;
                 }
             }
+            C_CS_DISPATCH_INDIRECT => {
+                let (ib, off) = (c.u64(), c.u64());
+                let group = Size::new(c.u64(), c.u64(), c.u64());
+                if !self.skip_draws.get() {
+                    enc.dispatch_threadgroups_indirect(self.buf(ib)?, off, group).map_err(e)?;
+                }
+            }
             C_CS_BARRIER => {
                 let scope = BarrierScope::try_from(c.u64() as u32).map_err(err("barrier scope"))?;
                 enc.memory_barrier_with_scope(scope);
@@ -1446,6 +1453,18 @@ impl State {
             C_RE_SCISSOR => {
                 let s = ScissorRect::new(c.u64(), c.u64(), c.u64(), c.u64());
                 enc.set_scissor_rect(s).map_err(e)?;
+            }
+            C_RE_VIEWPORTS => {
+                let n = c.u32() as usize;
+                c.u32();
+                let vs: Vec<Viewport> = (0..n.min(16)).map(|_| Viewport::new(c.f64(), c.f64(), c.f64(), c.f64(), c.f64(), c.f64())).collect();
+                enc.set_viewports(&vs).map_err(e)?;
+            }
+            C_RE_SCISSORS => {
+                let n = c.u32() as usize;
+                c.u32();
+                let rs: Vec<ScissorRect> = (0..n.min(16)).map(|_| ScissorRect::new(c.u64(), c.u64(), c.u64(), c.u64())).collect();
+                enc.set_scissor_rects(&rs).map_err(e)?;
             }
             C_RE_CULL => enc.set_cull_mode(CullMode::try_from(c.u32()).map_err(err("cull mode"))?),
             C_RE_WINDING => enc.set_front_facing_winding(Winding::try_from(c.u32()).map_err(err("winding"))?),

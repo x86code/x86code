@@ -1280,6 +1280,13 @@ uint32_t vk_constant_values(MTLFunctionConstantValues* cv, wbuf* out) {
 }
 - (void)dispatchThreads:(MTLSize)g threadsPerThreadgroup:(MTLSize)t { [self vkDispatch:0 grid:g group:t]; }
 - (void)dispatchThreadgroups:(MTLSize)g threadsPerThreadgroup:(MTLSize)t { [self vkDispatch:1 grid:g group:t]; }
+// the threadgroup counts stay in the buffer for mtlvk to read (MetalCoverage compute/indirect_dispatch: unimplemented,
+// it ran no thread)
+- (void)dispatchThreadgroupsWithIndirectBuffer:(id<MTLBuffer>)ib indirectBufferOffset:(NSUInteger)io threadsPerThreadgroup:(MTLSize)t {
+	struct { uint64_t ib, io, t[3]; } c = { vid(ib), io, { t.width, t.height, t.depth } };
+	[_cb keep:ib];
+	[_cb addCommand:VKMTL_C_CS_DISPATCH_INDIRECT data:&c size:sizeof(c)];
+}
 - (void)memoryBarrierWithScope:(MTLBarrierScope)s {
 	uint64_t c = s;
 	[_cb addCommand:VKMTL_C_CS_BARRIER data:&c size:8];
@@ -1495,12 +1502,28 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 	double c[6] = { v.originX, v.originY, v.width, v.height, v.znear, v.zfar };
 	[self cmd:VKMTL_C_RE_VIEWPORT data:c size:sizeof(c)];
 }
-- (void)setViewports:(const MTLViewport*)v count:(NSUInteger)n { if (n) [self setViewport:v[0]]; }
+// MetalCoverage render/multiple_viewports: only the first was sent, [[viewport_array_index]] > 0 drew nothing
+- (void)setViewports:(const MTLViewport*)v count:(NSUInteger)n {
+	if (n == 1) { [self setViewport:v[0]]; return; }
+	if (!n || n > 16) return;
+	struct { uint32_t n, pad; double v[16][6]; } c = { (uint32_t)n, 0 };
+	for (NSUInteger k = 0; k < n; k++) {
+		double* d = c.v[k];
+		d[0] = v[k].originX; d[1] = v[k].originY; d[2] = v[k].width; d[3] = v[k].height; d[4] = v[k].znear; d[5] = v[k].zfar;
+	}
+	[self cmd:VKMTL_C_RE_VIEWPORTS data:&c size:8 + n * 48];
+}
 - (void)setScissorRect:(MTLScissorRect)r {
 	uint64_t c[4] = { r.x, r.y, r.width, r.height };
 	[self cmd:VKMTL_C_RE_SCISSOR data:c size:sizeof(c)];
 }
-- (void)setScissorRects:(const MTLScissorRect*)r count:(NSUInteger)n { if (n) [self setScissorRect:r[0]]; }
+- (void)setScissorRects:(const MTLScissorRect*)r count:(NSUInteger)n {
+	if (n == 1) { [self setScissorRect:r[0]]; return; }
+	if (!n || n > 16) return;
+	struct { uint32_t n, pad; uint64_t r[16][4]; } c = { (uint32_t)n, 0 };
+	for (NSUInteger k = 0; k < n; k++) { c.r[k][0] = r[k].x; c.r[k][1] = r[k].y; c.r[k][2] = r[k].width; c.r[k][3] = r[k].height; }
+	[self cmd:VKMTL_C_RE_SCISSORS data:&c size:8 + n * 32];
+}
 - (void)setCullMode:(MTLCullMode)m { uint32_t c[2] = { (uint32_t)m, 0 }; [self cmd:VKMTL_C_RE_CULL data:c size:8]; }
 - (void)setFrontFacingWinding:(MTLWinding)w { uint32_t c[2] = { (uint32_t)w, 0 }; [self cmd:VKMTL_C_RE_WINDING data:c size:8]; }
 - (void)setTriangleFillMode:(MTLTriangleFillMode)m { uint32_t c[2] = { (uint32_t)m, 0 }; [self cmd:VKMTL_C_RE_FILL data:c size:8]; }
