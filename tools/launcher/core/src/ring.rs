@@ -181,7 +181,9 @@ impl Ring {
 
     /// framecheck.py's home test on the newest frame published after `after_unix_s`: not the boot logo (~98% dark)
     /// and either colourful wallpaper (mean saturation > 25) or enough bright pixels (icons/dock, > 5%).
-    pub fn home_frame(&mut self, after_unix_s: f64) -> bool {
+    /// `tvos`: the tvOS home is a dim, grey shelf (almost no saturation or bright pixels), told from the black boot
+    /// screen with its white logo by its share of dark pixels alone.
+    pub fn home_frame(&mut self, after_unix_s: f64, tvos: bool) -> bool {
         let Some(f) = self.latest() else { return false };
         if (f.t_ns as f64) / 1e9 < after_unix_s {
             return false;
@@ -209,6 +211,9 @@ impl Ring {
         }
         let n = n.max(1) as f64;
         let dark_f = dark as f64 / n;
+        if tvos {
+            return dark_f < 0.9;
+        }
         dark_f < 0.98 && (sat_sum / n > 25.0 || bright as f64 / n > 0.05)
     }
 }

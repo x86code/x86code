@@ -560,7 +560,7 @@ impl Monitor {
             let home = match launchd {
                 Some(l) if self.home_seen.get(&inst.id) == Some(&l) => true,
                 Some(l) => {
-                    let ok = crate::ring::Ring::new(&inst.ring).home_frame(boot_time.unwrap_or(0.0) - 2.0);
+                    let ok = crate::ring::Ring::new(&inst.ring).home_frame(boot_time.unwrap_or(0.0) - 2.0, inst.platform == "tvos");
                     if ok {
                         self.home_seen.insert(inst.id.clone(), l);
                         let m = home_marker(&inst.dir);
