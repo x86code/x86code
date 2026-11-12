@@ -187,13 +187,24 @@ MIN="com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.appl
 # runs. Without it AlarmManager.requestAuthorization() never answered (Cadence's "Allow" did nothing).
 # nanotimekitcompaniond (on demand: its Mach services start it) renders the Watch app's faces: without it Face Gallery's
 # previews stayed empty (com.apple.nanotimekit.facesnapshotserver: no such process).
+# CoreAuthentication.daemon, storekitd, quicklook.ThumbnailsAgent, midiserver-sim (sdkcov, on demand: no RunAtLoad /
+# KeepAlive, so no idle cost): LocalAuthentication, StoreKit, QuickLook thumbnails and CoreMIDI, which a Mac's
+# simulator serves. Without them LAContext.canEvaluatePolicy, Product.products(for:), QLThumbnailGenerator and
+# MIDIClientCreate failed at once (lookup error 3 / serviceConnectionFailed / -10833), where Apple's simulator answers
+# (tests/apps/sdkcov, checked against the Mac's iOS 27.2 24B8117). pasteboard.pasted, wcd, voiced and
+# accessibility.axassetsd (on demand too): UIPasteboard (a string set was read back as nil), WatchConnectivity
+# (WCSession.activate() never called back) and the speech voices (AVSpeechSynthesisVoice.speechVoices() was empty, so
+# AVSpeechSynthesizer said nothing). locationd: feature "location" (SpringBoard looks it up at boot, ~94 MB); without it
+# CMPedometer.isStepCountingAvailable() never returned.
 UI="com.apple.installcoordinationd com.apple.mobiletimerd com.apple.backboardd com.apple.SpringBoard com.apple.sleepd com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.usernotificationsd com.apple.InputUI com.apple.assistantd com.apple.assetsd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd
 	com.apple.campo com.apple.FileProvider com.apple.DesktopServicesHelper com.apple.PosterBoard com.apple.financed
 	com.apple.passd com.apple.finhealthd com.apple.healthd com.apple.healthappd com.apple.medialibraryd
 	com.apple.StatusKitAgent com.apple.mobileassetd com.apple.assetsubscriptiond com.apple.corespeechd com.apple.sirittsd
 	com.apple.siriinferenced com.apple.siriknowledged com.apple.siriactionsd com.apple.searchd com.apple.corespotlightservice
-	com.apple.assistant_cdmd com.apple.nanoregistryd com.apple.nanotimekitcompaniond"
+	com.apple.assistant_cdmd com.apple.nanoregistryd com.apple.nanotimekitcompaniond
+	com.apple.CoreAuthentication.daemon com.apple.storekitd com.apple.quicklook.ThumbnailsAgent com.apple.midiserver-sim
+	com.apple.locationd com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd"
 UI_SLIM="com.apple.backboardd com.apple.SpringBoard com.apple.TextInput.kbd com.apple.FileCoordination com.apple.InputUI
 	com.apple.assistantd"
 FULLUI="com.apple.chronod"
@@ -208,7 +219,8 @@ OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl
 TV_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd
 	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.TVSystemUIService
 	com.apple.PosterBoard com.apple.campo com.apple.splashboardd com.apple.MediaRemoteUI com.apple.assetsubscriptiond
-	com.apple.mobileassetd com.apple.tvremoted"
+	com.apple.mobileassetd com.apple.tvremoted com.apple.CoreAuthentication.daemon com.apple.storekitd
+	com.apple.voiced com.apple.accessibility.axassetsd"
 TV_UI_SLIM="com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd com.apple.FileCoordination"
 # Platforms 1: watchOS. Carousel is watchOS's SpringBoard (the watch face, the app grid, notifications); the watch face
 # itself comes from nanotimekitd. nanoregistryd (+ its launch helper) holds the pairing state, unpaired for a watch booted
@@ -219,7 +231,9 @@ TV_UI_SLIM="com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd com
 WATCH_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Carousel com.apple.sleepd com.apple.TextInput.kbd
 	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.campo com.apple.splashboardd
 	com.apple.nanoregistryd com.apple.nanoregistrylaunchd com.apple.nanotimekitd com.apple.carouselecomoded
-	com.apple.assetsubscriptiond com.apple.mobileassetd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd"
+	com.apple.assetsubscriptiond com.apple.mobileassetd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd
+	com.apple.CoreAuthentication.daemon com.apple.storekitd com.apple.quicklook.ThumbnailsAgent com.apple.voiced
+	com.apple.accessibility.axassetsd com.apple.wcd"
 WATCH_UI_SLIM="com.apple.backboardd com.apple.Carousel com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.nanoregistryd com.apple.nanotimekitd"
 # Platforms 2: visionOS. SurfBoard is its SpringBoard; vhmdd (the simulator's virtual head-mounted display,

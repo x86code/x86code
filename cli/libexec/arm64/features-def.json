@@ -26,6 +26,10 @@
      "desc": "Off: Maps can't show maps or search.",
      "tech": "geod, navd and mapssyncd (GeoServices, navigation, Maps' synced places). Off: Maps cannot load its map or search.",
      "jobs": ["com.apple.geod", "com.apple.navd", "com.apple.Maps.mapssyncd"], "chunks": ["/geod", "/navd", "/mapssyncd"], "cost_mb": 116, "when": "use"},
+    {"id": "location", "title": "Location", "default": true,
+     "desc": "Off: apps asking for motion data or location can freeze.",
+     "tech": "locationd (Core Location; Core Motion's availability checks: CMPedometer, CMAltimeter; x86sim location). SpringBoard looks it up at boot. Off: CMPedometer.isStepCountingAvailable() never returns (a 90 s hang in tests/apps/sdkcov) and simulated locations do nothing.",
+     "jobs": ["com.apple.locationd"], "chunks": ["/locationd"], "cost_mb": 94, "when": "boot"},
     {"id": "photos", "title": "Photos", "default": true,
      "desc": "Off: Photos can't open your library.",
      "tech": "assetsd (the photo library) and its helpers. Off: Photos cannot open its library.",
@@ -54,6 +58,6 @@
   "presets": {
     "full": {},
     "lean": {"wallpaper": false, "spotlight": false, "siri": false, "widgets": false},
-    "minimal": {"wallpaper": false, "spotlight": false, "siri": false, "widgets": false, "maps": false, "photos": false, "files": false}
+    "minimal": {"wallpaper": false, "spotlight": false, "siri": false, "widgets": false, "maps": false, "photos": false, "files": false, "location": false}
   }
 }
