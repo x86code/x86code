@@ -7,7 +7,7 @@
 [![Latest release](https://img.shields.io/github/v/release/x86sim/x86sim?label=release)](https://github.com/x86sim/x86sim/releases/latest)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 
-[Download](https://github.com/x86sim/x86sim/releases/latest) · [Quick start](#quick-start) · [Usage](#usage) · [Architecture](docs/ARCHITECTURE.md) · [Developing](docs/DEVELOPMENT.md)
+[Download](https://github.com/x86sim/x86sim/releases/latest) · [Quick start](#quick-start) · [Usage](#usage) · [Building apps](#building-and-shipping-apps) · [Architecture](docs/ARCHITECTURE.md) · [Developing](docs/DEVELOPMENT.md)
 
 <img src="docs/screens/launcher-devices.webp" alt="The x86Sim launcher with several simulated devices running side by side" width="100%">
 
@@ -196,6 +196,25 @@ claude mcp add x86sim -- /path/to/x86sim-mcp               # built from source
 ```
 
 Screenshots, input and the other developer tools are on the command line, which an agent can call as well.
+
+## Building and shipping apps
+
+x86Sim runs and tests apps. The other half of iOS development without a Mac, building, signing, installing on a
+real iPhone and publishing, is [omarchy-apple-dev](https://github.com/joshuaswarren/omarchy-apple-dev). The two
+are used together: the same project is built for the simulator, tested with `x86sim install` and `x86sim launch`,
+then built for a device and shipped.
+
+- **Build** Swift, SwiftUI, Objective-C, C and C++ apps with Swift and xtool, along with Flutter and Kotlin
+  Multiplatform, as simulator builds for x86Sim or device builds for an iPhone. Linux versions of `actool`,
+  `ibtool`, `momc` and `xcstringstool` are included, and Xcode projects can be converted.
+- **Run on a device**: `device-run.sh` pairs an iPhone, installs and launches the app, attaches LLDB, streams its
+  console and symbolicates crash reports.
+- **Publish**: `ship.sh` builds a release `.ipa`, creates certificates and profiles, signs it and uploads it to App
+  Store Connect and TestFlight. `ship-mac.sh` does the same for macOS apps, with Developer ID signing and optional
+  notarization.
+
+A free Apple ID is enough to install on your own device; TestFlight and the App Store need a paid developer
+account. On Omarchy, it installs from **Install > Development > iOS**.
 
 ## How it works
 
