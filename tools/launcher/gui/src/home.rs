@@ -209,17 +209,20 @@ impl App {
         }
         let pal = crate::theme::pal();
         let frame = egui::Frame::new().fill(if row.current { pal.focus_fill } else { pal.card }).stroke(egui::Stroke::new(1.0_f32, if row.current { pal.focus_border } else { pal.border })).corner_radius(radius());
-        let resp = frame.show(ui, |ui| {
+        // the whole card opens the device; its sense is registered before the Start/Stop button inside, so the
+        // button (on top) keeps its own clicks
+        let resp = ui.scope_builder(egui::UiBuilder::new().id_salt(("card-ui", id)).sense(egui::Sense::click()), |ui| {
+            frame.show(ui, |ui| {
             ui.set_width(w);
             ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             // the screen, in a well
             let well_h = (w * 1.12).round();
-            let (well, wresp) = ui.allocate_exact_size(egui::vec2(w, well_h), egui::Sense::click());
+            let (well, _) = ui.allocate_exact_size(egui::vec2(w, well_h), egui::Sense::hover());
             ui.painter().rect_filled(well.shrink(1.0), egui::CornerRadius { nw: radius_inner(), ne: radius_inner(), sw: 0, se: 0 }, pal.well);
             ui.painter().hline(well.x_range(), well.bottom(), egui::Stroke::new(1.0_f32, pal.border));
             let live = matches!(phase, Phase::Running | Phase::Starting) && thumbs;
-            // no state on the screen: the status line below says it once
+            // no state on the screen: the dot below says it once
             let placeholder = "";
             let inner = well.shrink2(egui::vec2(S4, S4));
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::top_down(egui::Align::Center)));
@@ -230,98 +233,94 @@ impl App {
                 child.add_space(((inner.height() - (sh * fit + 10.0)) / 2.0).max(0.0));
                 v.show(&mut child, inner.size(), live, placeholder, false, viewer::THUMB);
             }
-            let wresp = wresp.on_hover_cursor(egui::CursorIcon::PointingHand);
-            if wresp.clicked() {
-                nav::select(row_id);
-                open = true;
-            }
-            wresp.context_menu(|ui| {
-                ui.set_width(220.0);
-                ui.spacing_mut().item_spacing.y = 0.0;
-                if menu_row(ui, icon::ARROW_SQUARE_OUT, "Open", "", true, false).clicked() {
-                    open = true;
-                    ui.close();
-                }
-                match phase {
-                    Phase::Off => {
-                        if menu_row(ui, icon::PLAY, "Start", "", true, false).clicked() {
-                            self.start(id);
-                            ui.close();
-                        }
-                    }
-                    Phase::Stopping => {}
-                    _ => {
-                        if menu_row(ui, icon::ARROW_CLOCKWISE, "Restart", "", true, false).clicked() {
-                            self.restart(id);
-                            ui.close();
-                        }
-                        if menu_row(ui, icon::STOP, "Stop", "", true, false).clicked() {
-                            self.stop(id);
-                            ui.close();
-                        }
-                    }
-                }
-                ui.add_space(2.0);
-                ui.separator();
-                ui.add_space(2.0);
-                self.phone_menu_items(ui, &inst, phase);
-            });
-            // text + actions
-            egui::Frame::new().inner_margin(egui::Margin { left: 14, right: 14, top: 12, bottom: 14 }).show(ui, |ui| {
-                ui.set_width(w - 28.0);
-                ui.spacing_mut().item_spacing.y = 3.0;
-                ui.add(egui::Label::new(title(&inst.name)).truncate());
-                ui.add(egui::Label::new(muted(device_line(&inst.name, &inst.model, &inst.ios))).truncate()).on_hover_text(format!("{} · {}", inst.model, inst.ios));
-                ui.add_space(4.0);
+            // two lines: state, name and the one action; then what it is and, running, what it takes
+            egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 10, top: 9, bottom: 10 }).show(ui, |ui| {
+                ui.set_width(w - 22.0);
                 let (label, col) = phase_look(phase, true);
-                let line = match &st {
-                    Some(s) if phase != Phase::Off && s.pss_mb >= 1.0 => format!("{label} · {} · {:.0}% CPU", fmt_mb(s.pss_mb), s.cpu_pct),
-                    _ => label.to_string(),
-                };
-                let pending = x86sim_core::instance::needs_restart(&inst, st.as_ref());
-                let r = ui.horizontal(|ui| {
-                    dot_label(ui, &line, col);
-                    if pending {
-                        ui.label(egui::RichText::new(icon::ARROW_CLOCKWISE).family(icons()).size(13.0).color(pal.warn)).on_hover_text("Settings changed: restart to apply");
-                    }
-                }).response;
-                if let Some(u) = st.as_ref().and_then(|s| s.uptime_s) {
-                    r.on_hover_text(format!("Up for {}", fmt_uptime(u)));
-                }
-                ui.add_space(S3);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = S2;
-                    let bw = ((ui.available_width() - S2) / 2.0).floor();
-                    // s and Enter act on the card under the keyboard cursor, so only that card shows them.
-                    let k = |key: &'static str| if row.current { key } else { "" };
+                ui.spacing_mut().item_spacing.y = 2.0;
+                // the name beside the one action; the details below at the card's full width
+                ui.allocate_ui_with_layout(egui::vec2(w - 22.0, H_SM), egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    // s acts on the card under the keyboard cursor, so only that card shows it
+                    let k = if row.current { "s" } else { "" };
                     match phase {
                         Phase::Off => {
-                            if ui.add(Btn::primary("Start").icon(icon::PLAY).key(k("s")).min_w(bw)).on_hover_text("Start this device").clicked() {
+                            if ui.add(Btn::secondary("Start").icon(icon::PLAY).key(k).small()).on_hover_text("Start this device").clicked() {
                                 self.start(id);
                             }
                         }
                         Phase::Running | Phase::Starting => {
-                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(pal.crit_ink).key(k("s")).min_w(bw)).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
+                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(pal.crit_ink).key(k).small()).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
                                 self.stop(id);
                             }
                         }
                         Phase::Stopping => {
-                            ui.add_enabled(false, Btn::secondary("Stopping…").min_w(bw));
+                            ui.add_enabled(false, Btn::secondary("Stopping…").small());
                         }
                     }
-                    if ui.add(Btn::secondary("Open").key(k("Enter")).min_w(bw)).on_hover_text("Its screen, logs and settings").clicked() {
-                        open = true;
-                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        let (r, dr) = ui.allocate_exact_size(egui::vec2(8.0, 16.0), egui::Sense::hover());
+                        dot(ui.painter(), r.center(), col);
+                        let up = st.as_ref().and_then(|s| s.uptime_s).map(|u| format!(" · up for {}", fmt_uptime(u))).unwrap_or_default();
+                        dr.on_hover_text(format!("{label}{up}"));
+                        if x86sim_core::instance::needs_restart(&inst, st.as_ref()) {
+                            ui.label(egui::RichText::new(icon::ARROW_CLOCKWISE).family(icons()).size(13.0).color(pal.warn)).on_hover_text("Settings changed: restart to apply");
+                        }
+                        ui.add(egui::Label::new(title(&inst.name)).truncate().selectable(false));
+                    });
                 });
+                let mut line = device_line(&inst.name, &inst.model, &inst.ios);
+                match &st {
+                    Some(s) if phase != Phase::Off && s.pss_mb >= 1.0 => line += &format!(" · {} · {:.0}%", fmt_mb(s.pss_mb), s.cpu_pct),
+                    _ if phase != Phase::Off && phase != Phase::Running => line += &format!(" · {}", label.to_lowercase()),
+                    _ => {}
+                }
+                ui.add(egui::Label::new(muted(line)).truncate().selectable(false));
             });
             });
+            })
         });
-        if resp.response.hovered() && !row.current {
-            ui.painter().rect_stroke(resp.response.rect, radius(), egui::Stroke::new(1.0_f32, pal.border_hover), egui::StrokeKind::Inside);
+        let card = resp.response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if card.clicked() {
+            open = true;
+        }
+        card.context_menu(|ui| {
+            ui.set_width(220.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if menu_row(ui, icon::ARROW_SQUARE_OUT, "Open", "", true, false).clicked() {
+                open = true;
+                ui.close();
+            }
+            match phase {
+                Phase::Off => {
+                    if menu_row(ui, icon::PLAY, "Start", "", true, false).clicked() {
+                        self.start(id);
+                        ui.close();
+                    }
+                }
+                Phase::Stopping => {}
+                _ => {
+                    if menu_row(ui, icon::ARROW_CLOCKWISE, "Restart", "", true, false).clicked() {
+                        self.restart(id);
+                        ui.close();
+                    }
+                    if menu_row(ui, icon::STOP, "Stop", "", true, false).clicked() {
+                        self.stop(id);
+                        ui.close();
+                    }
+                }
+            }
+            ui.add_space(2.0);
+            ui.separator();
+            ui.add_space(2.0);
+            self.phone_menu_items(ui, &inst, phase);
+        });
+        if card.hovered() && !row.current {
+            ui.painter().rect_stroke(card.rect, radius(), egui::Stroke::new(1.0_f32, pal.border_hover), egui::StrokeKind::Inside);
         }
         if row.current {
             // scroll the cursor's card into view after a move
-            nav::mark_scroll(ui, resp.response.rect);
+            nav::mark_scroll(ui, card.rect);
         }
         if open {
             nav::select(row_id);
