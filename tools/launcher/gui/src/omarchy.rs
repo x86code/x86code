@@ -12,6 +12,33 @@ use std::time::{Duration, SystemTime};
 /// Set by the watcher when the theme changed on disk; the window takes it and reloads.
 pub static DIRTY: AtomicBool = AtomicBool::new(false);
 
+/// The desktop's colour-scheme preference (freedesktop portal / GNOME `color-scheme`), refreshed by the watcher; used
+/// when the windowing system doesn't report one and there is no Omarchy theme.
+static PREFERS_LIGHT: AtomicBool = AtomicBool::new(false);
+
+pub fn desktop_prefers_light() -> bool {
+    PREFERS_LIGHT.load(Ordering::Relaxed)
+}
+
+/// `gsettings get org.gnome.desktop.interface color-scheme`: 'prefer-light' (or 'default' with a light GTK theme
+/// name) means light. GNOME, Omarchy and most GTK desktops keep it; anything else counts as dark.
+fn read_prefers_light() -> bool {
+    let get = |key: &str| {
+        std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", key])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().trim_matches('\'').to_lowercase())
+    };
+    match get("color-scheme").as_deref() {
+        Some("prefer-light") => true,
+        Some("prefer-dark") => false,
+        _ => get("gtk-theme").is_some_and(|t| !t.is_empty() && !t.contains("dark")),
+    }
+}
+
 /// `colors.toml` as read: every key, plus what `shell.toml` says about controls.
 #[derive(Clone, Debug, Default)]
 pub struct Theme {
@@ -165,8 +192,19 @@ pub fn watch(ctx: eframe::egui::Context) {
         .name("omarchy-theme".into())
         .spawn(move || {
             let mut last = signature();
+            PREFERS_LIGHT.store(read_prefers_light(), Ordering::Relaxed);
+            let mut tick = 0u32;
             loop {
                 std::thread::sleep(Duration::from_secs(1));
+                // the desktop preference: a process per read, so every 3 s, and only without an Omarchy theme
+                tick += 1;
+                if tick % 3 == 0 && !theme_dir().join("colors.toml").exists() {
+                    let l = read_prefers_light();
+                    if PREFERS_LIGHT.swap(l, Ordering::Relaxed) != l {
+                        DIRTY.store(true, Ordering::Release);
+                        ctx.request_repaint();
+                    }
+                }
                 let now = signature();
                 if now != last {
                     // the switch writes several files in a row: let it finish

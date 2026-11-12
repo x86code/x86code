@@ -168,11 +168,13 @@ pub struct HubSettings {
     pub check_updates: bool,
     /// release channel: "" (the running version's: pre-release builds follow pre-releases) | "stable" | "pre"
     pub channel: String,
+    /// "system" (the Omarchy theme, else the desktop's light or dark preference) | "dark" | "light"
+    pub appearance: String,
 }
 
 impl Default for HubSettings {
     fn default() -> Self {
-        HubSettings { thumbnails: true, open_on_start: false, card_w: 250.0, sort: "name".into(), check_updates: true, channel: String::new() }
+        HubSettings { thumbnails: true, open_on_start: false, card_w: 250.0, sort: "name".into(), check_updates: true, channel: String::new(), appearance: "system".into() }
     }
 }
 

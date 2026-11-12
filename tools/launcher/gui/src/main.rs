@@ -121,7 +121,8 @@ pub struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext) -> App {
-        theme::apply(&cc.egui_ctx);
+        // the saved Appearance before the first frame, so it never flashes the other look
+        theme::set_appearance(&cc.egui_ctx, theme::Appearance::parse(&host::load_hub().appearance));
         omarchy::watch(cc.egui_ctx.clone());
         let shared = Arc::new(Mutex::new(Shared::default()));
         // status of every phone every 2 s; one repaint per poll

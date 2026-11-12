@@ -88,6 +88,13 @@ impl Palette {
         Palette::derive(bg, rgb(0x101214), rgb(0x0b0c0e), fg, rgb(0xffd60a), rgb(0x2b3440), rgb(0xa0a6ad), [Some(rgb(0xe06c75)), None], [Some(rgb(0xe5c07b)), None], [Some(rgb(0x98c379)), None], &Alphas::default(), 6, false, false)
     }
 
+    /// The built-in light look: the same calm greys, inverted, with a darker amber so the accent stays visible.
+    pub fn default_light() -> Palette {
+        let bg = rgb(0xf6f6f7);
+        let fg = rgb(0x1d1f23);
+        Palette::derive(bg, rgb(0xededef), rgb(0xe4e4e7), fg, rgb(0xb98500), rgb(0xcfd6e0), rgb(0x6b7078), [Some(rgb(0xc0392b)), None], [Some(rgb(0x9a6700)), None], [Some(rgb(0x2e7d43)), None], &Alphas::default(), 6, false, true)
+    }
+
     pub fn from_theme(t: &omarchy::Theme, radius: u8) -> Palette {
         let d = Palette::default_dark();
         let bg = t.color("background").unwrap_or(d.canvas);
@@ -118,7 +125,12 @@ impl Palette {
     fn derive(bg: Color32, dark: Color32, darker: Color32, fg: Color32, accent: Color32, selection: Color32, active: Color32, reds: [Option<Color32>; 2], yellows: [Option<Color32>; 2], greens: [Option<Color32>; 2], a: &Alphas, radius: u8, omarchy: bool, light: bool) -> Palette {
         let control = a.control.unwrap_or(fg);
         let ink_2 = mix(fg, bg, 0.22);
-        let ink_3 = mix(fg, bg, 0.45);
+        // the faintest text: as far toward the background as stays readable (light themes lose contrast sooner)
+        let mut t3 = 0.45;
+        while t3 > 0.2 && contrast(mix(fg, bg, t3), bg) < 4.2 {
+            t3 -= 0.05;
+        }
+        let ink_3 = mix(fg, bg, t3);
         // the brighter of a theme's two reds (greys in a monochrome theme: the label carries the meaning)
         let crit = pick(&[reds[1], reds[0]], bg, 3.0, ink_2);
         let crit_ink = pick(&[reds[1], reds[0]], bg, 4.0, fg);
@@ -282,13 +294,87 @@ pub fn dialog_title(t: impl Into<String>) -> RichText {
 
 static FONT_PATHS: Mutex<Option<(std::path::PathBuf, Option<std::path::PathBuf>)>> = Mutex::new(None);
 
-/// Loads the theme (or the default), sets the fonts and egui's style. At start and after every theme switch.
+/// What Settings > Appearance picked.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Appearance {
+    /// The live Omarchy theme; without Omarchy, the desktop's light or dark preference.
+    System,
+    Dark,
+    Light,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 3] = [Appearance::System, Appearance::Dark, Appearance::Light];
+    pub fn parse(s: &str) -> Appearance {
+        match s {
+            "dark" => Appearance::Dark,
+            "light" => Appearance::Light,
+            _ => Appearance::System,
+        }
+    }
+    pub fn key(self) -> &'static str {
+        match self {
+            Appearance::System => "system",
+            Appearance::Dark => "dark",
+            Appearance::Light => "light",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Appearance::System => "System",
+            Appearance::Dark => "Dark",
+            Appearance::Light => "Light",
+        }
+    }
+}
+
+static APPEARANCE: Mutex<Appearance> = Mutex::new(Appearance::System);
+/// The desktop preference the current palette was built from (System without Omarchy), to notice it change.
+static SYS_LIGHT_USED: Mutex<Option<bool>> = Mutex::new(None);
+
+pub fn appearance() -> Appearance {
+    *APPEARANCE.lock().unwrap()
+}
+
+/// Switches the look now (Settings, and once at start from the saved choice).
+pub fn set_appearance(ctx: &egui::Context, a: Appearance) {
+    *APPEARANCE.lock().unwrap() = a;
+    apply(ctx);
+    ctx.request_repaint();
+}
+
+/// The desktop's light/dark preference: what the windowing system reports, else the freedesktop/GNOME setting the
+/// watcher reads.
+fn system_light(ctx: &egui::Context) -> bool {
+    match ctx.system_theme() {
+        Some(t) => t == egui::Theme::Light,
+        None => omarchy::desktop_prefers_light(),
+    }
+}
+
+/// Loads the theme (or a built-in look), sets the fonts and egui's style. At start, after every theme switch, and
+/// when the appearance or the desktop preference changes.
 pub fn apply(ctx: &egui::Context) {
     let theme = omarchy::load();
-    let p = match &theme {
-        Some(t) => Palette::from_theme(t, omarchy::rounding().unwrap_or(0)),
-        None => Palette::default_dark(),
+    let rounding = theme.as_ref().map(|_| omarchy::rounding().unwrap_or(0));
+    let mut used = None;
+    let mut p = match (appearance(), &theme) {
+        (Appearance::System, Some(t)) => Palette::from_theme(t, rounding.unwrap_or(0)),
+        (Appearance::System, None) => {
+            let light = system_light(ctx);
+            used = Some(light);
+            if light { Palette::default_light() } else { Palette::default_dark() }
+        }
+        (Appearance::Dark, _) => Palette::default_dark(),
+        (Appearance::Light, _) => Palette::default_light(),
     };
+    *SYS_LIGHT_USED.lock().unwrap() = used;
+    // Dark and Light change the colours only: on Omarchy the corners still match Hyprland's and Hyprland still owns
+    // the window
+    if let Some(r) = rounding {
+        p.radius = r;
+    }
+    p.omarchy = theme.is_some();
     *PALETTE.write().unwrap() = Some(p);
     // Omarchy's apps use the system monospace font; without Omarchy the bundled Inter (fonts are reloaded only
     // when the file changed: the theme changes more often)
@@ -302,9 +388,11 @@ pub fn apply(ctx: &egui::Context) {
     style(ctx, &p);
 }
 
-/// Called every frame: picks up a theme change flagged by the watcher.
+/// Called every frame: picks up a theme change flagged by the watcher, or a desktop light/dark switch while System
+/// follows it.
 pub fn poll(ctx: &egui::Context) {
-    if omarchy::DIRTY.swap(false, Ordering::AcqRel) {
+    let sys_changed = matches!(*SYS_LIGHT_USED.lock().unwrap(), Some(l) if l != system_light(ctx));
+    if omarchy::DIRTY.swap(false, Ordering::AcqRel) || sys_changed {
         apply(ctx);
         ctx.request_repaint();
     }
@@ -1231,5 +1319,21 @@ mod tests {
         assert_eq!(p.crit, rgb(0xde6145));
         assert_eq!(p.radius, 6);
         assert_eq!(Palette::default_dark().radius, 6);
+    }
+
+    #[test]
+    fn built_in_looks_are_readable() {
+        for (p, light) in [(Palette::default_dark(), false), (Palette::default_light(), true)] {
+            assert_eq!(p.light, light);
+            for c in [p.ink, p.ink_2, p.ink_3, p.accent_ink, p.crit_ink] {
+                assert!(contrast(c, p.canvas) >= 4.0, "{c:?} on {:?}", p.canvas);
+            }
+            for c in [p.good, p.warn, p.crit, p.accent] {
+                assert!(contrast(c, p.canvas) >= 3.0, "{c:?} on {:?}", p.canvas);
+            }
+        }
+        assert_eq!(Appearance::parse("light"), Appearance::Light);
+        assert_eq!(Appearance::parse(""), Appearance::System);
+        assert!(Appearance::ALL.iter().all(|a| Appearance::parse(a.key()) == *a));
     }
 }

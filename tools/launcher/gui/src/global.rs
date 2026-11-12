@@ -858,6 +858,17 @@ impl App {
         let mut save = false;
         section(ui, "Hub", |_| {});
         list_card(ui, |ui| {
+            form_row(ui, "Appearance", "System follows the Omarchy theme, or your desktop's light or dark setting.", false, |ui| {
+                let cur = crate::theme::appearance();
+                let labels: Vec<&str> = crate::theme::Appearance::ALL.iter().map(|a| a.label()).collect();
+                let sel = crate::theme::Appearance::ALL.iter().position(|a| *a == cur);
+                if let Some(i) = segmented(ui, &labels, sel, true) {
+                    let a = crate::theme::Appearance::ALL[i];
+                    self.hub.appearance = a.key().into();
+                    crate::theme::set_appearance(ui.ctx(), a);
+                    save = true;
+                }
+            });
             form_row(ui, "Live previews", "Show each running device's screen on the Devices page.", false, |ui| {
                 save |= toggle(ui, &mut self.hub.thumbnails).changed();
             });
