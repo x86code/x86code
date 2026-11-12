@@ -23,12 +23,12 @@ export A64_DEVICE X86SIM_DEVICE=$A64_DEVICE
 # overrides. Each runtime has its own JIT/AOT cache dir ($X86SIM_SCRATCH/jc-<build>; 27.0: jitcache) and placement table.
 A64_RT_DIR=$(cat "$X86SIM_DEVICE/runtime" 2>/dev/null)
 export X86SIM_RUNTIME=${A64_RUNTIME:-$X86SIM_ROOT/runtimes/${A64_RT_DIR:-ios-27.2-24B8117-arm64}/RuntimeRoot}
-A64_BUILD=$(basename "$(dirname "$X86SIM_RUNTIME")" | sed -n 's/^\(ios\|tvos\|watchos\)-[0-9.]*-\([0-9A-Za-z]*\)-arm64$/\2/p')
+A64_BUILD=$(basename "$(dirname "$X86SIM_RUNTIME")" | sed -n 's/^\(ios\|tvos\|watchos\|xros\)-[0-9.]*-\([0-9A-Za-z]*\)-arm64$/\2/p')
 # Platforms 1: the runtime's platform (ios, tvos, watchos): its runtimes/ dir name, else its SystemVersion.plist
-A64_PLATFORM=$(basename "$(dirname "$X86SIM_RUNTIME")" | sed -n 's/^\(ios\|tvos\|watchos\)-.*/\1/p')
+A64_PLATFORM=$(basename "$(dirname "$X86SIM_RUNTIME")" | sed -n 's/^\(ios\|tvos\|watchos\|xros\)-.*/\1/p')
 if [ -z "$A64_PLATFORM" ]; then
 	case $(sed -n '/ProductName/{n;s/.*<string>\(.*\)<\/string>.*/\1/p}' "$X86SIM_RUNTIME/System/Library/CoreServices/SystemVersion.plist" 2>/dev/null) in
-	"Apple TVOS") A64_PLATFORM=tvos ;; "Watch OS") A64_PLATFORM=watchos ;; *) A64_PLATFORM=ios ;;
+	"Apple TVOS") A64_PLATFORM=tvos ;; "Watch OS") A64_PLATFORM=watchos ;; xrOS|visionOS) A64_PLATFORM=xros ;; *) A64_PLATFORM=ios ;;
 	esac
 fi
 # our in-simulator binaries are built per platform: host/<name>/arm64 (iOS), arm64-tvos, arm64-watchos
@@ -222,11 +222,24 @@ WATCH_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Carousel
 	com.apple.assetsubscriptiond com.apple.mobileassetd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd"
 WATCH_UI_SLIM="com.apple.backboardd com.apple.Carousel com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.nanoregistryd com.apple.nanotimekitd"
+# Platforms 2: visionOS. SurfBoard is its SpringBoard; vhmdd (the simulator's virtual head-mounted display,
+# com.apple.vhmdd-sim) and wakeboardd (the hmd presentable / post-process server) put the room on the screen;
+# pointeruid is the look-and-pinch pointer. RealityEnvironment (a LaunchAngel) is the room itself and hosts
+# com.apple.surfboard.environmentservice: without it SurfBoard aborted in -[SFBSEnvironmentService
+# addEnvironmentsObserver:] ("Value for 'endpoint' was unexpectedly nil"). The rest as on iOS.
+XR_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.SurfBoard com.apple.vhmdd com.apple.wakeboardd
+	com.apple.RealityEnvironment
+	com.apple.PointerUI.pointeruid com.apple.sleepd com.apple.TextInput.kbd com.apple.FileCoordination
+	com.apple.usernotificationsd com.apple.assistantd com.apple.splashboardd com.apple.assetsubscriptiond
+	com.apple.mobileassetd"
+XR_UI_SLIM="com.apple.backboardd com.apple.SurfBoard com.apple.vhmdd com.apple.wakeboardd com.apple.RealityEnvironment com.apple.TextInput.kbd
+	com.apple.FileCoordination"
 # No fpsim2host on tvOS / watchOS: their FileProvider has no FPSimulatorSupportInterface (no Files app), so it exited 1
 # at every boot.
 case $A64_PLATFORM in
 	tvos) UI=$TV_UI; UI_SLIM=$TV_UI_SLIM; FULLUI=; OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl" ;;
 	watchos) UI=$WATCH_UI; UI_SLIM=$WATCH_UI_SLIM; FULLUI=; OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl" ;;
+	xros) UI=$XR_UI; UI_SLIM=$XR_UI_SLIM; FULLUI=; OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl" ;;
 esac
 case "${A64_JOBS:-std}" in
 	min) JOBS="$MIN $OUR_JOBS" ;;

@@ -29,7 +29,10 @@ EAGER = {"com.apple.SpringBoard", "com.apple.backboardd", "com.apple.runningboar
          "com.apple.syslogd", "com.apple.UserEventAgent-System", "com.apple.distnoted.xpc.daemon",
          "com.apple.sleepd",
          # Platforms 1: tvOS's and watchOS's SpringBoard
-         "com.apple.Pineboard", "com.apple.Carousel"}
+         "com.apple.Pineboard", "com.apple.Carousel",
+         # Platforms 2: visionOS's SpringBoard and the two that put its room on the screen (the simulator's virtual
+         # head-mounted display, the hmd presentable server): nothing looks them up before the first frame
+         "com.apple.SurfBoard", "com.apple.vhmdd", "com.apple.wakeboardd", "com.apple.RealityEnvironment"}
 PREFIX = x86config.get("X86SIM_PREFIX")
 MTLVK_SOCKET = os.environ.get("X86SIM_MTLVK_SOCKET") or os.path.join(x86config.get("X86SIM_STATE"), "mtlvk.sock")
 # x86Sim: the host side of the simulator's audio (cli/libexec/simaudio.py, started by cli/libexec/arm64/boot-a64.sh)
@@ -126,19 +129,40 @@ def feature_enabled(name):
     return e.get("DevelopmentPhase") == "FeatureComplete"
 
 
+_COND = ("#IfFeatureFlagEnabled", "#IfFeatureFlagDisabled", "#IfVariant")
+
+
+def _cond_true(v):
+    if "#IfFeatureFlagEnabled" in v:
+        return feature_enabled(v["#IfFeatureFlagEnabled"])
+    if "#IfFeatureFlagDisabled" in v:
+        return not feature_enabled(v["#IfFeatureFlagDisabled"])
+    return False   # #IfVariant (HasInternalContent, ...): a customer build has none of them
+
+
 def resolve_feature_flags(v):
     """x86Sim (Speed 25): resolve launchd's {"#IfFeatureFlagEnabled": flag, "#Then": a, "#Else": b} values with the
     runtime's FeatureFlags. launchd_sim judged them by the host side's flags (no such domain: off), while the code in
     the simulator reads the runtime's: on 27.2 InputUI's com.apple.UIKit.KeyboardManagement.hosted (UIKit/
     kbarbiter_in_inputui, FeatureComplete) was never registered, UIKit looked for the keyboard arbiter in InputUI and
-    no keyboard ever appeared. A "#Else": False drops the key."""
+    no keyboard ever appeared. A "#Else": False drops the key.
+    Platforms 2: also #IfFeatureFlagDisabled and #IfVariant (launchd_sim rejects a plist with either: "Found unsupported
+    directives", visionOS's wakeboardd never loaded), and the merged form where the condition sits among ordinary keys
+    ({"#IfVariant": v, "#Then": {...}, "OS_ACTIVITY_DT_MODE": "1"}): the keys plus the chosen branch's."""
     if isinstance(v, dict):
-        if "#IfFeatureFlagEnabled" in v:
-            return resolve_feature_flags(v.get("#Then" if feature_enabled(v["#IfFeatureFlagEnabled"]) else "#Else", False))
+        if any(c in v for c in _COND):
+            branch = v.get("#Then" if _cond_true(v) else "#Else", False)
+            rest = {k: x for k, x in v.items() if not k.startswith("#")}
+            if not rest:
+                return resolve_feature_flags(branch)
+            out = resolve_feature_flags(rest)
+            if isinstance(branch, dict):
+                out.update(resolve_feature_flags(branch))
+            return out
         out = {}
         for k, x in v.items():
             r = resolve_feature_flags(x)
-            if r is False and isinstance(x, dict) and "#IfFeatureFlagEnabled" in x:
+            if r is False and isinstance(x, dict) and any(c in x for c in _COND):
                 continue
             out[k] = r
         return out
@@ -459,7 +483,8 @@ def main():
         # JIT's scratch dir (a64-penv, a64-slim-park, gbt, crash dumps); without it the JIT falls back to the home of its
         # uid, which in a user-namespace phone (the AppImage's) is 0: /root/scratch, unreadable, and all of those were off.
         **{k: v for k, v in os.environ.items()
-           if (k.startswith("X86SIM_A64_") and k not in ("X86SIM_A64_EXE", "X86SIM_A64_LOG")) or k in ("SIMFB_HZ", "X86SIM_SCRATCH")},
+           if (k.startswith("X86SIM_A64_") and k not in ("X86SIM_A64_EXE", "X86SIM_A64_LOG"))
+           or k in ("SIMFB_HZ", "X86SIM_SCRATCH", "X86SIM_OSLOG", "X86SIM_OSLOG_DIR")},   # X86SIM_OSLOG: every os_log level of those programs (libsimshim)
         "SIMULATOR_UDID": udid,
         "SIMULATOR_DEVICE_NAME": dt.get("name", "x86sim"),
         "SIMULATOR_RUNTIME_VERSION": dt["version"],
