@@ -457,14 +457,17 @@ extension Registry {
                     port = UInt16(bigEndian: a.sin_port)
                 }
                 let fired = DispatchSemaphore(value: 0)
-                let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global()); src.setEventHandler { fired.signal(); src.suspend() }
+                // signal once; never suspend in the handler (releasing a suspended source is a libdispatch client crash)
+                let once = Atomic<Bool>(false)
+                let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global())
+                src.setEventHandler { if !once.exchange(true, ordering: .relaxed) { fired.signal() } }
                 src.resume()
                 let s = socket(AF_INET, SOCK_DGRAM, 0); defer { close(s) }
                 var to = sockaddr_in(); to.sin_len = UInt8(MemoryLayout<sockaddr_in>.size); to.sin_family = sa_family_t(AF_INET); to.sin_addr.s_addr = inet_addr("127.0.0.1"); to.sin_port = port.bigEndian
                 _ = withUnsafePointer(to: &to) { p in p.withMemoryRebound(to: sockaddr.self, capacity: 1) { sendto(s, "x", 1, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
                 let ok = fired.wait(timeout: .now() + 3) == .success
                 var b = [UInt8](repeating: 0, count: 8); let n = recv(fd, &b, 8, MSG_DONTWAIT)
-                src.cancel(); if !ok { src.resume() }
+                src.cancel()
                 out.append("\(v6 ? "v6 dual" : "v4"): event \(ok ? "yes" : "NO"), queued \(n == 1 ? "yes" : "no")")
             }
             try expect(!out.contains { $0.contains("NO") || $0.contains("queued no") }, out.joined(separator: "; "))
