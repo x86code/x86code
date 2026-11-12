@@ -37,6 +37,9 @@ pub struct Palette {
     pub ink_3: Color32,        // tertiary text, icons at rest
     pub accent: Color32,       // the theme's accent: progress, selection stroke
     pub accent_ink: Color32,   // the accent as text (the foreground when the accent can't be read)
+    pub on_accent: Color32,    // text on an accent fill: the background or the foreground, whichever reads better
+    pub accent_hover: Color32,
+    pub accent_down: Color32,
     pub hilite: Color32,       // the chosen item's text: the current page, a hovered menu row ([menu] selected-text)
     pub hilite_fill: Color32,  // a hovered menu row ([menu] selected-background at its alpha)
     pub popup: Color32,        // menus, dropdowns, tooltips, dialogs ([popups] background)
@@ -123,7 +126,6 @@ impl Palette {
             border: t.shell_f32("controls", "normal-border-alpha", 0.4),
             border_hover: t.shell_f32("controls", "hover-cursor-border-alpha", 0.25),
             focus: t.shell_f32("controls", "focus-fill-alpha", 0.08),
-            focus_border: t.shell_f32("controls", "focus-border-alpha", 0.25),
             scrim: t.shell_f32("menu", "scrim-alpha", 0.5),
             control: t.shell_color("controls", "normal-color"),
             focus_color: t.shell_color("controls", "focus-border"),
@@ -195,6 +197,9 @@ impl Palette {
             ink_3,
             accent,
             accent_ink,
+            on_accent: if contrast(bg, accent) >= contrast(fg, accent) { bg } else { fg },
+            accent_hover: mix(accent, fg, 0.15),
+            accent_down: mix(accent, bg, 0.2),
             hilite: accent_ink,
             hilite_fill: alpha(control, a.hover),
             popup: bg,
@@ -214,7 +219,7 @@ impl Palette {
             active,
             scrim: alpha(a.scrim_color.unwrap_or(bg), a.scrim),
             focus_fill: alpha(a.focus_color.unwrap_or(control), a.focus),
-            focus_border: alpha(a.focus_color.unwrap_or(control), a.focus_border.max(0.25)),
+            focus_border: alpha(accent_ink, 0.8),
             radius,
             omarchy,
             light,
@@ -231,7 +236,6 @@ struct Alphas {
     border: f32,
     border_hover: f32,
     focus: f32,
-    focus_border: f32,
     scrim: f32,
     control: Option<Color32>,
     focus_color: Option<Color32>,
@@ -240,7 +244,7 @@ struct Alphas {
 
 impl Default for Alphas {
     fn default() -> Alphas {
-        Alphas { normal: 0.04, hover: 0.08, pressed: 0.22, selected: 0.18, border: 0.4, border_hover: 0.25, focus: 0.08, focus_border: 0.25, scrim: 0.5, control: None, focus_color: None, scrim_color: None }
+        Alphas { normal: 0.04, hover: 0.08, pressed: 0.22, selected: 0.18, border: 0.4, border_hover: 0.25, focus: 0.08, scrim: 0.5, control: None, focus_color: None, scrim_color: None }
     }
 }
 
@@ -542,7 +546,7 @@ fn style(ctx: &egui::Context, p: &Palette) {
         v.slider_trailing_fill = true;
         v.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.5 };
         v.striped = false;
-        v.text_cursor.stroke = Stroke::new(1.0_f32, p.ink);
+        v.text_cursor.stroke = Stroke::new(1.5_f32, p.accent_ink);
         let r: egui::CornerRadius = p.radius.min(4).into();
         for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
             w.corner_radius = r;
@@ -558,11 +562,11 @@ fn style(ctx: &egui::Context, p: &Palette) {
         v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, p.ink);
         v.widgets.hovered.bg_fill = p.hover;
         v.widgets.hovered.weak_bg_fill = p.hover;
-        v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.border_hover);
+        v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, alpha(p.accent_ink, 0.7));
         v.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, p.ink);
         v.widgets.active.bg_fill = p.pressed;
         v.widgets.active.weak_bg_fill = p.pressed;
-        v.widgets.active.bg_stroke = Stroke::new(1.0_f32, p.border_hover);
+        v.widgets.active.bg_stroke = Stroke::new(1.0_f32, p.accent);
         v.widgets.active.fg_stroke = Stroke::new(1.0_f32, p.ink);
         v.widgets.open.bg_fill = p.selected;
         v.widgets.open.weak_bg_fill = p.selected;
@@ -711,18 +715,20 @@ pub mod nav {
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Kind {
+    /// Tinted in a state colour: Start in the theme's green, Stop and Remove in its red.
+    Tinted(Color32),
     Danger,
     Primary,
     Secondary,
     Ghost,
 }
 
-/// The one button: consistent height per size, icon + label, hover/pressed/disabled/focus states. Primary is the
-/// theme's selected fill, secondary its normal fill, both with the thin foreground border; no brand fills.
+/// The one button: consistent height per size, icon + label, hover/pressed/disabled/focus states. Primary is filled
+/// with the theme's accent, secondary is Omarchy's control chrome (accent border on hover), tinted ones wear a state
+/// colour (Start green, Stop and Remove red).
 pub struct Btn {
     kind: Kind,
     icon: Option<&'static str>,
-    icon_col: Option<Color32>,
     text: String,
     h: f32,
     min_w: f32,
@@ -732,7 +738,7 @@ pub struct Btn {
 
 impl Btn {
     fn new(kind: Kind, text: impl Into<String>) -> Btn {
-        Btn { kind, icon: None, icon_col: None, text: text.into(), h: H_MD, min_w: 0.0, key: "" }
+        Btn { kind, icon: None, text: text.into(), h: H_MD, min_w: 0.0, key: "" }
     }
     pub fn primary(text: impl Into<String>) -> Btn {
         Btn::new(Kind::Primary, text)
@@ -744,6 +750,9 @@ impl Btn {
     pub fn danger(text: impl Into<String>) -> Btn {
         Btn::new(Kind::Danger, text)
     }
+    pub fn tinted(text: impl Into<String>, col: Color32) -> Btn {
+        Btn::new(Kind::Tinted(col), text)
+    }
     pub fn ghost(text: impl Into<String>) -> Btn {
         Btn::new(Kind::Ghost, text)
     }
@@ -753,10 +762,6 @@ impl Btn {
     }
     pub fn icon(mut self, i: &'static str) -> Btn {
         self.icon = Some(i);
-        self
-    }
-    pub fn icon_color(mut self, c: Color32) -> Btn {
-        self.icon_col = Some(c);
         self
     }
     pub fn small(mut self) -> Btn {
@@ -797,11 +802,16 @@ impl egui::Widget for Btn {
             let hov = resp.hovered() && enabled;
             let down = (resp.is_pointer_button_down_on() && enabled) || activated;
             let (bg, stroke, fg, icol) = match self.kind {
-                Kind::Primary if enabled => (if down { pal.pressed } else if hov { pal.hover } else { pal.selected }, Stroke::new(1.0_f32, if hov { pal.border_hover } else { pal.border_strong }), pal.ink, pal.ink),
-                Kind::Danger if enabled => (if down { alpha(pal.crit, 0.3) } else if hov { alpha(pal.crit, 0.22) } else { alpha(pal.crit, 0.14) }, Stroke::new(1.0_f32, alpha(pal.crit, 0.6)), pal.crit_ink, pal.crit_ink),
-                Kind::Primary | Kind::Secondary | Kind::Danger => {
+                // the theme's accent, filled
+                Kind::Primary if enabled => (if down { pal.accent_down } else if hov { pal.accent_hover } else { pal.accent }, Stroke::NONE, pal.on_accent, pal.on_accent),
+                Kind::Danger | Kind::Tinted(_) if enabled => {
+                    let c = if let Kind::Tinted(c) = self.kind { c } else { pal.crit_ink };
+                    (alpha(c, if down { 0.3 } else if hov { 0.22 } else { 0.12 }), Stroke::new(1.0_f32, alpha(c, if hov { 0.85 } else { 0.55 })), c, c)
+                }
+                Kind::Primary | Kind::Secondary | Kind::Danger | Kind::Tinted(_) => {
                     let bg = if !enabled { Color32::TRANSPARENT } else if down { pal.pressed } else if hov { pal.hover } else { pal.raised };
-                    let st = Stroke::new(1.0_f32, if !enabled { pal.border } else if hov { pal.border_hover } else { pal.border_strong });
+                    // hover borders take the accent: the control under the pointer says so in the theme's colour
+                    let st = Stroke::new(1.0_f32, if !enabled { pal.border } else if hov { alpha(pal.accent_ink, 0.7) } else { pal.border_strong });
                     let fg = if enabled { pal.ink } else { pal.ink_3 };
                     (bg, st, fg, if enabled { pal.ink_2 } else { pal.ink_3 })
                 }
@@ -811,7 +821,6 @@ impl egui::Widget for Btn {
                     (bg, Stroke::NONE, fg, fg)
                 }
             };
-            let icol = if enabled { self.icon_col.unwrap_or(icol) } else { icol };
             p.rect(rect, radius(), bg, stroke, egui::StrokeKind::Inside);
             if resp.has_focus() {
                 p.rect_stroke(rect, radius(), Stroke::new(1.0_f32, pal.active), egui::StrokeKind::Inside);
@@ -831,7 +840,13 @@ impl egui::Widget for Btn {
             }
             if let Some(g) = kg {
                 let y = rect.center().y - g.size().y / 2.0;
-                p.galley_with_override_text_color(egui::pos2(x, y), g, if enabled { pal.ink_3 } else { alpha(pal.ink_3, 0.6) });
+                let kc = match self.kind {
+                    Kind::Primary if enabled => alpha(pal.on_accent, 0.65),
+                    Kind::Danger | Kind::Tinted(_) if enabled => alpha(fg, 0.65),
+                    _ if enabled => pal.ink_3,
+                    _ => alpha(pal.ink_3, 0.6),
+                };
+                p.galley_with_override_text_color(egui::pos2(x, y), g, kc);
             }
         }
         if activated {
@@ -923,7 +938,8 @@ pub fn badge(ui: &mut egui::Ui, text: &str, col: Color32) -> egui::Response {
     let size = egui::vec2(g.size().x + 8.0 + 6.0 + 14.0, 20.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::hover());
     let p = ui.painter();
-    p.rect(rect, radius_sm(), pal.raised, Stroke::new(1.0_f32, pal.border), egui::StrokeKind::Inside);
+    let edge = if col == pal.ink_3 { pal.border } else { alpha(col, 0.5) };
+    p.rect(rect, radius_sm(), if col == pal.ink_3 { pal.raised } else { alpha(col, 0.08) }, Stroke::new(1.0_f32, edge), egui::StrokeKind::Inside);
     let c = egui::pos2(rect.left() + 10.0, rect.center().y);
     dot(p, c, col);
     p.galley(egui::pos2(rect.left() + 18.0, rect.center().y - g.size().y / 2.0), g, pal.ink_2);
@@ -1096,12 +1112,13 @@ pub fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     }
     let pal = pal();
     let p = ui.painter();
-    let fill = if !enabled { Color32::TRANSPARENT } else if *on { pal.selected } else if resp.hovered() { pal.hover } else { pal.raised };
-    p.rect(rect, radius_sm(), fill, Stroke::new(1.0_f32, if enabled { pal.border_strong } else { pal.border }), egui::StrokeKind::Inside);
+    let fill = if !enabled { Color32::TRANSPARENT } else if *on { alpha(pal.accent, 0.3) } else if resp.hovered() { pal.hover } else { pal.raised };
+    let edge = if !enabled { pal.border } else if *on { pal.accent } else if resp.hovered() { alpha(pal.accent_ink, 0.7) } else { pal.border_strong };
+    p.rect(rect, radius_sm(), fill, Stroke::new(1.0_f32, edge), egui::StrokeKind::Inside);
     let kw = 12.0;
     let kx = if *on { rect.right() - 3.0 - kw } else { rect.left() + 3.0 };
     let knob = Rect::from_min_size(egui::pos2(kx, rect.top() + 3.0), egui::vec2(kw, rect.height() - 6.0));
-    p.rect_filled(knob, radius_sm().min(2), if !enabled { pal.ink_3 } else if *on { pal.ink } else { pal.ink_3 });
+    p.rect_filled(knob, radius_sm().min(2), if !enabled { pal.ink_3 } else if *on { pal.accent_ink } else { pal.ink_3 });
     if resp.has_focus() {
         p.rect_stroke(rect, radius_sm(), Stroke::new(1.0_f32, pal.active), egui::StrokeKind::Inside);
     }
@@ -1132,11 +1149,11 @@ pub fn segmented(ui: &mut egui::Ui, items: &[&str], sel: Option<usize>, enabled:
         let resp = ui.interact(r, ui.id().with(("seg", items[i], i)), if enabled { Sense::click() } else { Sense::hover() });
         let on = sel == Some(i);
         if on {
-            p.rect_filled(r, radius_sm(), if enabled { pal.selected } else { pal.raised });
+            p.rect(r, radius_sm(), if enabled { alpha(pal.accent, 0.22) } else { pal.raised }, Stroke::new(1.0_f32, if enabled { alpha(pal.accent, 0.6) } else { pal.border }), egui::StrokeKind::Inside);
         } else if resp.hovered() && enabled {
             p.rect_filled(r, radius_sm(), pal.hover);
         }
-        let col = if !enabled { pal.ink_3 } else if on || resp.hovered() { pal.ink } else { pal.ink_2 };
+        let col = if !enabled { pal.ink_3 } else if on { pal.hilite } else if resp.hovered() { pal.ink } else { pal.ink_2 };
         p.galley_with_override_text_color(egui::pos2(r.center().x - g.size().x / 2.0, r.center().y - g.size().y / 2.0), g, col);
         if enabled && resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
             out = Some(i);

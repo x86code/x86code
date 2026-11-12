@@ -245,12 +245,12 @@ impl App {
                     let k = if row.current { "s" } else { "" };
                     match phase {
                         Phase::Off => {
-                            if ui.add(Btn::secondary("Start").icon(icon::PLAY).key(k).small()).on_hover_text("Start this device").clicked() {
+                            if ui.add(Btn::tinted("Start", pal.good).icon(icon::PLAY).key(k).small()).on_hover_text("Start this device").clicked() {
                                 self.start(id);
                             }
                         }
                         Phase::Running | Phase::Starting => {
-                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(pal.crit_ink).key(k).small()).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
+                            if ui.add(Btn::tinted("Stop", pal.crit_ink).icon(icon::STOP).key(k).small()).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
                                 self.stop(id);
                             }
                         }

@@ -46,7 +46,7 @@ impl App {
                         // not installed: the Download action lives in the screen area's empty state
                         Phase::Off if !inst.runtime_present => {}
                         Phase::Off => {
-                            if ui.add(Btn::primary("Start").icon(icon::PLAY).key("s").min_w(84.0)).on_hover_text("Start this device").clicked() {
+                            if ui.add(Btn::tinted("Start", pal().good).icon(icon::PLAY).key("s").min_w(84.0)).on_hover_text("Start this device").clicked() {
                                 self.start(id);
                             }
                         }
@@ -54,7 +54,7 @@ impl App {
                             ui.add_enabled(false, Btn::secondary("Stopping…").min_w(84.0));
                         }
                         _ => {
-                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(pal().crit_ink).key("s").min_w(84.0)).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
+                            if ui.add(Btn::tinted("Stop", pal().crit_ink).icon(icon::STOP).key("s").min_w(84.0)).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
                                 self.stop(id);
                             }
                             if instance::needs_restart(&inst, st.as_ref()) {
