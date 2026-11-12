@@ -122,7 +122,10 @@ RELAUNCH = 60.0
 START = time.time()
 # system apps and UI services (angels: the keyboard, Siri's UI) RunningBoard may background: never reclaimed here, and
 # never "the app in the foreground"
-NEVER = ("SpringBoard.app/", "PosterBoard.app/", "InputUI.app/", "Campo.app/")
+# Platforms 1: the watch's and the TV's own UI apps too (Carousel and the watch face ClockFace; PineBoard and the
+# HeadBoard home screen): always up, so with them "the app in the foreground" every idle daemon waited 600 s, not 30.
+NEVER = ("SpringBoard.app/", "PosterBoard.app/", "InputUI.app/", "Campo.app/", "Carousel.app/", "ClockFace.app/",
+         "PineBoard.app/", "HeadBoard.app/")
 # The wallpaper's poster extension: SpringBoard asks it for the lock screen at every wake and unlock. Reclaimed as a
 # suspended extension, it was killed and relaunched in a loop ("came back 0 s after its kill") and an unlock that hit
 # the gap never undimmed, then froze. A device keeps the active poster's extension alive too.

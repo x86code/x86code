@@ -337,7 +337,7 @@ extern "C" __attribute__((visibility("default"), used)) int a64_gbt_dump() {
                 fprintf(o, "  msg bits %#x size %u remote %#x local %#x voucher %#x id %u (%#x)\n", h[0], h[1], h[2], h[3], h[4], h[5], h[5]);
         }
         auto fr = [&](int k, u64 a) {
-            std::string w = a >= 0x1c0000000ull && a < 0x300000000ull ? "" : where(a);
+            std::string w = a >= 0x180000000ull && a < 0x300000000ull ? "" : where(a);
             fprintf(o, "  #%-2d %#lx %s\n", k, (unsigned long)a, w.c_str());
         };
         fr(-1, pc); fr(0, lr);
@@ -640,7 +640,7 @@ struct Forward final : Dynarmic::A64::UserCallbacks {
     // the persisted window (shared cache + placed images: fixed per cache key), read without faulting. Unbound
     // slots (chained-fixup encodings in the AOT builder's unbound placed images) fall outside the window.
     std::optional<u64> MemoryReadConstant64(u64 a) override {
-        constexpr u64 lo = 0x1c0000000ull, hi = 0x300000000ull;  // RAM 13: kCacheHi
+        constexpr u64 lo = 0x180000000ull, hi = 0x300000000ull;  // jitcache.cpp kCacheLo / kCacheHi
         if (a < lo || a + 8 > hi || (a & 7)) return std::nullopt;
         u64 v = 0;
         iovec l{&v, 8}, r{(void *)a, 8};
@@ -1292,7 +1292,7 @@ static std::string stub_symbol(const char *path, u64 off) {  // "/memfd:libsyste
     return b;
 }
 std::string where(u64 a) {
-    if (a >= 0x1c0000000ull && a < 0x300000000ull) return "cache";
+    if (a >= 0x180000000ull && a < 0x300000000ull) return "cache";
     std::string r;
     if (FILE *m = fopen("/proc/self/maps", "r")) {
         char line[768];

@@ -51,7 +51,11 @@ namespace a64 {
 
 namespace {
 
-constexpr u64 kCacheLo = 0x1c0000000ull;
+// Platforms 1: the window starts at 0x180000000, where tvOS and watchOS map their dyld cache (iOS's is at
+// 0x1c0000000). With 0x1c0000000 a TV's or watch's whole system code fell outside it: never in the image, never in
+// its .live feedback, so every process translated it privately (Carousel: 668K of 1.4M blocks, 84 MB of code plus
+// ~100 MB of block metadata). The window is a filter and a layout hash only; nothing is sized by it.
+constexpr u64 kCacheLo = 0x180000000ull;
 // RAM 13: the persisted window ends at 0x300000000 (was 0x2c0000000): placed files also go above the cache window's
 // old top, into the free 1 GB below the guest VM range (handlers.cpp / gheap.cpp start at 0x300000000).
 constexpr u64 kCacheHi = 0x300000000ull;
