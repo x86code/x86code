@@ -86,6 +86,11 @@ core.[0-9]*
 !/host/simfb/arm64-watchos/SimFramebuffer.framework/
 !/host/simhid/arm64-tvos/SimulatorHID.framework/
 !/host/simhid/arm64-watchos/SimulatorHID.framework/
+# Platforms 2: and the visionOS builds (X86SIM_PLATFORM=xros)
+!/host/simaudio/arm64-xros/libsimaudio.dylib
+!/host/simshim/arm64-xros/compat/libsimshim.dylib
+!/host/simfb/arm64-xros/SimFramebuffer.framework/
+!/host/simhid/arm64-xros/SimulatorHID.framework/
 /build/metal-research/toolchain/
 # release build outputs (build/release/build.sh, appimage.sh)
 /build/release/out/
