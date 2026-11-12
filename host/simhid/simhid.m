@@ -15,6 +15,7 @@
 // The commands are in docs/protocols/SIMHID.md; handle_line parses them.
 #import <Foundation/Foundation.h>
 #import <objc/message.h>
+#include <mach-o/dyld.h>
 #import <objc/runtime.h>
 typedef int IOReturn;
 typedef uint32_t IOOptionBits;
@@ -139,6 +140,110 @@ static VService* cur_touch = &touch_svc;   // the touchscreen of the command bei
 // Platforms 1: an Apple Watch's Digital Crown, as Apple's watchOS SimulatorHID registers it
 // ("com.apple.SimulatorHID.MainScreenDigitalCrownService": Apple vendor usage page 0xff0b, usage 1, built in)
 static VService crown_svc;
+// Platforms 2: visionOS's pointer. RealitySimulation's RSPointerInputProvider takes mouse events (GenericDesktop /
+// Mouse) from a trackpad, Universal Control or a service whose Transport is "Virtual-AssistiveTouch", and turns them
+// into the system pointer (hover, and a click is a tap where it points). The simulator's touchscreen is not an input
+// on visionOS. Commands: pointer move <dx> <dy> | pointer button down|up | pointer click
+static VService pointer_svc;
+static uint32_t pointer_buttons;
+// Platforms 2: visionOS's natural input as Xcode's simulator sends it (VisionDeviceKitExtension
+// IndigoHIDMessageForPalomaCollection -> SimulatorHID __IOHIDEventFromIndigoHIDData): a vendor-defined "collection"
+// (page 0xff00, usage 0x6f, version 0xd) with a child per hand (usage 0x70; payload {pinching, chirality 2 left /
+// 1 right, touching}; a translation and a quaternion orientation) and a gaze child (usage 0x71; origin as a translation,
+// direction as a rotation event). RealitySimulation's RSVirtualHMDInput turns it into the eyes' pose and the hands.
+static VService paloma_svc;
+static void dispatch_event(VService* s, IOHIDEventRef e);
+extern IOHIDEventRef IOHIDEventCreateTranslationEvent(CFAllocatorRef, uint64_t ts, IOHIDFloat x, IOHIDFloat y, IOHIDFloat z, IOOptionBits options);
+extern IOHIDEventRef IOHIDEventCreateRotationEvent(CFAllocatorRef, uint64_t ts, IOHIDFloat x, IOHIDFloat y, IOHIDFloat z, IOOptionBits options);
+extern IOHIDEventRef IOHIDEventCreateQuaternionOrientationEvent(CFAllocatorRef, uint64_t ts, IOHIDFloat w, IOHIDFloat x, IOHIDFloat y,
+	IOHIDFloat z, IOOptionBits options);
+extern void IOHIDEventAppendEvent(IOHIDEventRef, IOHIDEventRef, IOOptionBits);
+extern void IOHIDEventSetPhase(IOHIDEventRef, uint16_t);
+static IOHIDEventRef paloma_hand(uint64_t ts, int left, int pinch, int touch, uint16_t phase, const float t[3], const float q[4]) {
+	uint8_t data[3] = { (uint8_t)(pinch != 0), (uint8_t)(left ? 2 : 1), (uint8_t)(touch != 0) };
+	IOHIDEventRef h = IOHIDEventCreateVendorDefinedEvent(kCFAllocatorDefault, ts, 0xff00, 0x70, 0xd, data, 3, 2);
+	IOHIDEventSetPhase(h, phase);
+	IOHIDEventRef tr = IOHIDEventCreateTranslationEvent(kCFAllocatorDefault, ts, t[0], t[1], t[2], 0);
+	IOHIDEventRef qo = IOHIDEventCreateQuaternionOrientationEvent(kCFAllocatorDefault, ts, q[3], q[0], q[1], q[2], 0);
+	IOHIDEventAppendEvent(h, tr, 0); IOHIDEventAppendEvent(h, qo, 0);
+	CFRelease(tr); CFRelease(qo);
+	return h;
+}
+// hands: 0 none (a gaze-only "selection"), else both hands with these pinch states
+static void paloma_send(const float o[3], const float d[3], int hands, int pinchL, int pinchR, uint16_t phaseL, uint16_t phaseR) {
+	uint64_t ts = mach_absolute_time();
+	IOHIDEventRef top = IOHIDEventCreateVendorDefinedEvent(kCFAllocatorDefault, ts, 0xff00, 0x6f, 0xd, NULL, 0, 2);
+	IOHIDEventSetPhase(top, 2);
+	if (hands) {
+		static const float tl[3] = { -0.15f, -0.35f, -0.35f }, tr[3] = { 0.15f, -0.35f, -0.35f }, qi[4] = { 0, 0, 0, 1 };
+		IOHIDEventRef l = paloma_hand(ts, 1, pinchL, 0, phaseL, tl, qi), r = paloma_hand(ts, 0, pinchR, 0, phaseR, tr, qi);
+		IOHIDEventAppendEvent(top, l, 0); IOHIDEventAppendEvent(top, r, 0);
+		CFRelease(l); CFRelease(r);
+	}
+	IOHIDEventRef g = IOHIDEventCreateVendorDefinedEvent(kCFAllocatorDefault, ts, 0xff00, 0x71, 0xd, NULL, 0, 2);
+	IOHIDEventRef go = IOHIDEventCreateTranslationEvent(kCFAllocatorDefault, ts, o[0], o[1], o[2], 1);
+	IOHIDEventRef gd = IOHIDEventCreateRotationEvent(kCFAllocatorDefault, ts, d[0], d[1], d[2], 1);
+	IOHIDEventAppendEvent(g, go, 0); IOHIDEventAppendEvent(g, gd, 0);
+	CFRelease(go); CFRelease(gd);
+	IOHIDEventAppendEvent(top, g, 0);
+	CFRelease(g);
+	dispatch_event(&paloma_svc, top);
+}
+// The display's projection (RealitySimulation's -[RSFrameDescription getProjectionMatrix:forEye:], eye 2: the view the
+// simulator shows), captured from each frame, turns a point on the display into a gaze direction in head space.
+static float proj[16];
+static volatile int have_proj;
+static IMP hmd_update_orig;
+static void hmd_update(id self, SEL sel, id headset, id desc) {
+	if (desc) {
+		float m[16];
+		((void (*)(id, SEL, void*, long long)) objc_msgSend)(desc, sel_registerName("getProjectionMatrix:forEye:"), m, 2);
+		if (m[0] != 0 && m[5] != 0) { memcpy(proj, m, sizeof m); have_proj = 1; }
+	}
+	((void (*)(id, SEL, id, id)) hmd_update_orig)(self, sel, headset, desc);
+}
+static void hmd_hook(const struct mach_header* mh, intptr_t slide) {
+	(void) mh; (void) slide;
+	static int done;
+	Class c = done ? Nil : objc_getClass("RSVirtualHMDInput");
+	Method m = c ? class_getInstanceMethod(c, sel_registerName("headsetDidUpdate:withFrameDescription:")) : NULL;
+	if (!m) return;
+	done = 1;
+	hmd_update_orig = method_setImplementation(m, (IMP) hmd_update);
+	slog("hooked RSVirtualHMDInput headsetDidUpdate: (gaze from display points)");
+}
+// x, y normalized on the display (0..1, origin top left) -> head-space direction
+static void display_dir(double x, double y, float d[3]) {
+	double nx = 2 * x - 1, ny = 1 - 2 * y;
+	if (have_proj) {
+		d[0] = (float)((nx + proj[8]) / proj[0]);
+		d[1] = (float)((ny + proj[9]) / proj[5]);
+	} else {   // measured once: about 67 by 45 degrees
+		d[0] = (float)(nx * 0.667); d[1] = (float)(ny * 0.41);
+	}
+	d[2] = -1;
+}
+// the right hand pinching (or just released) at its rest position moved by (dx, dy) metres
+static void paloma_send_hand(const float o[3], const float d[3], int pinch, float dx, float dy) {
+	uint64_t ts = mach_absolute_time();
+	IOHIDEventRef top = IOHIDEventCreateVendorDefinedEvent(kCFAllocatorDefault, ts, 0xff00, 0x6f, 0xd, NULL, 0, 2);
+	IOHIDEventSetPhase(top, 2);
+	static const float tl[3] = { -0.15f, -0.35f, -0.35f }, qi[4] = { 0, 0, 0, 1 };
+	float tr[3] = { 0.15f + dx, -0.35f + dy, -0.35f };
+	IOHIDEventRef l = paloma_hand(ts, 1, 0, 0, 0, tl, qi), r = paloma_hand(ts, 0, pinch, 0, 0, tr, qi);
+	IOHIDEventAppendEvent(top, l, 0); IOHIDEventAppendEvent(top, r, 0);
+	CFRelease(l); CFRelease(r);
+	IOHIDEventRef g = IOHIDEventCreateVendorDefinedEvent(kCFAllocatorDefault, ts, 0xff00, 0x71, 0xd, NULL, 0, 2);
+	IOHIDEventRef go = IOHIDEventCreateTranslationEvent(kCFAllocatorDefault, ts, o[0], o[1], o[2], 1);
+	IOHIDEventRef gd = IOHIDEventCreateRotationEvent(kCFAllocatorDefault, ts, d[0], d[1], d[2], 1);
+	IOHIDEventAppendEvent(g, go, 0); IOHIDEventAppendEvent(g, gd, 0);
+	CFRelease(go); CFRelease(gd);
+	IOHIDEventAppendEvent(top, g, 0);
+	CFRelease(g);
+	dispatch_event(&paloma_svc, top);
+}
+extern IOHIDEventRef IOHIDEventCreateRelativePointerEvent(CFAllocatorRef, uint64_t ts, IOHIDFloat x, IOHIDFloat y, IOHIDFloat z,
+	uint32_t buttonMask, uint32_t oldButtonMask, IOOptionBits options);
 static double hinge_deg, hinge_vel;
 static uint16_t hinge_phase = 2;
 // Models 2: CoreMotion's device state (the magic pose SpringBoard's SBFDevicePoseProvider combines with the angle:
@@ -447,7 +552,7 @@ static void handle_line(char* line, Client* cl) {
 	double x2 = 0, y2 = 0;
 	if (!strncmp(line, "touch", 5) || !strncmp(line, "key ", 4) || !strncmp(line, "button ", 7)) note_input();
 	if (sscanf(line, "touch2 %15s %lf %lf %lf %lf", a, &x, &y, &x2, &y2) == 5) { send_touch2(a, x, y, x2, y2); return; }
-	if (sscanf(line, "touch %15s %lf %lf %15s", a, &x, &y, b) >= 3) {
+	if (!paloma_svc.service && sscanf(line, "touch %15s %lf %lf %15s", a, &x, &y, b) >= 3) {   // visionOS: look and pinch, below
 		static const char* edges[5] = { "none", "top", "left", "bottom", "right" };
 		int edge = 0;
 		for (int i = 1; i < 5; i++) if (!strcmp(b, edges[i])) edge = i;
@@ -506,6 +611,84 @@ static void handle_line(char* line, Client* cl) {
 		// <= 0: never detach after this client's keys (like SIMHID_KB_IDLE_S=0)
 		if (cl) cl->kb_idle_ns = secs > 0 ? (uint64_t)secs * 1000000000ull : ~0ull;
 		slog("client fd=%d kbidle %d", cl ? cl->fd : -1, secs);
+		return;
+	}
+	if (paloma_svc.service && !strncmp(line, "touch ", 6)) {
+		// Platforms 2: on visionOS a touch is look and pinch (the launcher, MCP and scripts send touches): down looks at
+		// the point and pinches, moves drag the pinching hand by the touch's travel (scrolling and dragging), up lets go
+		double x, y; char ph[16];
+		if (sscanf(line, "touch %15s %lf %lf", ph, &x, &y) == 3) {
+			static float d0[3];
+			static double x0, y0;
+			static const float o0[3] = { 0, 0, 0 };
+			if (!strcmp(ph, "down")) {
+				display_dir(x, y, d0); x0 = x; y0 = y;
+				for (int i = 0; i < 3; i++) { paloma_send(o0, d0, 1, 0, 0, 0, 0); usleep(16000); }
+				paloma_send_hand(o0, d0, 1, 0, 0);
+			} else if (!strcmp(ph, "move")) {
+				// about half a metre of hand travel across the whole display
+				paloma_send_hand(o0, d0, 1, (float)((x - x0) * 0.5), (float)((y0 - y) * 0.3));
+			} else {
+				paloma_send_hand(o0, d0, 0, (float)((x - x0) * 0.5), (float)((y0 - y) * 0.3));
+				usleep(16000);
+				paloma_send(o0, d0, 1, 0, 0, 0, 0);
+			}
+			note_input();
+			return;
+		}
+	}
+	{   // tap x y | hover x y | pinch down|up x y (Platforms 2: visionOS look and pinch at a display point)
+		double x, y; char ph[8] = "";
+		int t = sscanf(line, "tap %lf %lf", &x, &y) == 2 ? 1 : sscanf(line, "hover %lf %lf", &x, &y) == 2 ? 2
+			: sscanf(line, "pinch %7s %lf %lf", ph, &x, &y) == 3 ? 3 : 0;
+		if (t) {
+			if (!paloma_svc.service) { slog("no natural input on this device: %s", line); return; }
+			static const float o0[3] = { 0, 0, 0 };
+			float d[3];
+			display_dir(x, y, d);
+			if (t == 1) {
+				for (int i = 0; i < 4; i++) { paloma_send(o0, d, 1, 0, 0, 0, 0); usleep(16000); }
+				for (int i = 0; i < 5; i++) { paloma_send(o0, d, 1, 0, 1, 0, 0); usleep(16000); }
+				for (int i = 0; i < 4; i++) { paloma_send(o0, d, 1, 0, 0, 0, 0); usleep(16000); }
+			} else if (t == 2) {
+				paloma_send(o0, d, 1, 0, 0, 0, 0);
+			} else {
+				paloma_send(o0, d, 1, 0, !strcmp(ph, "down") || !strcmp(ph, "move"), 0, 0);
+			}
+			if (t != 2) slog("%s (%.3f,%.3f) -> dir (%.3f %.3f) proj %d", t == 1 ? "tap" : "pinch", x, y, d[0], d[1], have_proj);
+			note_input();
+			return;
+		}
+	}
+	if (!strncmp(line, "gaze ", 5)) {   // gaze ox oy oz dx dy dz [hands pinchL pinchR phaseL phaseR]
+		if (!paloma_svc.service) { slog("no natural input on this device: %s", line); return; }
+		float o3[3], d3[3]; int hands = 0, pl = 0, pr = 0, phl = 0, phr = 0;
+		int nf = sscanf(line, "gaze %f %f %f %f %f %f %d %d %d %d %d", &o3[0], &o3[1], &o3[2], &d3[0], &d3[1], &d3[2], &hands, &pl, &pr, &phl, &phr);
+		if (nf < 6) { slog("bad gaze command: %s", line); return; }
+		paloma_send(o3, d3, hands, pl, pr, (uint16_t)phl, (uint16_t)phr);
+		slog("gaze (%.3f %.3f %.3f) -> (%.3f %.3f %.3f) hands %d pinch %d/%d", o3[0], o3[1], o3[2], d3[0], d3[1], d3[2], hands, pl, pr);
+		note_input();
+		return;
+	}
+	if (!strncmp(line, "pointer ", 8)) {
+		if (!pointer_svc.service) { slog("no pointer on this device: %s", line); return; }
+		double dx = 0, dy = 0;
+		uint32_t old = pointer_buttons;
+		if (sscanf(line, "pointer move %lf %lf", &dx, &dy) == 2) {
+		} else if (sscanf(line, "pointer button %15s", a) == 1) {
+			pointer_buttons = !strcmp(a, "down") ? 1 : 0;
+		} else if (!strcmp(line, "pointer click")) {
+			dispatch_event(&pointer_svc, IOHIDEventCreateRelativePointerEvent(kCFAllocatorDefault, mach_absolute_time(), 0, 0, 0, 1, 0, 0));
+			usleep(60000);
+			dispatch_event(&pointer_svc, IOHIDEventCreateRelativePointerEvent(kCFAllocatorDefault, mach_absolute_time(), 0, 0, 0, 0, 1, 0));
+			pointer_buttons = 0;
+			slog("pointer click");
+			note_input();
+			return;
+		} else { slog("bad pointer command: %s", line); return; }
+		dispatch_event(&pointer_svc, IOHIDEventCreateRelativePointerEvent(kCFAllocatorDefault, mach_absolute_time(), dx, dy, 0,
+			pointer_buttons, old, 0));
+		note_input();
 		return;
 	}
 	double delta;
@@ -664,6 +847,14 @@ static void* listen_thread(void* arg) {
 	add_service(system, &buttons_svc);
 	{
 		const char* model = getenv("SIMULATOR_MODEL_IDENTIFIER");
+		if (model && !strncmp(model, "RealityDevice", 13)) {
+			pointer_svc = (VService){ "pointer", 0x7863000000000007ull,
+				make_props(@"x86Sim pointer", 0x01, 0x02, @{ @"Transport": @"Virtual-AssistiveTouch", @"Built-In": @NO }) };
+			add_service(system, &pointer_svc);
+			paloma_svc = (VService){ "paloma", 0x7863000000000008ull, make_props(@"x86Sim natural input", 0xff00, 0x6f, nil) };
+			add_service(system, &paloma_svc);
+			_dyld_register_func_for_add_image(hmd_hook);
+		}
 		if (model && !strncmp(model, "Watch", 5)) {
 			crown_svc = (VService){ "crown", 0x7863000000000006ull,
 				make_props(@"com.apple.SimulatorHID.MainScreenDigitalCrownService", 0xff0b, 0x01, nil) };
