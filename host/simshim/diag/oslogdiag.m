@@ -119,12 +119,15 @@ static void format(char* out, size_t outsz, const char* fmt, const uint8_t* buf,
 			break;
 		}
 		case 's': {
-			const char* str = asz == 8 ? *(const char**) a : NULL;
+			const char* str = asz == 8 && type == 2 ? *(const char**) a : NULL;
 			PUT("%s", str ? str : "(null)");
 			break;
 		}
 		case '@': {
-			id obj = asz == 8 ? *(__unsafe_unretained id*) a : nil;
+			// only an object argument (os_log's type nibble 4): another kind here means the format and the
+			// arguments disagree (a private/redacted or count argument), and its bits are no object pointer
+			id obj = asz == 8 && type == 4 ? *(__unsafe_unretained id*) a : nil;
+			if (type != 4) { PUT("<arg type %d>", type); break; }
 			const char* d = "(null)";
 			@try { if (obj) d = [[obj description] UTF8String]; } @catch (id e) { d = "<exc>"; }
 			PUT("%s", d ? d : "(null)");
