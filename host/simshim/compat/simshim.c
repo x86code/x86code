@@ -441,6 +441,119 @@ static void dbg_add_image(const struct mach_header* mh, intptr_t slide)
 	fprintf(stderr, "simshim: MTLSimDriver debug hooks %p %p\n", (void*)orig_nst, (void*)orig_tinit);
 }
 
+// Platforms 2 debug (X86SIM_XR_EVLOG=1): shared event handles as they cross processes
+static id (*ev_initcoder_orig)(id, SEL, id);
+static id (*ev_open_orig)(id, SEL, id);
+static id (*ev_newhandle_orig)(id, SEL);
+static uint32_t ev_port(id h) { return h ? ((uint32_t (*)(id, SEL)) objc_msgSend)(h, sel_registerName("eventPort")) : 0; }
+static id ev_initcoder(id self, SEL sel, id coder)
+{
+	id r = ev_initcoder_orig(self, sel, coder);
+	fprintf(stderr, "simshim: event handle decoded: port %#x (%p)\n", ev_port(r), (void*) r);
+	return r;
+}
+static id ev_open(id self, SEL sel, id h)
+{
+	id r = ev_open_orig(self, sel, h);
+	fprintf(stderr, "simshim: newSharedEventWithHandle %p port %#x -> %p\n", (void*) h, ev_port(h), (void*) r);
+	if (!h) {
+		id st = ((id (*)(id, SEL)) objc_msgSend)((id) objc_getClass("NSThread"), sel_registerName("callStackSymbols"));
+		id d = ((id (*)(id, SEL)) objc_msgSend)(st, sel_registerName("description"));
+		fprintf(stderr, "%s\n", ((const char* (*)(id, SEL)) objc_msgSend)(d, sel_registerName("UTF8String")));
+	}
+	return r;
+}
+static id ev_newhandle(id self, SEL sel)
+{
+	id r = ev_newhandle_orig(self, sel);
+	fprintf(stderr, "simshim: event %p newSharedEventHandle -> %p port %#x\n", (void*) self, (void*) r, ev_port(r));
+	return r;
+}
+static void ev_added(const struct mach_header* mh, intptr_t slide)
+{
+	(void) mh; (void) slide;
+	static bool h1, h2, h3;
+	Class hc = objc_getClass("MTLSharedEventHandle"), dc = objc_getClass("MTLSimDevice"), ec = objc_getClass("MTLSimSharedEvent");
+	Method m;
+	if (!h1 && hc && (m = class_getInstanceMethod(hc, sel_registerName("initWithCoder:")))) { h1 = true; ev_initcoder_orig = (void*) method_setImplementation(m, (IMP) ev_initcoder); }
+	if (!h2 && dc && (m = class_getInstanceMethod(dc, sel_registerName("newSharedEventWithHandle:")))) { h2 = true; ev_open_orig = (void*) method_setImplementation(m, (IMP) ev_open); }
+	if (!h3 && ec && (m = class_getInstanceMethod(ec, sel_registerName("newSharedEventHandle")))) { h3 = true; ev_newhandle_orig = (void*) method_setImplementation(m, (IMP) ev_newhandle); }
+}
+__attribute__((constructor)) static void shim_ev_init(void)
+{
+	if (getenv("X86SIM_XR_EVLOG")) _dyld_register_func_for_add_image(ev_added);
+}
+
+// Platforms 2 debug (X86SIM_XR_INLOG=1): what RealitySimulation's digitizer input sees
+extern int64_t IOHIDEventGetIntegerValue(void*, uint32_t) __attribute__((weak_import));
+extern uint64_t IOHIDEventGetSenderID(void*) __attribute__((weak_import));
+extern uint32_t IOHIDEventGetType(void*) __attribute__((weak_import));
+extern CFArrayRef IOHIDEventGetChildren(void*) __attribute__((weak_import));
+static void (*in_handle_orig)(id, SEL, void*);
+static void in_handle(id self, SEL sel, void* ev)
+{
+	if (ev && IOHIDEventGetType) {
+		CFArrayRef ch = IOHIDEventGetChildren(ev);
+		fprintf(stderr, "simshim: RSDigitizerInput event type %u sender %#llx field6 %lld children %ld\n", IOHIDEventGetType(ev),
+			(unsigned long long) IOHIDEventGetSenderID(ev), (long long) IOHIDEventGetIntegerValue(ev, 6), ch ? (long) CFArrayGetCount(ch) : -1L);
+	}
+	in_handle_orig(self, sel, ev);
+}
+static void in_added(const struct mach_header* mh, intptr_t slide)
+{
+	(void) mh; (void) slide;
+	static bool done;
+	Class c = objc_getClass("RSDigitizerInput");
+	Method m = c ? class_getInstanceMethod(c, sel_registerName("handleEvent:")) : NULL;
+	if (done || !m) return;
+	done = true;
+	in_handle_orig = (void (*)(id, SEL, void*)) method_setImplementation(m, (IMP) in_handle);
+	fprintf(stderr, "simshim: hooked RSDigitizerInput handleEvent:\n");
+}
+// X86SIM_XR_HOOKS="Class:sel,Class:sel" (debug): log each call of these one-argument methods (first 40 per method)
+#define HK_MAX 8
+static struct { char cls[96], sel[96]; IMP orig; int n; bool done; } hk[HK_MAX];
+static int hk_count;
+#define HK_FN(k) static void* hk_fn##k(id self, SEL sel, void* a) { \
+	if (hk[k].n++ < 40) { \
+		uint32_t t = (a && IOHIDEventGetType && strstr(hk[k].sel, "vent")) ? IOHIDEventGetType(a) : 0; \
+		fprintf(stderr, "simshim: hook -[%s %s] arg %p (hid type %u)\n", hk[k].cls, hk[k].sel, a, t); } \
+	void* r = ((void* (*)(id, SEL, void*)) hk[k].orig)(self, sel, a); \
+	if (hk[k].n < 40) fprintf(stderr, "simshim: hook -[%s %s] -> %p\n", hk[k].cls, hk[k].sel, r); \
+	return r; }
+HK_FN(0) HK_FN(1) HK_FN(2) HK_FN(3) HK_FN(4) HK_FN(5) HK_FN(6) HK_FN(7)
+static IMP hk_fns[HK_MAX] = { (IMP) hk_fn0, (IMP) hk_fn1, (IMP) hk_fn2, (IMP) hk_fn3, (IMP) hk_fn4, (IMP) hk_fn5, (IMP) hk_fn6, (IMP) hk_fn7 };
+static void hk_added(const struct mach_header* mh, intptr_t slide)
+{
+	(void) mh; (void) slide;
+	for (int k = 0; k < hk_count; k++) {
+		if (hk[k].done) continue;
+		Class c = objc_getClass(hk[k].cls);
+		Method m = c ? class_getInstanceMethod(c, sel_registerName(hk[k].sel)) : NULL;
+		if (!m) continue;
+		hk[k].done = true;
+		hk[k].orig = method_setImplementation(m, hk_fns[k]);
+		fprintf(stderr, "simshim: hooked -[%s %s]\n", hk[k].cls, hk[k].sel);
+	}
+}
+__attribute__((constructor)) static void shim_in_init(void)
+{
+	if (getenv("X86SIM_XR_INLOG")) _dyld_register_func_for_add_image(in_added);
+	const char* h = getenv("X86SIM_XR_HOOKS");
+	if (!h) return;
+	char buf[1024];
+	snprintf(buf, sizeof buf, "%s", h);
+	for (char *save = NULL, *t = strtok_r(buf, ",", &save); t && hk_count < HK_MAX; t = strtok_r(NULL, ",", &save)) {
+		char* c = strchr(t, ':');
+		if (!c) continue;
+		*c = 0;
+		snprintf(hk[hk_count].cls, sizeof hk[0].cls, "%s", t);
+		snprintf(hk[hk_count].sel, sizeof hk[0].sel, "%s", c + 1);
+		hk_count++;
+	}
+	_dyld_register_func_for_add_image(hk_added);
+}
+
 __attribute__((constructor)) static void shim_wb_init(void)
 {
 	const char* e = getenv("X86SIM_XR_PULSE");

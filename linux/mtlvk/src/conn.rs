@@ -42,6 +42,22 @@ struct Mapping {
 // SAFETY: plain shared memory; the GPU and both processes access it under Metal's rules.
 unsafe impl Send for Mapping {}
 unsafe impl Sync for Mapping {}
+thread_local! {
+    // x86Sim debug: the color attachment ids of the render pass last decoded (MTLVK_DUMP_IDS)
+    static LAST_PASS_IDS: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+// x86Sim debug: MTLVK_DUMP_AFTER=<seconds since mtlvk started> before the pass dump starts
+thread_local! {
+    // x86Sim debug: MTLVK_DUMP_SAMPLED_BY=<fragment function>: the textures its draws sample are dumped with the pass
+    static PIPE_NAMES: std::cell::RefCell<std::collections::HashMap<u64, String>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    static SAMPLED_MATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SKIP_PASS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SKIP_PASS_RESOLVES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static BOUND: std::cell::RefCell<std::collections::HashMap<(u32, u32), (u64, u64)>> = std::cell::RefCell::new(std::collections::HashMap::new());
+    static SAMPLED: std::cell::RefCell<Vec<(Texture, u64)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+static DUMP_T0: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
+
 impl Drop for Mapping {
     fn drop(&mut self) {
         // SAFETY: our own mapping, unmapped once.
@@ -906,6 +922,11 @@ impl State {
             a.destination_alpha_blend_factor = BlendFactor::try_from(v[6]).map_err(err("blend factor"))?;
             a.alpha_blend_operation = BlendOperation::try_from(v[7]).map_err(err("blend op"))?;
             a.write_mask = ColorWriteMask::try_from(v[8]).map_err(err("write mask"))?;
+            // TEST (Platforms 2): RealityKit's fsOcclusion writes no color (only a sample mask): Apple GPUs keep the
+            // attachment, Vulkan leaves it undefined (NVIDIA: opaque black over visionOS's whole UI layer)
+            if (ff == 0 || self.func_src.get(&ff).is_some_and(|(_, n)| n == "fsOcclusion" || n == "fragmentShaderClearAll")) && std::env::var_os("MTLVK_OCCLUSION_HACK").is_some() {
+                a.write_mask = ColorWriteMask::try_from(0u32).map_err(err("write mask"))?;
+            }
             formats.push(format!("{i}:{pf:?}{}", if a.blending_enabled { "+blend" } else { "" }));
             desc.color_attachments[i] = Some(a);
         }
@@ -949,9 +970,11 @@ impl State {
                 return Err(format!("new_render_pipeline_state: {e}"));
             }
         };
-        if self.log {
-            eprintln!("mtlvk: render pipeline {id:#x}: colors [{}] depth {df} stencil {sf} samples {samples} ({:.1} ms)",
-                formats.join(" "), t0.elapsed().as_secs_f64() * 1e3);
+        if self.log || std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+            let name = |f: u64| self.func_src.get(&f).map(|(_, n)| n.clone()).unwrap_or_default();
+            PIPE_NAMES.with(|m| m.borrow_mut().insert(id, name(ff)));
+            eprintln!("mtlvk: render pipeline {id:#x} {}/{}: colors [{}] depth {df} stencil {sf} samples {samples} ({:.1} ms)",
+                name(vf), name(ff), formats.join(" "), t0.elapsed().as_secs_f64() * 1e3);
         }
         self.objs.insert(id, Obj::Rps(p));
         Ok(())
@@ -1097,7 +1120,7 @@ impl State {
                 C_CS_END => {
                     enc.end()?;
                     // x86Sim: MTLVK_DUMP_PASSES also dumps the textures a compute encoder bound (every level)
-                    if dump_dir.is_some() && !dump_targets.is_empty() && DUMPED.load(std::sync::atomic::Ordering::Relaxed) < 400 {
+                    if dump_dir.is_some() && std::env::var_os("MTLVK_DUMP_IDS").is_none() && std::env::var_os("MTLVK_DUMP_RESOLVES").is_none() && !dump_targets.is_empty() && DUMPED.load(std::sync::atomic::Ordering::Relaxed) < 400 {
                         let ts: Vec<Texture> = dump_targets.drain(..).map(|(t, _)| t).collect();
                         for t in ts {
                             for l in 0..t.mipmap_level_count() {
@@ -1110,7 +1133,7 @@ impl State {
                     dump_targets.clear();
                 }
                 C_CS_PIPELINE..=C_CS_USE | C_CS_BUFFER_OFFSET | C_CS_DISPATCH_INDIRECT => {
-                    if dump_dir.is_some() {
+                    if dump_dir.is_some() && std::env::var_os("MTLVK_DUMP_IDS").is_none() && std::env::var_os("MTLVK_DUMP_RESOLVES").is_none() {
                         self.dump_compute_command(id, kind, body, &mut dump_targets);
                     }
                     let Enc::Compute(ce) = &mut enc else {
@@ -1121,17 +1144,33 @@ impl State {
                 C_RENDER_PASS => {
                     enc.end()?;
                     let pass = self.pass(&mut c)?;
-                    if dump_dir.is_some() {
+                    // x86Sim debug: MTLVK_DUMP_IDS=<hex ids,...>: only passes rendering into one of these textures
+                    let wanted = std::env::var("MTLVK_DUMP_IDS").ok().map(|l| {
+                        let ids: Vec<u64> = l.split(',').filter_map(|x| u64::from_str_radix(x.trim().trim_start_matches("0x"), 16).ok()).collect();
+                        LAST_PASS_IDS.with(|v| v.borrow().iter().any(|t| ids.contains(t)))
+                    }).unwrap_or(true) && (std::env::var_os("MTLVK_DUMP_RESOLVES").is_none()
+                        || pass.color_attachments.iter().any(|a| a.resolve_texture.is_some())) && std::env::var("MTLVK_DUMP_AFTER").ok().and_then(|v| v.parse::<f64>().ok())
+                        .is_none_or(|after| DUMP_T0.elapsed().as_secs_f64() >= after);
+                    if dump_dir.is_some() && wanted {
                         dump_targets = pass.color_attachments.iter().filter_map(|a| match &a.resolve_texture {
                             Some(r) => Some((r.clone(), a.resolve_level)),
                             None => a.texture.clone().map(|t| (t, a.level)),
                         }).collect();
                     }
                     self.skip_draws.set(false);
+                    let resolves = pass.color_attachments.iter().any(|a| a.resolve_texture.is_some());
+                    SKIP_PASS_RESOLVES.with(|c| c.set(resolves));
+                    SKIP_PASS.with(|c| c.set(std::env::var_os("MTLVK_SKIP_RESOLVE_DRAWS").is_some() && resolves));
                     enc = Enc::Render(cb.render_command_encoder(&pass).map_err(err("render encoder"))?);
                 }
                 C_RE_END => {
                     enc.end()?;
+                    SAMPLED_MATCH.with(|c| c.set(false));
+                    let sampled: Vec<(Texture, u64)> = SAMPLED.with(|v| v.borrow_mut().drain(..).collect());
+                    if !sampled.is_empty() && dump_dir.is_some() && std::env::var("MTLVK_DUMP_AFTER").ok().and_then(|v| v.parse::<f64>().ok())
+                        .is_none_or(|after| DUMP_T0.elapsed().as_secs_f64() >= after) {
+                        dump_targets.extend(sampled);
+                    }
                     if let Some(dir) = &dump_dir {
                         let n = DUMPED.load(std::sync::atomic::Ordering::Relaxed);
                         let max: u32 = std::env::var("MTLVK_DUMP_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
@@ -1289,6 +1328,7 @@ impl State {
                 let size = Size::new(c.u64(), c.u64(), c.u64());
                 let d = c.u64();
                 let (slice, level) = (c.u32() as u64, c.u32() as u64);
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() { eprintln!("mtlvk: blit buffer {s:#x} -> texture {d:#x} slice {slice} level {level}"); }
                 let origin = Origin::new(c.u64(), c.u64(), c.u64());
                 self.mark(d);
                 enc.copy_from_buffer_to_texture(self.buf(s)?, so, bpr, bpi, size, self.tex(d)?, slice, level, origin, BlitOption::None)
@@ -1309,6 +1349,7 @@ impl State {
                 let so = Origin::new(c.u64(), c.u64(), c.u64());
                 let size = Size::new(c.u64(), c.u64(), c.u64());
                 let d = c.u64();
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() { eprintln!("mtlvk: blit texture -> texture {d:#x}"); }
                 let (ds, dl) = (c.u32() as u64, c.u32() as u64);
                 let dor = Origin::new(c.u64(), c.u64(), c.u64());
                 self.mark(d);
@@ -1320,6 +1361,7 @@ impl State {
             }
             _ => {
                 let t = c.u64();
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() { eprintln!("mtlvk: blit kind {kind} texture {t:#x}"); }
                 enc.generate_mipmaps(self.tex(t)?).map_err(err("mipmaps"))?;
             }
         }
@@ -1352,6 +1394,7 @@ impl State {
             }
             C_CS_TEXTURE => {
                 let (t, index) = (c.u64(), c.u32());
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() { eprintln!("mtlvk: compute texture {t:#x} index {index}"); }
                 self.mark(t);
                 let t = if t == 0 { None } else { Some(self.tex(t)?) };
                 enc.set_texture(t, index).map_err(e)?;
@@ -1426,28 +1469,67 @@ impl State {
             C_RE_PIPELINE => {
                 let id = c.u64();
                 let failed = matches!(self.objs.get(&id), Some(Obj::RpsFailed));
-                self.skip_draws.set(failed);
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+                    eprintln!("mtlvk:   pipeline {id:#x}{}", if failed { " (failed: draws skipped)" } else { "" });
+                }
+                if let Ok(want) = std::env::var("MTLVK_DUMP_SAMPLED_BY") {
+                    let m = PIPE_NAMES.with(|p| p.borrow().get(&id).is_some_and(|n| *n == want));
+                    SAMPLED_MATCH.with(|c| c.set(m));
+                }
+                let skip_named = SKIP_PASS_RESOLVES.with(|c| c.get()) && std::env::var("MTLVK_SKIP_FRAG").ok().is_some_and(|l| {
+                    PIPE_NAMES.with(|p| p.borrow().get(&id).is_some_and(|n| l.split(',').any(|x| x == n)))
+                });
+                self.skip_draws.set(failed || SKIP_PASS.with(|c| c.get()) || skip_named);
                 if !failed {
                     enc.set_render_pipeline_state(self.rps(id)?).map_err(e)?;
                 }
             }
             C_RE_BUFFER => {
                 let (b, off, stage, index) = (c.u64(), c.u64(), c.u32(), c.u32());
+                BOUND.with(|m| { m.borrow_mut().insert((stage, index), (b, off)); });
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+                    eprintln!("mtlvk:   buffer {b:#x} +{off} stage {stage} index {index}");
+                }
                 let b = if b == 0 { None } else { Some(self.buf(b)?) };
+                if SAMPLED_MATCH.with(|c| c.get()) {
+                    if let Some(Some(p)) = b.map(|b| b.contents()) {
+                        let n = 64.min(b.map(|b| b.length()).unwrap_or(0).saturating_sub(off)) as usize;
+                        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().add(off as usize) as *const u8, n) };
+                        eprintln!("mtlvk:   stage {stage} buffer {index} +{off}: {:02x?}", bytes);
+                    } else {
+                        eprintln!("mtlvk:   stage {stage} buffer {index} +{off}: not host-visible");
+                    }
+                }
                 if stage == 0 { enc.set_vertex_buffer(b, off, index) } else { enc.set_fragment_buffer(b, off, index) }.map_err(e)?;
             }
             C_RE_BUFFER_OFFSET => {
                 let (off, stage, index) = (c.u64(), c.u32(), c.u32());
+                BOUND.with(|m| { if let Some(e) = m.borrow_mut().get_mut(&(stage, index)) { e.1 = off; } });
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+                    eprintln!("mtlvk:   buffer offset +{off} stage {stage} index {index}");
+                }
                 if stage == 0 { enc.set_vertex_buffer_offset(off, index) } else { enc.set_fragment_buffer_offset(off, index) }.map_err(e)?;
             }
             C_RE_BYTES => {
                 let (stage, index, len, _) = (c.u32(), c.u32(), c.u32(), c.u32());
                 let bytes = c.bytes(len as usize);
+                if SAMPLED_MATCH.with(|c| c.get()) {
+                    eprintln!("mtlvk:   stage {stage} bytes {index}: {:02x?}", &bytes[..bytes.len().min(64)]);
+                }
                 if stage == 0 { enc.set_vertex_bytes(bytes, index) } else { enc.set_fragment_bytes(bytes, index) }.map_err(e)?;
             }
             C_RE_TEXTURE => {
                 let (t, stage, index) = (c.u64(), c.u32(), c.u32());
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+                    let dims = if t == 0 { String::new() } else { self.tex(t).map(|x| format!(" {}x{} f{}", x.width(), x.height(), x.pixel_format().as_raw())).unwrap_or_default() };
+                    eprintln!("mtlvk:   texture {t:#x} stage {stage} index {index}{dims}");
+                }
                 let t = if t == 0 { None } else { Some(self.tex(t)?) };
+                if let Some(t) = t {
+                    if SAMPLED_MATCH.with(|c| c.get()) {
+                        SAMPLED.with(|v| v.borrow_mut().push((t.clone(), 0)));
+                    }
+                }
                 if stage == 0 { enc.set_vertex_texture(t, index) } else { enc.set_fragment_texture(t, index) }.map_err(e)?;
             }
             C_RE_SAMPLER => {
@@ -1507,6 +1589,21 @@ impl State {
             }
             C_RE_DRAW => {
                 let (p, start, count, inst, base) = (c.u32(), c.u32(), c.u32(), c.u32(), c.u32());
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+                    eprintln!("mtlvk:   draw {count} vertices x{inst}{}", if self.skip_draws.get() { " skipped" } else { "" });
+                }
+                if SAMPLED_MATCH.with(|c| c.get()) {
+                    let bound: Vec<((u32, u32), (u64, u64))> = BOUND.with(|m| m.borrow().iter().map(|(k, v)| (*k, *v)).collect());
+                    for ((stage, index), (b, off)) in bound {
+                        if let Ok(b) = self.buf(b) {
+                            if let Some(p) = b.contents() {
+                                let n = 48.min(b.length().saturating_sub(off)) as usize;
+                                let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().add(off as usize) as *const u8, n) };
+                                eprintln!("mtlvk:     at draw: stage {stage} buffer {index} +{off}: {:02x?}", bytes);
+                            }
+                        }
+                    }
+                }
                 let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
                 if !self.skip_draws.get() {
                     self.drawn(enc.draw_primitives(p, start, count, inst, base));
@@ -1514,6 +1611,9 @@ impl State {
             }
             C_RE_DRAW_INDEXED => {
                 let (p, count, it, inst) = (c.u32(), c.u32(), c.u32(), c.u32());
+                if std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+                    eprintln!("mtlvk:   draw indexed {count} x{inst}{}", if self.skip_draws.get() { " skipped" } else { "" });
+                }
                 let (ib, off, base_vertex, base_inst) = (c.u64(), c.u64(), c.i32(), c.u32());
                 let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
                 let it = IndexType::try_from(it).map_err(err("index type"))?;
@@ -1548,6 +1648,7 @@ impl State {
     }
 
     fn pass(&self, c: &mut Rd) -> Res<RenderPassDescriptor> {
+        LAST_PASS_IDS.with(|v| v.borrow_mut().clear());
         let mut pass = RenderPassDescriptor::new();
         let mut resolves: Vec<(Option<Texture>, u64, u64)> = Vec::new();
         let mut att = |c: &mut Rd| -> Res<(Option<Texture>, u64, u64, u64, u64, u64, [f64; 4])> {
@@ -1555,6 +1656,12 @@ impl State {
             let (level, slice, plane, load, store, _pad) = (c.u32(), c.u32(), c.u32(), c.u32(), c.u32(), c.u32());
             let clear = [c.f64(), c.f64(), c.f64(), c.f64()];
             let (rt, rl, rs) = (c.u64(), c.u32(), c.u32());
+            if t != 0 {
+                LAST_PASS_IDS.with(|v| v.borrow_mut().push(t));
+            }
+            if t != 0 && std::env::var_os("MTLVK_LOG_PASSES").is_some() {
+                eprintln!("mtlvk: pass attachment {t:#x} level {level} slice {slice} load {load} store {store} clear {clear:?} resolve {rt:#x}");
+            }
             self.mark(t);
             self.mark(rt);
             let tex = if t == 0 { None } else { Some(self.tex(t)?.clone()) };

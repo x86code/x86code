@@ -2448,8 +2448,44 @@ static void vk_borrow_device_methods(void) {
 	}
 }
 
+// Platforms 2 debug: SIGUSR2 writes slice 0 of every live shared texture (4-byte formats) to
+// /Volumes/SystemRoot/tmp/vkshared-<surface id>-<format>-<w>x<h>.raw
+static void vk_dump_shared(void) {
+	pthread_mutex_lock(&g_shared_lock);
+	NSMutableArray* texs = [NSMutableArray array];
+	if (g_shared_tex) {
+		NSMapEnumerator e = NSEnumerateMapTable(g_shared_tex);
+		void *k, *v;
+		while (NSNextMapEnumeratorPair(&e, &k, &v)) if (v) [texs addObject:@[ @((uintptr_t)k), (id)v ]];
+		NSEndMapTableEnumeration(&e);
+	}
+	pthread_mutex_unlock(&g_shared_lock);
+	for (NSArray* kt in texs) {
+		VKMTLTexture* t = kt[1];
+		NSUInteger w = t.width, h = t.height, f = t.pixelFormat;
+		if (f != 70 && f != 71 && f != 80 && f != 81 && f != 90 && f != 94 && f != 252 && f != 55) continue;  // 4-byte texels
+		size_t n = w * 4 * h;
+		void* buf = malloc(n);
+		if (!buf) continue;
+		[t getBytes:buf bytesPerRow:w * 4 bytesPerImage:n fromRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 slice:0];
+		char path[200];
+		snprintf(path, sizeof path, "/Volumes/SystemRoot/tmp/vkshared-%lu-%lu-%lux%lu.raw", [kt[0] unsignedLongValue], (unsigned long)f, (unsigned long)w, (unsigned long)h);
+		FILE* fp = fopen(path, "wb");
+		if (fp) { fwrite(buf, 1, n, fp); fclose(fp); }
+		free(buf);
+		VKLOG("dumped shared texture %s", path);
+	}
+}
+
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 static void vk_make_device(void) {
+	{
+		signal(SIGUSR2, SIG_IGN);
+		static dispatch_source_t src;
+		src = dispatch_source_create(DISPATCH_SOURCE_TYPE_SIGNAL, SIGUSR2, 0, dispatch_get_global_queue(0, 0));
+		dispatch_source_set_event_handler(src, ^{ @autoreleasepool { vk_dump_shared(); } });
+		dispatch_resume(src);
+	}
 	g_verbose = getenv("X86SIM_VKMTL_LOG") != NULL;
 	g_dump_libs = getenv("X86SIM_VKMTL_DUMP") != NULL;
 	vk_hook_constant_values();
