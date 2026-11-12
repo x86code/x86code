@@ -4,6 +4,7 @@
 //! changes.
 mod global;
 mod home;
+mod omarchy;
 mod phone;
 mod remote;
 mod setup;
@@ -17,6 +18,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use theme::*;
 use x86sim_core::{host, instance, logs};
+
+/// The sidebar's width
+pub const NAV_W: f32 = 192.0;
 
 fn main() -> eframe::Result<()> {
     let opts = eframe::NativeOptions {
@@ -107,11 +111,18 @@ pub struct App {
     pub setup: setup::Setup,
     pub setup_checking: bool,
     pub ctx: egui::Context,
+    /// the `?` overlay
+    pub help: bool,
+    /// `q` asked to quit while devices run or work is in progress
+    pub quit_confirm: bool,
+    /// the device under the keyboard cursor on the Devices page (set while it is drawn)
+    pub cursor_device: Option<String>,
 }
 
 impl App {
     fn new(cc: &eframe::CreationContext) -> App {
-        theme(&cc.egui_ctx);
+        theme::apply(&cc.egui_ctx);
+        omarchy::watch(cc.egui_ctx.clone());
         let shared = Arc::new(Mutex::new(Shared::default()));
         // status of every phone every 2 s; one repaint per poll
         let sh = shared.clone();
@@ -230,6 +241,9 @@ impl App {
             setup: setup::Setup::default(),
             setup_checking: false,
             ctx: cc.egui_ctx.clone(),
+            help: false,
+            quit_confirm: false,
+            cursor_device: None,
         };
         if add_on_start {
             app.open_add_dialog();
@@ -351,34 +365,231 @@ impl App {
         self.refresh_instances();
     }
 
-    /// Hub shortcuts. Not while the phone's screen has the keyboard (keys go to the phone) or a text field is focused.
+    /// Keyboard first: every main action has a key (`?` lists them). Not while the phone's screen has the keyboard
+    /// (keys go to the phone), a text field is focused or a dialog is open. The page keys (j / k, Enter) move the
+    /// row cursor, which the page draws and acts on.
     fn shortcuts(&mut self, ctx: &egui::Context) {
-        let phone_typing = matches!(&self.view, View::Phone(id) if self.viewers.get(id).is_some_and(|v| v.focused));
-        if phone_typing || ctx.wants_keyboard_input() || self.add.is_some() || self.dialog.is_some() {
+        use egui::{Key, KeyboardShortcut, Modifiers};
+        let key = |k: Key| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, k));
+        let ctrl = |k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, k)));
+        let question = || ctx.input_mut(|i| i.consume_key(Modifiers::SHIFT, Key::Questionmark) || i.consume_key(Modifiers::NONE, Key::Questionmark) || i.consume_key(Modifiers::SHIFT, Key::Slash));
+        if self.help {
+            if key(Key::Escape) || question() || key(Key::Q) {
+                self.help = false;
+            }
+            nav::begin_frame(0, 0, false);
             return;
         }
-        use egui::{Key, KeyboardShortcut, Modifiers};
-        let sc = |m: Modifiers, k: Key| ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(m, k)));
-        if sc(Modifiers::COMMAND, Key::Num1) {
+        if self.quit_confirm {
+            if key(Key::Enter) || key(Key::Q) || key(Key::Y) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            } else if key(Key::Escape) || key(Key::N) {
+                self.quit_confirm = false;
+            }
+            nav::begin_frame(0, 0, false);
+            return;
+        }
+        let phone_typing = matches!(&self.view, View::Phone(id) if self.viewers.get(id).is_some_and(|v| v.focused));
+        if phone_typing || ctx.wants_keyboard_input() || self.add.is_some() || self.dialog.is_some() {
+            nav::begin_frame(0, 0, false);
+            return;
+        }
+        if question() {
+            self.help = true;
+        } else if key(Key::Q) {
+            self.quit();
+        } else if key(Key::Num1) || ctrl(Key::Num1) {
             self.view = View::Home;
-        } else if sc(Modifiers::COMMAND, Key::Num2) {
+        } else if key(Key::Num2) || ctrl(Key::Num2) {
             self.view = View::Ios;
             self.runtimes = host::runtimes();
-        } else if sc(Modifiers::COMMAND, Key::Num3) {
+        } else if key(Key::Num3) || ctrl(Key::Num3) {
             self.view = View::Aot;
-        } else if sc(Modifiers::COMMAND, Key::Num4) {
+        } else if key(Key::Num4) || ctrl(Key::Num4) {
             self.view = View::Settings;
             self.last_slow = Instant::now() - Duration::from_secs(60);
-        } else if sc(Modifiers::COMMAND, Key::Num5) {
+        } else if key(Key::Num5) || ctrl(Key::Num5) {
             self.open_setup(ctx);
-        } else if sc(Modifiers::COMMAND, Key::N) {
+        } else if key(Key::N) || ctrl(Key::N) {
             self.open_add_dialog();
-        } else if let View::Phone(id) = self.view.clone() {
-            if sc(Modifiers::COMMAND, Key::R) && self.phase(&id) != instance::Phase::Off {
-                self.restart(&id);
-            } else if sc(Modifiers::NONE, Key::Escape) {
-                self.view = View::Home;
+        } else if key(Key::Slash) {
+            nav::want_search();
+        }
+        // the device the keys act on: the open one, else the one under the cursor
+        let target = match &self.view {
+            View::Phone(id) => Some(id.clone()),
+            View::Home => self.cursor_device.clone(),
+            _ => None,
+        };
+        if let Some(id) = target {
+            let phase = self.phase(&id);
+            let present = self.inst(&id).is_some_and(|i| i.runtime_present);
+            if key(Key::S) {
+                match phase {
+                    instance::Phase::Off if present => self.start(&id),
+                    instance::Phase::Running | instance::Phase::Starting => self.stop(&id),
+                    _ => {}
+                }
+            } else if key(Key::R) || ctrl(Key::R) {
+                if phase != instance::Phase::Off {
+                    self.restart(&id);
+                }
+            } else if key(Key::O) {
+                if phase != instance::Phase::Off {
+                    if let Some(inst) = self.inst(&id).cloned() {
+                        match x86sim_core::sim::show_phone(&inst) {
+                            Ok(()) => self.say(format!("Opened {} in its own window", inst.name)),
+                            Err(e) => self.say(format!("Couldn't open the window: {e:#}")),
+                        }
+                    }
+                }
+            } else if key(Key::F2) {
+                if let Some(inst) = self.inst(&id).cloned() {
+                    self.dialog = Some(Dialog::Rename { id: inst.id.clone(), text: inst.name.clone() });
+                }
+            } else if key(Key::Delete) {
+                if let Some(inst) = self.inst(&id).cloned() {
+                    if phase == instance::Phase::Off && !inst.is_default {
+                        self.ask_remove(&inst, ctx);
+                    }
+                }
             }
+        }
+        let mut dx = 0;
+        let mut dy = 0;
+        let mut enter = false;
+        match self.view.clone() {
+            View::Phone(_) => {
+                if key(Key::Escape) {
+                    self.view = View::Home;
+                }
+                // the inspector's folds
+                for (k, sec) in [(Key::F, "features"), (Key::L, "logs"), (Key::P, "perf"), (Key::A, "adv")] {
+                    if key(k) && !self.open.remove(sec) {
+                        self.open.insert(sec);
+                    }
+                }
+            }
+            View::Aot => {
+                if key(Key::C) && self.aot.building() {
+                    self.aot.cancel();
+                }
+            }
+            _ => {}
+        }
+        if !matches!(self.view, View::Phone(_)) {
+            if key(Key::J) || key(Key::ArrowDown) {
+                dy += 1;
+            }
+            if key(Key::K) || key(Key::ArrowUp) {
+                dy -= 1;
+            }
+            if self.view == View::Home {
+                if key(Key::L) || key(Key::ArrowRight) {
+                    dx += 1;
+                }
+                if key(Key::H) || key(Key::ArrowLeft) {
+                    dx -= 1;
+                }
+            }
+            if key(Key::Enter) {
+                enter = true;
+            }
+            if key(Key::Escape) {
+                nav::clear();
+            }
+        }
+        nav::begin_frame(dx, dy, enter);
+    }
+
+    /// `q`: closes at once when nothing is going on; asks first while devices run or work is in progress (they
+    /// carry on without the window, but a stray key shouldn't take it away).
+    fn quit(&mut self) {
+        let running = self.status.values().any(|s| s.phase != instance::Phase::Off);
+        if running || !self.fetching.is_empty() || self.aot.child.is_some() || self.add.as_ref().is_some_and(|a| a.working) {
+            self.quit_confirm = true;
+        } else {
+            self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+    }
+
+    /// What `q` asks and what `?` lists.
+    fn quit_dialog(&mut self, ctx: &egui::Context) {
+        if !self.quit_confirm {
+            return;
+        }
+        let n = self.status.values().filter(|s| s.phase != instance::Phase::Off).count();
+        let mut what = vec![];
+        if n > 0 {
+            what.push(format!("{n} device{} keep{} running", if n == 1 { "" } else { "s" }, if n == 1 { "s" } else { "" }));
+        }
+        if !self.fetching.is_empty() {
+            what.push("the download continues".to_string());
+        }
+        if self.aot.child.is_some() {
+            what.push("pre-translating continues".to_string());
+        }
+        if self.add.as_ref().is_some_and(|a| a.working) {
+            what.push("the device being set up is kept".to_string());
+        }
+        let m = modal("quit").show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.label(dialog_title("Quit x86Sim?"));
+            ui.label(sub(format!("Without the window, {}.", what.join("; "))));
+            ui.add_space(S4);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(Btn::primary("Quit").key("Enter").min_w(88.0)).clicked() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if ui.add(Btn::secondary("Stay").key("Esc").min_w(80.0)).clicked() {
+                    self.quit_confirm = false;
+                }
+            });
+        });
+        if m.should_close() {
+            self.quit_confirm = false;
+        }
+    }
+
+    fn help_overlay(&mut self, ctx: &egui::Context) {
+        if !self.help {
+            return;
+        }
+        let page: &[(&str, &str)] = match &self.view {
+            View::Home => &[("h / l  j / k", "move between devices"), ("Enter", "open the device"), ("s", "start / stop it"), ("r", "restart it"), ("o", "its screen in its own window"), ("F2", "rename it"), ("Delete", "remove it (when off)"), ("Esc", "drop the cursor")],
+            View::Phone(_) => &[("click the screen", "keys go to the device; click outside to get them back"), ("s", "start / stop"), ("r", "restart"), ("o", "its screen in its own window"), ("f  l  p  a", "features, logs, performance, advanced"), ("F2", "rename"), ("Delete", "remove (when off)"), ("F1 – F4", "the device's buttons (see the i tool)"), ("Esc", "back to all devices")],
+            View::Ios => &[("j / k", "move between versions"), ("Enter", "download, resume or pre-translate the version"), ("/", "search"), ("Esc", "drop the cursor")],
+            View::Aot => &[("Enter", "start, update or finish (the cursor on the status)"), ("c", "cancel the run"), ("j / k", "move between options"), ("/", "search the parts")],
+            View::Settings | View::Setup => &[("j / k", "move between rows"), ("Enter", "flip the switch, press the button, step the choice"), ("Esc", "drop the cursor")],
+        };
+        let m = modal("help").show(ctx, |ui| {
+            ui.set_width(440.0);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(dialog_title("Keys"));
+            ui.add_space(S3);
+            let group = |ui: &mut egui::Ui, name: &str, rows: &[(&str, &str)]| {
+                ui.label(overline(name));
+                ui.add_space(2.0);
+                for (k, what) in rows {
+                    ui.horizontal(|ui| {
+                        let (r, _) = ui.allocate_exact_size(egui::vec2(150.0, 18.0), egui::Sense::hover());
+                        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, *k, font(T_SMALL), pal().ink);
+                        ui.label(muted(*what));
+                    });
+                }
+                ui.add_space(S3);
+            };
+            group(ui, "everywhere", &[("1 – 5", "devices, versions, pre-translate, settings, setup"), ("n", "add a device"), ("?", "this list"), ("q", "quit"), ("Tab", "move between controls")]);
+            group(ui, "this page", page);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add(Btn::secondary("Close").key("Esc")).clicked() {
+                    self.help = false;
+                }
+            });
+        });
+        if m.should_close() {
+            self.help = false;
         }
     }
 
@@ -419,7 +630,9 @@ impl eframe::App for App {
                 *t = Some(Instant::now());
             }
         }
+        theme::poll(ctx);
         self.sync();
+        self.cursor_device = None;
         self.shortcuts(ctx);
         if self.last_slow.elapsed() > Duration::from_secs(10) {
             self.last_slow = Instant::now();
@@ -466,32 +679,43 @@ impl eframe::App for App {
             }
         }
 
-        title_bar(ctx);
+        // on Omarchy, Hyprland owns the window: no title bar of our own (Super+W closes, Super+drag moves)
+        let omarchy = pal().omarchy;
+        if !omarchy {
+            title_bar(ctx);
+        }
         let (nrun, mb) = self.running_summary();
         egui::SidePanel::left("nav")
             .resizable(false)
-            .exact_width(212.0)
-            .frame(egui::Frame::new().fill(WINDOW).inner_margin(egui::Margin { left: 10, right: 10, top: 12, bottom: 14 }))
+            .exact_width(NAV_W)
+            .frame(egui::Frame::new().fill(pal().window).inner_margin(egui::Margin { left: 8, right: 8, top: 10, bottom: 12 }))
             .show(ctx, |ui| {
-                // no brand block: the title bar above names the app
-                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.spacing_mut().item_spacing.y = 1.0;
+                if omarchy {
+                    // the app's name, where the title bar would have said it
+                    ui.horizontal(|ui| {
+                        ui.add_space(8.0);
+                        ui.label(egui::RichText::new("x86Sim").size(T_BODY).family(semibold()).color(pal().ink_2));
+                    });
+                    ui.add_space(S2);
+                }
                 let n = self.insts.len();
                 let on_phones = matches!(self.view, View::Home | View::Phone(_));
-                if nav_item(ui, icon::SQUARES_FOUR, "Devices", on_phones, &if n > 0 { n.to_string() } else { String::new() }, "Ctrl+1") {
+                if nav_item(ui, icon::SQUARES_FOUR, "Devices", on_phones, &if n > 0 { n.to_string() } else { String::new() }, "1") {
                     self.view = View::Home;
                 }
-                if nav_item(ui, icon::DOWNLOAD_SIMPLE, "Versions", self.view == View::Ios, "", "Ctrl+2") {
+                if nav_item(ui, icon::DOWNLOAD_SIMPLE, "Versions", self.view == View::Ios, "", "2") {
                     self.view = View::Ios;
                     self.runtimes = host::runtimes();
                 }
-                if nav_item(ui, icon::LIGHTNING, "Pre-translate", self.view == View::Aot, if self.aot.building() { "•" } else { "" }, "Ctrl+3") {
+                if nav_item(ui, icon::LIGHTNING, "Pre-translate", self.view == View::Aot, if self.aot.building() { "•" } else { "" }, "3") {
                     self.view = View::Aot;
                 }
-                if nav_item(ui, icon::GEAR_SIX, "Settings", self.view == View::Settings, "", "Ctrl+4") {
+                if nav_item(ui, icon::GEAR_SIX, "Settings", self.view == View::Settings, "", "4") {
                     self.view = View::Settings;
                     self.last_slow = Instant::now() - Duration::from_secs(60);
                 }
-                if nav_item(ui, icon::WRENCH, "Setup", self.view == View::Setup, "", "Ctrl+5") {
+                if nav_item(ui, icon::WRENCH, "Setup", self.view == View::Setup, "", "5") {
                     self.open_setup(ui.ctx());
                 }
                 // footer: what runs and what it takes, pinned to the bottom (free disk is on Settings, with disk use)
@@ -500,7 +724,7 @@ impl eframe::App for App {
                     updater::Phase::Downloading(_) => 30.0,
                     _ => 0.0,
                 };
-                let footer_h = 20.0 + upd_h + if self.aot.building() { 30.0 } else { 0.0 };
+                let footer_h = 48.0 + upd_h + if self.aot.building() { 30.0 } else { 0.0 };
                 ui.add_space((ui.available_height() - footer_h).max(S4));
                 egui::Frame::new().inner_margin(egui::Margin::symmetric(8, 0)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
@@ -509,14 +733,23 @@ impl eframe::App for App {
                     if self.aot.building() {
                         let frac = self.aot.progress.as_ref().map(|p| if p.chunks_total > 0 { p.chunks_done as f32 / p.chunks_total as f32 } else { 0.0 }).unwrap_or(0.0);
                         ui.label(muted(format!("Pre-translating · {:.0}%", frac * 100.0)));
-                        ui.add(egui::ProgressBar::new(frac).desired_height(4.0).fill(ACCENT).corner_radius(2));
+                        progress(ui, Some(frac), pal().accent);
                         ui.add_space(4.0);
                     }
                     if nrun > 0 {
-                        dot_label(ui, &format!("{nrun} running · {}", fmt_mb(mb)), GOOD);
+                        dot_label(ui, &format!("{nrun} running · {}", fmt_mb(mb)), pal().good);
                     } else {
-                        dot_label(ui, "Nothing running", INK_3);
+                        dot_label(ui, "Nothing running", pal().ink_3);
                     }
+                    ui.add_space(2.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        ui.label(muted("?"));
+                        ui.label(muted("keys"));
+                        ui.add_space(6.0);
+                        ui.label(muted("q"));
+                        ui.label(muted("quit"));
+                    });
                 });
             });
 
@@ -524,10 +757,10 @@ impl eframe::App for App {
         match view {
             View::Phone(id) => self.phone_view(ctx, &id),
             _ => {
-                egui::CentralPanel::default().frame(egui::Frame::new().fill(CANVAS)).show(ctx, |ui| {
+                egui::CentralPanel::default().frame(egui::Frame::new().fill(pal().canvas)).show(ctx, |ui| {
                     egui::ScrollArea::vertical().id_salt(match &view { View::Home => "home", View::Ios => "ios", View::Aot => "aot", View::Setup => "setup", _ => "settings" }).auto_shrink([false, false]).show(ui, |ui| {
                         // the page owns its margins so the scrollbar sits in the gutter, not on the content
-                        egui::Frame::new().inner_margin(egui::Margin { left: S6 as i8, right: S6 as i8, top: S5 as i8, bottom: S6 as i8 }).show(ui, |ui| {
+                        egui::Frame::new().inner_margin(egui::Margin { left: S5 as i8, right: S5 as i8, top: S4 as i8, bottom: S5 as i8 }).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             match view {
                                 View::Home => self.home(ui),
@@ -542,20 +775,23 @@ impl eframe::App for App {
                 });
             }
         }
+        nav::end_frame();
         self.add_dialog(ctx);
         self.phone_dialog(ctx);
+        self.quit_dialog(ctx);
+        self.help_overlay(ctx);
         if !self.message.is_empty() && self.message_at.elapsed() < Duration::from_secs(6) {
-            egui::Area::new("toast".into()).anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(106.0, -24.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+            egui::Area::new("toast".into()).anchor(egui::Align2::CENTER_BOTTOM, egui::vec2(NAV_W / 2.0, -20.0)).order(egui::Order::Foreground).show(ctx, |ui| {
+                // a flyout as Omarchy's: the canvas with Hyprland's active border, no shadow
                 egui::Frame::new()
-                    .fill(RAISED)
-                    .stroke(egui::Stroke::new(1.0_f32, BORDER_STRONG))
-                    .corner_radius(8)
-                    .shadow(egui::Shadow { offset: [0, 6], blur: 20, spread: 0, color: egui::Color32::from_black_alpha(120) })
-                    .inner_margin(egui::Margin::symmetric(14, 9))
+                    .fill(pal().canvas)
+                    .stroke(egui::Stroke::new(1.0_f32, pal().active))
+                    .corner_radius(radius())
+                    .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
-                        ui.set_max_width((ui.ctx().content_rect().width() - 212.0 - 2.0 * S6).clamp(240.0, 560.0));
+                        ui.set_max_width((ui.ctx().content_rect().width() - NAV_W - 2.0 * S6).clamp(240.0, 560.0));
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(icon::INFO).size(15.0).color(INK_2));
+                            ui.label(egui::RichText::new(icon::INFO).family(icons()).size(15.0).color(pal().ink_2));
                             ui.add(egui::Label::new(body(&self.message)).wrap());
                         });
                     });
@@ -573,11 +809,11 @@ fn title_bar(ctx: &egui::Context) {
     egui::TopBottomPanel::top("title-bar")
         .exact_height(H)
         .show_separator_line(false)
-        .frame(egui::Frame::new().fill(WINDOW).inner_margin(0).outer_margin(0))
+        .frame(egui::Frame::new().fill(pal().window).inner_margin(0).outer_margin(0))
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
             let rect = ui.max_rect();
-            ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0_f32, BORDER));
+            ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, egui::Stroke::new(1.0_f32, pal().border));
             // the whole bar drags the window; the buttons, added after, take their clicks first
             let bar = ui.interact(rect, egui::Id::new("title-bar-drag"), egui::Sense::click_and_drag());
             let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
@@ -597,7 +833,7 @@ fn title_bar(ctx: &egui::Context) {
                 egui::Align2::LEFT_CENTER,
                 "x86Sim",
                 egui::FontId::new(T_BODY, medium()),
-                INK_2,
+                pal().ink_2,
             );
             // buttons: close, maximize/restore, minimize (right to left)
             let bw = 46.0;
@@ -612,7 +848,7 @@ fn title_bar(ctx: &egui::Context) {
                 if resp.hovered() {
                     ui.painter().rect_filled(r, 0.0, hover);
                 }
-                let ink = if resp.hovered() && icon == Icon::Close { egui::Color32::WHITE } else { INK_2 };
+                let ink = if resp.hovered() { pal().ink } else { pal().ink_2 };
                 let st = egui::Stroke::new(1.2_f32, ink);
                 let c = r.center();
                 let h = 5.0;
@@ -636,13 +872,13 @@ fn title_bar(ctx: &egui::Context) {
                 }
                 resp.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_text(tip).clicked()
             };
-            if button(Icon::Close, CRIT, "title-close", "Close the launcher (running devices keep running)") {
+            if button(Icon::Close, egui::Color32::from_rgba_unmultiplied(pal().crit.r(), pal().crit.g(), pal().crit.b(), 90), "title-close", "Close the launcher (running devices keep running)") {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if button(if maximized { Icon::Restore } else { Icon::Max }, HOVER, "title-max", if maximized { "Restore" } else { "Maximize" }) {
+            if button(if maximized { Icon::Restore } else { Icon::Max }, pal().hover, "title-max", if maximized { "Restore" } else { "Maximize" }) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
             }
-            if button(Icon::Min, HOVER, "title-min", "Minimize") {
+            if button(Icon::Min, pal().hover, "title-min", "Minimize") {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
             }
         });

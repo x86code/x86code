@@ -42,10 +42,10 @@ impl App {
         let mut sort = self.hub.sort.clone();
         // no subtitle: the count is on the nav item, what runs in the sidebar's footer
         page_header(ui, "Devices", "", |ui| {
-            add = ui.add(Btn::primary("Add device").icon(icon::PLUS)).on_hover_text("Add an iPhone, iPad, Apple TV or Apple Watch (Ctrl+N)").clicked();
+            add = ui.add(Btn::primary("Add device").icon(icon::PLUS).key("n")).on_hover_text("Add an iPhone, iPad, Apple TV or Apple Watch").clicked();
             if n > 1 {
                 let cur = sorts.iter().find(|s| s.0 == sort).map(|s| s.1).unwrap_or("Name");
-                egui::ComboBox::from_id_salt("phonesort").icon(caret).width(150.0).selected_text(body(format!("{}  {cur}", icon::SORT_ASCENDING))).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt("phonesort").icon(caret).width(150.0).selected_text(body(format!("Sort: {cur}"))).show_ui(ui, |ui| {
                     for (k, label) in sorts {
                         if ui.selectable_label(sort == k, label).clicked() {
                             sort = k.to_string();
@@ -67,7 +67,7 @@ impl App {
         if self.insts.is_empty() {
             card(ui, |ui| {
                 empty_state(ui, icon::DEVICE_MOBILE, "No devices yet", "Add an iPhone, iPad, Apple TV or Apple Watch to get started. Each has its own apps, data and settings.", |ui| {
-                    if ui.add(Btn::primary("Add device").icon(icon::PLUS)).clicked() {
+                    if ui.add(Btn::primary("Add device").icon(icon::PLUS).key("n")).clicked() {
                         add = true;
                     }
                 });
@@ -85,6 +85,7 @@ impl App {
             let avail = ui.available_width();
             let cols = ((avail + gap) / (target + gap)).floor().max(1.0) as usize;
             let w = ((avail - gap * (cols as f32 - 1.0)) / cols as f32).min(target * 1.25).floor();
+            nav::set_stride(cols);
             for row in ready.chunks(cols) {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = gap;
@@ -126,8 +127,8 @@ impl App {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         let (r, _) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
-                        ui.painter().rect_filled(r, 8.0, RAISED);
-                        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, icon::CLOUD_ARROW_DOWN, font(17.0), INK_2);
+                        ui.painter().rect(r, radius(), pal().raised, egui::Stroke::new(1.0_f32, pal().border), egui::StrokeKind::Inside);
+                        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, icon::CLOUD_ARROW_DOWN, ifont(16.0), pal().ink_2);
                         ui.add_space(4.0);
                         ui.vertical(|ui| {
                             ui.spacing_mut().item_spacing.y = 1.0;
@@ -144,7 +145,7 @@ impl App {
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if fetching {
-                                ui.spinner();
+                                busy(ui, "");
                                 ui.ctx().request_repaint_after(Duration::from_secs(2));
                             } else if ui.add(Btn::secondary("Download").icon(icon::DOWNLOAD_SIMPLE)).on_hover_text(format!("Build {build}")).clicked() {
                                 fetch = Some((build.clone(), ios.clone()));
@@ -153,22 +154,31 @@ impl App {
                     });
                 });
                 for id in ids {
-                    let Some(inst) = self.inst(id) else { continue };
-                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
+                    let Some(inst) = self.inst(id).cloned() else { continue };
+                    let row = nav::row(egui::Id::new(("waiting", id)));
+                    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::click());
+                    if row.current {
+                        self.cursor_device = Some(id.clone());
+                        nav::mark(ui, rect.shrink2(egui::vec2(8.0, 1.0)), radius_sm());
+                    }
+                    if row.activate {
+                        open = Some(id.clone());
+                    }
                     let p = ui.painter();
                     if resp.hovered() {
-                        p.rect_filled(rect.shrink2(egui::vec2(8.0, 1.0)), R_MD, RAISED);
+                        p.rect_filled(rect.shrink2(egui::vec2(8.0, 1.0)), radius_sm(), pal().hover);
                     }
                     let x0 = rect.left() + 16.0 + 32.0 + 12.0;
-                    p.text(egui::pos2(x0, rect.center().y), egui::Align2::LEFT_CENTER, icon::DEVICE_MOBILE, font(14.0), INK_3);
-                    let name = galley_trunc(ui, &inst.name, font_m(T_BODY), INK, 220.0);
+                    p.text(egui::pos2(x0, rect.center().y), egui::Align2::LEFT_CENTER, icon::DEVICE_MOBILE, ifont(14.0), pal().ink_3);
+                    let name = galley_trunc(ui, &inst.name, font_m(T_BODY), pal().ink, 220.0);
                     let nw = name.size().x;
-                    p.galley(egui::pos2(x0 + 22.0, rect.center().y - name.size().y / 2.0), name, INK);
+                    p.galley(egui::pos2(x0 + 22.0, rect.center().y - name.size().y / 2.0), name, pal().ink);
                     if !same_name(&inst.name, &inst.model) {
-                        p.text(egui::pos2(x0 + 22.0 + nw + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, short_model(&inst.model), font(T_SMALL), INK_3);
+                        p.text(egui::pos2(x0 + 22.0 + nw + 10.0, rect.center().y), egui::Align2::LEFT_CENTER, short_model(&inst.model), font(T_SMALL), pal().ink_3);
                     }
-                    p.text(rect.right_center() - egui::vec2(20.0, 0.0), egui::Align2::RIGHT_CENTER, icon::CARET_RIGHT, font(13.0), if resp.hovered() { INK_2 } else { INK_3 });
+                    p.text(rect.right_center() - egui::vec2(20.0, 0.0), egui::Align2::RIGHT_CENTER, icon::CARET_RIGHT, ifont(13.0), if resp.hovered() { pal().ink_2 } else { pal().ink_3 });
                     if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        nav::select(egui::Id::new(("waiting", id)));
                         open = Some(id.clone());
                     }
                 }
@@ -189,7 +199,16 @@ impl App {
         let phase = st.as_ref().map(|s| s.phase).unwrap_or(Phase::Off);
         let thumbs = self.hub.thumbnails;
         let mut open = false;
-        let frame = egui::Frame::new().fill(CARD).stroke(egui::Stroke::new(1.0_f32, BORDER)).corner_radius(R_LG);
+        let row_id = egui::Id::new(("card", id));
+        let row = nav::row(row_id);
+        if row.current {
+            self.cursor_device = Some(id.to_string());
+        }
+        if row.activate {
+            open = true;
+        }
+        let pal = crate::theme::pal();
+        let frame = egui::Frame::new().fill(if row.current { pal.focus_fill } else { pal.card }).stroke(egui::Stroke::new(1.0_f32, if row.current { pal.focus_border } else { pal.border })).corner_radius(radius());
         let resp = frame.show(ui, |ui| {
             ui.set_width(w);
             ui.vertical(|ui| {
@@ -197,8 +216,8 @@ impl App {
             // the screen, in a well
             let well_h = (w * 1.12).round();
             let (well, wresp) = ui.allocate_exact_size(egui::vec2(w, well_h), egui::Sense::click());
-            ui.painter().rect_filled(well.shrink(1.0), egui::CornerRadius { nw: R_LG - 1, ne: R_LG - 1, sw: 0, se: 0 }, rgb_well());
-            ui.painter().hline(well.x_range(), well.bottom(), egui::Stroke::new(1.0_f32, BORDER));
+            ui.painter().rect_filled(well.shrink(1.0), egui::CornerRadius { nw: radius_inner(), ne: radius_inner(), sw: 0, se: 0 }, pal.well);
+            ui.painter().hline(well.x_range(), well.bottom(), egui::Stroke::new(1.0_f32, pal.border));
             let live = matches!(phase, Phase::Running | Phase::Starting) && thumbs;
             // no state on the screen: the status line below says it once
             let placeholder = "";
@@ -213,6 +232,7 @@ impl App {
             }
             let wresp = wresp.on_hover_cursor(egui::CursorIcon::PointingHand);
             if wresp.clicked() {
+                nav::select(row_id);
                 open = true;
             }
             wresp.context_menu(|ui| {
@@ -262,7 +282,7 @@ impl App {
                 let r = ui.horizontal(|ui| {
                     dot_label(ui, &line, col);
                     if pending {
-                        ui.label(egui::RichText::new(icon::ARROW_CLOCKWISE).size(13.0).color(WARN)).on_hover_text("Settings changed: restart to apply");
+                        ui.label(egui::RichText::new(icon::ARROW_CLOCKWISE).family(icons()).size(13.0).color(pal.warn)).on_hover_text("Settings changed: restart to apply");
                     }
                 }).response;
                 if let Some(u) = st.as_ref().and_then(|s| s.uptime_s) {
@@ -272,14 +292,16 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = S2;
                     let bw = ((ui.available_width() - S2) / 2.0).floor();
+                    // s and Enter act on the card under the keyboard cursor, so only that card shows them.
+                    let k = |key: &'static str| if row.current { key } else { "" };
                     match phase {
                         Phase::Off => {
-                            if ui.add(Btn::primary("Start").icon(icon::PLAY).min_w(bw)).on_hover_text("Start this device").clicked() {
+                            if ui.add(Btn::primary("Start").icon(icon::PLAY).key(k("s")).min_w(bw)).on_hover_text("Start this device").clicked() {
                                 self.start(id);
                             }
                         }
                         Phase::Running | Phase::Starting => {
-                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(CRIT_INK).min_w(bw)).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
+                            if ui.add(Btn::secondary("Stop").icon(icon::STOP).icon_color(pal.crit_ink).key(k("s")).min_w(bw)).on_hover_text("Shut this device down. Its apps and data are kept.").clicked() {
                                 self.stop(id);
                             }
                         }
@@ -287,17 +309,22 @@ impl App {
                             ui.add_enabled(false, Btn::secondary("Stopping…").min_w(bw));
                         }
                     }
-                    if ui.add(Btn::secondary("Open").min_w(bw)).on_hover_text("Its screen, logs and settings").clicked() {
+                    if ui.add(Btn::secondary("Open").key(k("Enter")).min_w(bw)).on_hover_text("Its screen, logs and settings").clicked() {
                         open = true;
                     }
                 });
             });
             });
         });
-        if resp.response.hovered() {
-            ui.painter().rect_stroke(resp.response.rect, R_LG, egui::Stroke::new(1.0_f32, BORDER_STRONG), egui::StrokeKind::Inside);
+        if resp.response.hovered() && !row.current {
+            ui.painter().rect_stroke(resp.response.rect, radius(), egui::Stroke::new(1.0_f32, pal.border_hover), egui::StrokeKind::Inside);
+        }
+        if row.current {
+            // scroll the cursor's card into view after a move
+            nav::mark_scroll(ui, resp.response.rect);
         }
         if open {
+            nav::select(row_id);
             self.view = View::Phone(id.to_string());
         }
     }
@@ -319,17 +346,14 @@ impl App {
                 Err(e) => self.say(format!("Couldn't add it: {e}")),
             }
         }
-        let modal = egui::Modal::new("add-phone".into())
-            .backdrop_color(egui::Color32::from_black_alpha(150))
-            .frame(modal_frame())
-            .show(ctx, |ui| {
+        let modal = modal("add-phone").show(ctx, |ui| {
                 ui.set_width(400.0);
                 ui.spacing_mut().item_spacing.y = 4.0;
                 ui.label(dialog_title("Add a device"));
                 ui.label(sub("It gets its own apps, data and settings."));
                 ui.add_space(S5);
                 let fw = ui.available_width();
-                ui.label(egui::RichText::new("Model").size(T_SMALL).family(medium()).color(INK_2));
+                ui.label(egui::RichText::new("Model").size(T_SMALL).family(medium()).color(pal().ink_2));
                 egui::ComboBox::from_id_salt("addmodel").icon(caret).width(fw).height(360.0).selected_text(body(self.models.get(d.model).map(|m| m.0.clone()).unwrap_or_default())).show_ui(ui, |ui| {
                     for (i, m) in self.models.iter().enumerate() {
                         ui.selectable_value(&mut d.model, i, &m.0);
@@ -340,7 +364,7 @@ impl App {
                 let mid = self.models.get(d.model).map(|m| m.1.clone()).unwrap_or_default();
                 let mp = x86sim_core::sim::model_platform(&mid);
                 let pname = x86sim_core::sim::platform_name(mp);
-                ui.label(egui::RichText::new(format!("{pname} version")).size(T_SMALL).family(medium()).color(INK_2));
+                ui.label(egui::RichText::new(format!("{pname} version")).size(T_SMALL).family(medium()).color(pal().ink_2));
                 // Models 2: a runtime limited to some models (iOS 27.2 24B91016s: iPhone Duo) is picked for them and
                 // greyed out for the others
                 let fits = |r: &x86sim_core::host::Runtime| r.platform == mp && (r.restricted_to.is_empty() || r.restricted_to.contains(&mid));
@@ -371,8 +395,7 @@ impl App {
                     let what = format!("{pname} {ver}");
                     ui.horizontal(|ui| {
                         if let Some(f) = self.fetching.get(build) {
-                            ui.spinner();
-                            ui.label(muted(format!("{what}: {}", fetch_line(f))));
+                            busy(ui, &format!("{what}: {}", fetch_line(f)));
                         } else {
                             ui.label(muted(format!("{pname} isn't installed yet.")));
                             if ui.add(Btn::secondary(format!("Download {what}")).icon(icon::DOWNLOAD_SIMPLE)).clicked() {
@@ -382,8 +405,8 @@ impl App {
                     });
                 }
                 ui.add_space(S3);
-                ui.label(egui::RichText::new("Name").size(T_SMALL).family(medium()).color(INK_2));
-                let r = ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(egui::RichText::new("Optional, e.g. Test device").color(INK_3)).desired_width(fw).margin(egui::Margin::symmetric(8, 6)));
+                ui.label(egui::RichText::new("Name").size(T_SMALL).family(medium()).color(pal().ink_2));
+                let r = ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(egui::RichText::new("Optional, e.g. Test device").color(pal().ink_3)).desired_width(fw).margin(egui::Margin::symmetric(8, 6)));
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && self.runtimes.get(d.runtime).is_some_and(|r| r.present && fits(r)) && !d.working {
                     create = true;
                 }
@@ -392,15 +415,14 @@ impl App {
                 ui.add_space(S5);
                 ui.horizontal(|ui| {
                     if d.working {
-                        ui.spinner();
-                        ui.label(muted("Setting it up…"));
+                        busy(ui, "Setting it up…");
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let ok = self.runtimes.get(d.runtime).is_some_and(|r| r.present && fits(r)) && !d.working;
-                        if ui.add_enabled(ok, Btn::primary("Add device").min_w(96.0)).on_disabled_hover_text(if d.working { "Setting it up…" } else { "Pick an installed version first" }).clicked() {
+                        if ui.add_enabled(ok, Btn::primary("Add device").key("Enter").min_w(96.0)).on_disabled_hover_text(if d.working { "Setting it up…" } else { "Pick an installed version first" }).clicked() {
                             create = true;
                         }
-                        if ui.add_enabled(!d.working, Btn::secondary("Cancel").min_w(80.0)).clicked() {
+                        if ui.add_enabled(!d.working, Btn::secondary("Cancel").key("Esc").min_w(80.0)).clicked() {
                             close = true;
                         }
                     });
@@ -426,10 +448,6 @@ impl App {
             self.add = Some(d);
         }
     }
-}
-
-fn rgb_well() -> egui::Color32 {
-    egui::Color32::from_rgb(0x15, 0x16, 0x18)
 }
 
 /// "Downloading · 23%" / "Unpacking…": one line for a download in progress

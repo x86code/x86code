@@ -253,7 +253,7 @@ impl Aot {
     }
 
     /// Stops the run (ours or another's): x86sim-aot ends its builders and records what finished (resumable).
-    fn cancel(&mut self) {
+    pub fn cancel(&mut self) {
         let pid = self.child.as_ref().map(|c| c.id()).or_else(|| self.external_run());
         self.auto_paused = true;
         self.auto_queue.clear();
@@ -359,7 +359,7 @@ impl App {
                     }
                     if let Some(w) = warn {
                         ui.add_space(S2);
-                        badge(ui, w, WARN);
+                        badge(ui, w, pal().warn);
                     }
                 });
                 if let Some(f) = &fetching {
@@ -369,11 +369,11 @@ impl App {
                 } else if partial.is_some() && self.confirm_discard.as_deref() == Some(r.build.as_str()) {
                     // deleting gigabytes of download asks first, in the row (as "Redo all" does on Pre-translate)
                     egui::Frame::new().inner_margin(egui::Margin { left: 60, right: 16, top: 0, bottom: 12 }).show(ui, |ui| {
-                        egui::Frame::new().fill(RAISED).corner_radius(R_MD).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+                        egui::Frame::new().fill(pal().raised).stroke(egui::Stroke::new(1.0_f32, pal().border)).corner_radius(radius()).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = S2;
-                                ui.label(egui::RichText::new(icon::WARNING_CIRCLE).size(15.0).color(WARN));
+                                ui.label(egui::RichText::new(icon::WARNING_CIRCLE).family(icons()).size(14.0).color(pal().warn));
                                 ui.label(body(format!("Discard the {:.1} GB downloaded so far?", partial.unwrap_or(0) as f64 / 1e9)));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                     if ui.add(Btn::danger("Discard").small()).clicked() {
@@ -411,16 +411,13 @@ impl App {
         list_card(ui, |ui| match &cat {
             None => {
                 egui::Frame::new().inner_margin(16).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(sub("Asking Apple…"));
-                    });
+                    busy(ui, "Asking Apple…");
                 });
             }
             Some(v) if v.is_empty() => {
                 egui::Frame::new().inner_margin(16).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(icon::WIFI_SLASH).size(16.0).color(INK_3));
+                        ui.label(egui::RichText::new(icon::WIFI_SLASH).family(icons()).size(16.0).color(pal().ink_3));
                         ui.label(sub("Couldn't reach Apple. Check the connection, then Check for updates."));
                     });
                 });
@@ -435,7 +432,7 @@ impl App {
                 if v.is_empty() {
                     egui::Frame::new().inner_margin(16).show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(icon::CHECK_CIRCLE).size(16.0).color(GOOD));
+                            ui.label(egui::RichText::new(icon::CHECK_CIRCLE).family(icons()).size(16.0).color(pal().good));
                             ui.label(sub("You have every release Apple offers."));
                         });
                     });
@@ -516,7 +513,7 @@ impl App {
             }).collect();
             let sel = present.iter().position(|r| Some(&r.root) == self.aot.runtime_root.as_ref());
             // more versions than fit as segments (a narrow window, many versions): a list instead of a clipped row
-            let seg_w: f32 = labels.iter().map(|l| ui.painter().layout_no_wrap(l.clone(), font_m(T_SMALL), INK).size().x + 20.0).sum::<f32>() + 4.0;
+            let seg_w: f32 = labels.iter().map(|l| ui.painter().layout_no_wrap(l.clone(), font_m(T_SMALL), pal().ink).size().x + 20.0).sum::<f32>() + 4.0;
             let mut pick = None;
             let as_segments = seg_w <= page_w;
             if as_segments {
@@ -569,28 +566,30 @@ impl App {
         let st_ok = status.as_ref().and_then(|s| s.as_ref().ok()).cloned();
         let need = st_ok.as_ref().map(|s| s.stale + s.missing).unwrap_or(0);
 
-        // ---- status + actions
-        card(ui, |ui| {
+        // ---- status + actions (a row of the cursor: Enter presses Start / Update / Finish)
+        let srow = nav::row(egui::Id::new("aot-status"));
+        let sr = card_frame().show(ui, |ui| {
+            ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 let (head, col, line) = match (&st_ok, &status) {
                     (_, _) if building => (
                         "Pre-translating",
-                        ACCENT,
+                        pal().accent,
                         self.aot.progress.as_ref().filter(|p| p.chunks_total > 0).map(|p| format!("{} of {} parts done", p.chunks_done, p.chunks_total)).unwrap_or_else(|| "Getting ready…".into()),
                     ),
-                    (Some(s), _) if s.total == 0 => ("Nothing to translate yet", INK_3, "Start a device on this version first: it learns what's used.".to_string()),
-                    (Some(s), _) if s.image_current && need == 0 => ("Ready", GOOD, format!("All {} parts are ready", s.total)),
-                    (Some(s), _) if need == 0 => ("Almost ready", WARN, "Every part is translated; it needs putting together".to_string()),
-                    (Some(s), _) if self.aot.auto_paused && s.image_present => ("Paused", WARN, format!("{need} of {} parts to redo; Update picks it up again", s.total)),
-                    (Some(s), _) if self.aot.auto_paused => ("Paused", INK_3, format!("{} parts to translate; Start picks it up again", s.total)),
-                    (Some(s), _) if s.image_present => ("Update queued", INK_3, format!("{need} of {} parts to redo; starts on its own", s.total)),
-                    (Some(s), _) => ("Queued", INK_3, format!("{} parts to translate; starts on its own", s.total)),
-                    (None, Some(Err(_))) => ("Couldn't check", CRIT, String::new()),
-                    _ => ("Checking…", INK_3, String::new()),
+                    (Some(s), _) if s.total == 0 => ("Nothing to translate yet", pal().ink_3, "Start a device on this version first: it learns what's used.".to_string()),
+                    (Some(s), _) if s.image_current && need == 0 => ("Ready", pal().good, format!("All {} parts are ready", s.total)),
+                    (Some(s), _) if need == 0 => ("Almost ready", pal().warn, "Every part is translated; it needs putting together".to_string()),
+                    (Some(s), _) if self.aot.auto_paused && s.image_present => ("Paused", pal().warn, format!("{need} of {} parts to redo; Update picks it up again", s.total)),
+                    (Some(s), _) if self.aot.auto_paused => ("Paused", pal().ink_3, format!("{} parts to translate; Start picks it up again", s.total)),
+                    (Some(s), _) if s.image_present => ("Update queued", pal().ink_3, format!("{need} of {} parts to redo; starts on its own", s.total)),
+                    (Some(s), _) => ("Queued", pal().ink_3, format!("{} parts to translate; starts on its own", s.total)),
+                    (None, Some(Err(_))) => ("Couldn't check", pal().crit, String::new()),
+                    _ => ("Checking…", pal().ink_3, String::new()),
                 };
                 let (r, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
-                ui.painter().rect_filled(r, 8.0, RAISED);
-                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, icon::LIGHTNING, font(18.0), if col == INK_3 { INK_2 } else { col });
+                ui.painter().rect(r, radius(), pal().raised, egui::Stroke::new(1.0_f32, pal().border), egui::StrokeKind::Inside);
+                ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, icon::LIGHTNING, ifont(18.0), if col == pal().ink_3 { pal().ink_2 } else { col });
                 ui.add_space(4.0);
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
@@ -602,13 +601,13 @@ impl App {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = S2;
                     if busy {
-                        ui.spinner();
+                        crate::theme::busy(ui, "");
                     } else if ui.add(Btn::tool(icon::ARROW_CLOCKWISE)).on_hover_text("Check again").clicked() {
                         self.aot.refresh();
                     }
                     if building {
                         let tip = if self.aot.external_run().is_some() { "Stop the run started outside this window" } else { "Stop; automatic runs pause until the launcher starts again" };
-                        if ui.add(Btn::secondary("Cancel").icon(icon::X)).on_hover_text(tip).clicked() {
+                        if ui.add(Btn::secondary("Cancel").icon(icon::X).key("c")).on_hover_text(tip).clicked() {
                             self.aot.cancel();
                         }
                     } else {
@@ -632,18 +631,20 @@ impl App {
                             ("Start", icon::LIGHTNING, "Translate now")
                         };
                         let can = !empty && (need > 0 || st_ok.as_ref().is_some_and(|s| !s.image_current));
-                        if ui.add_enabled(can, Btn::primary(label).icon(ic)).on_hover_text(tip).clicked() {
+                        nav::offer_activation(&srow);
+                        if ui.add_enabled(can, Btn::primary(label).icon(ic).key("Enter")).on_hover_text(tip).clicked() {
                             self.aot.start_build(false);
                         }
+                        nav::withdraw_activation();
                     }
                 });
             });
             if self.aot.confirm_redo && !building {
                 ui.add_space(S3);
-                egui::Frame::new().fill(RAISED).corner_radius(R_MD).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
+                egui::Frame::new().fill(pal().raised).stroke(egui::Stroke::new(1.0_f32, pal().border)).corner_radius(radius()).inner_margin(egui::Margin::symmetric(12, 8)).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(icon::WARNING_CIRCLE).size(15.0).color(WARN));
+                        ui.label(egui::RichText::new(icon::WARNING_CIRCLE).family(icons()).size(14.0).color(pal().warn));
                         ui.label(body(format!("Translate all {} parts again? This takes a while and uses {} cores.", st_ok.as_ref().map(|s| s.total).unwrap_or(0), self.aot.cores)));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.add(Btn::primary("Redo all").small()).on_hover_text("Start over now").clicked() {
@@ -659,7 +660,7 @@ impl App {
             }
             if !self.aot.message.is_empty() {
                 ui.add_space(S2);
-                ui.label(egui::RichText::new(&self.aot.message).size(T_SMALL).color(CRIT_INK));
+                ui.label(egui::RichText::new(&self.aot.message).size(T_SMALL).color(pal().crit_ink));
             }
             if let Some(p) = &self.aot.progress {
                 let live = building;
@@ -670,7 +671,7 @@ impl App {
                     hline(ui);
                     ui.add_space(S2);
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(icon::CHECK_CIRCLE).size(15.0).color(GOOD));
+                        ui.label(egui::RichText::new(icon::CHECK_CIRCLE).family(icons()).size(15.0).color(pal().good));
                         let t = if nothing {
                             "Last run: nothing to do, every part was already up to date".to_string()
                         } else {
@@ -685,13 +686,13 @@ impl App {
                     ui.add_space(S4);
                     let frac = if p.chunks_total > 0 { p.chunks_done as f32 / p.chunks_total as f32 } else { 0.0 };
                     let col = match p.state.as_str() {
-                        "done" => GOOD,
-                        "error" => CRIT,
-                        "cancelled" => WARN,
-                        _ => ACCENT,
+                        "done" => pal().good,
+                        "error" => pal().crit,
+                        "cancelled" => pal().warn,
+                        _ => pal().accent,
                     };
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(format!("{:.0}%", frac * 100.0)).size(T_TITLE).family(semibold()).color(INK));
+                        ui.label(egui::RichText::new(format!("{:.0}%", frac * 100.0)).size(T_TITLE).family(semibold()).color(pal().ink));
                         let what = match p.state.as_str() {
                             "planning" => "Looking at what changed…".to_string(),
                             "assembling" => "Putting it together…".to_string(),
@@ -714,22 +715,25 @@ impl App {
                             }
                         });
                     });
-                    ui.add(egui::ProgressBar::new(frac).desired_height(6.0).fill(col).corner_radius(3).animate(false));
+                    progress(ui, Some(frac), col);
                     if live && !p.current.is_empty() {
                         let names: Vec<&str> = p.current.iter().map(|c| c.rsplit('/').next().unwrap_or(c)).collect();
                         ui.add(egui::Label::new(muted(format!("Working on {}", names.join(", ")))).truncate()).on_hover_text(p.current.join("\n"));
                     }
                     if !live && p.state == "error" && !p.message.is_empty() {
-                        ui.add(egui::Label::new(egui::RichText::new(&p.message).size(T_SMALL).color(CRIT_INK)).wrap());
+                        ui.add(egui::Label::new(egui::RichText::new(&p.message).size(T_SMALL).color(pal().crit_ink)).wrap());
                     }
                 }
             }
         });
+        if srow.current {
+            nav::mark(ui, sr.response.rect, radius());
+        }
         ui.add_space(S3);
         match &status {
             None => {}
             Some(Err(e)) => {
-                card(ui, |ui| ui.label(egui::RichText::new(e).size(T_SMALL).color(CRIT_INK)));
+                card(ui, |ui| ui.label(egui::RichText::new(e).size(T_SMALL).color(pal().crit_ink)));
             }
             Some(Ok(s)) if s.total == 0 => {}
             Some(Ok(s)) => {
@@ -785,13 +789,13 @@ impl App {
             let w = ui.available_width();
             let (st_w, size_w) = (110.0, 80.0);
             let name_w = ((w - st_w - size_w - 32.0) * 0.5).max(160.0);
-            let (hr, _) = ui.allocate_exact_size(egui::vec2(w, 32.0), egui::Sense::hover());
+            let (hr, _) = ui.allocate_exact_size(egui::vec2(w, 28.0), egui::Sense::hover());
             let hf = table_head();
-            let x0 = hr.left() + 16.0;
-            ui.painter().text(egui::pos2(x0, hr.center().y), egui::Align2::LEFT_CENTER, "STATUS", hf.clone(), INK_3);
-            ui.painter().text(egui::pos2(x0 + st_w, hr.center().y), egui::Align2::LEFT_CENTER, "NAME", hf.clone(), INK_3);
-            ui.painter().text(egui::pos2(x0 + st_w + name_w + size_w, hr.center().y), egui::Align2::RIGHT_CENTER, "SIZE", hf.clone(), INK_3);
-            ui.painter().text(egui::pos2(x0 + st_w + name_w + size_w + 24.0, hr.center().y), egui::Align2::LEFT_CENTER, "NOTE", hf, INK_3);
+            let x0 = hr.left() + 14.0;
+            ui.painter().text(egui::pos2(x0, hr.center().y), egui::Align2::LEFT_CENTER, "status", hf.clone(), pal().ink_3);
+            ui.painter().text(egui::pos2(x0 + st_w, hr.center().y), egui::Align2::LEFT_CENTER, "name", hf.clone(), pal().ink_3);
+            ui.painter().text(egui::pos2(x0 + st_w + name_w + size_w, hr.center().y), egui::Align2::RIGHT_CENTER, "size", hf.clone(), pal().ink_3);
+            ui.painter().text(egui::pos2(x0 + st_w + name_w + size_w + 24.0, hr.center().y), egui::Align2::LEFT_CENTER, "note", hf, pal().ink_3);
             let mut shown = 0;
             let f = self.aot.filter.to_lowercase();
             for c in &s.chunks {
@@ -806,37 +810,37 @@ impl App {
                     break;
                 }
                 let (t, col) = match c.state.as_str() {
-                    "up-to-date" => ("Ready", GOOD),
-                    "stale" => ("Out of date", WARN),
-                    _ => ("Missing", INK_3),
+                    "up-to-date" => ("Ready", pal().good),
+                    "stale" => ("Out of date", pal().warn),
+                    _ => ("Missing", pal().ink_3),
                 };
                 let (r, resp) = ui.allocate_exact_size(egui::vec2(w, 30.0), egui::Sense::hover());
                 let p = ui.painter();
-                p.hline(r.x_range(), r.top(), egui::Stroke::new(1.0_f32, BORDER));
+                p.hline(r.x_range(), r.top(), egui::Stroke::new(1.0_f32, pal().border));
                 if resp.hovered() {
-                    p.rect_filled(r.shrink2(egui::vec2(1.0, 0.0)), 0.0, egui::Color32::from_rgb(0x22, 0x23, 0x26));
+                    p.rect_filled(r.shrink2(egui::vec2(1.0, 0.0)), 0.0, pal().hover);
                 }
                 let cy = r.center().y;
-                if col == INK_3 {
-                    p.circle_stroke(egui::pos2(x0 + 4.0, cy), 3.0, egui::Stroke::new(1.3_f32, INK_3));
+                if col == pal().ink_3 {
+                    p.circle_stroke(egui::pos2(x0 + 4.0, cy), 3.0, egui::Stroke::new(1.3_f32, pal().ink_3));
                 } else {
                     p.circle_filled(egui::pos2(x0 + 4.0, cy), 3.5, col);
                 }
-                p.text(egui::pos2(x0 + 14.0, cy), egui::Align2::LEFT_CENTER, t, font(T_SMALL), INK_2);
+                p.text(egui::pos2(x0 + 14.0, cy), egui::Align2::LEFT_CENTER, t, font(T_SMALL), pal().ink_2);
                 let short = c.name.rsplit('/').next().unwrap_or(&c.name);
-                let g = galley_trunc(ui, short, font_m(T_SMALL), INK, name_w - 12.0);
-                p.galley(egui::pos2(x0 + st_w, cy - g.size().y / 2.0), g, INK);
-                p.text(egui::pos2(x0 + st_w + name_w + size_w, cy), egui::Align2::RIGHT_CENTER, format!("{:.1} MB", c.slot_mb), font(T_SMALL), INK_2);
+                let g = galley_trunc(ui, short, font_m(T_SMALL), pal().ink, name_w - 12.0);
+                p.galley(egui::pos2(x0 + st_w, cy - g.size().y / 2.0), g, pal().ink);
+                p.text(egui::pos2(x0 + st_w + name_w + size_w, cy), egui::Align2::RIGHT_CENTER, format!("{:.1} MB", c.slot_mb), font(T_SMALL), pal().ink_2);
                 let nx = x0 + st_w + name_w + size_w + 24.0;
-                let g = galley_trunc(ui, &c.reasons.join("; "), font(T_SMALL), INK_3, r.right() - nx - 16.0);
-                p.galley(egui::pos2(nx, cy - g.size().y / 2.0), g, INK_3);
+                let g = galley_trunc(ui, &c.reasons.join("; "), font(T_SMALL), pal().ink_3, r.right() - nx - 16.0);
+                p.galley(egui::pos2(nx, cy - g.size().y / 2.0), g, pal().ink_3);
                 resp.on_hover_text(format!("{}\n{}", c.name, c.reasons.join("\n")));
             }
             if shown == 0 {
                 egui::Frame::new().inner_margin(16).show(ui, |ui| {
                     ui.horizontal(|ui| {
                         if self.aot.only_attention && f.is_empty() {
-                            ui.label(egui::RichText::new(icon::CHECK_CIRCLE).size(16.0).color(GOOD));
+                            ui.label(egui::RichText::new(icon::CHECK_CIRCLE).family(icons()).size(16.0).color(pal().good));
                             ui.label(sub("Everything is ready"));
                         } else {
                             ui.label(sub("Nothing matches"));
@@ -911,14 +915,14 @@ impl App {
                     let x0 = r.left() + 16.0;
                     let name_w = (r.width() * 0.3).clamp(130.0, 220.0);
                     let what_w = (r.width() * 0.22).clamp(110.0, 160.0);
-                    let g = galley_trunc(ui, &name, font_m(T_SMALL), INK, name_w - S3);
-                    pt.galley(egui::pos2(x0, r.center().y - g.size().y / 2.0), g, INK);
-                    pt.text(egui::pos2(x0 + name_w, r.center().y), egui::Align2::LEFT_CENTER, what, font(T_SMALL), INK_3);
+                    let g = galley_trunc(ui, &name, font_m(T_SMALL), pal().ink, name_w - S3);
+                    pt.galley(egui::pos2(x0, r.center().y - g.size().y / 2.0), g, pal().ink);
+                    pt.text(egui::pos2(x0 + name_w, r.center().y), egui::Align2::LEFT_CENTER, what, font(T_SMALL), pal().ink_3);
                     let bx = x0 + name_w + what_w;
                     let bar = egui::Rect::from_min_size(egui::pos2(bx, r.center().y - 2.0), egui::vec2((r.right() - 16.0 - 80.0 - bx).max(24.0), 4.0));
-                    pt.rect_filled(bar, 2.0, RAISED);
-                    pt.rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2((*b as f32 / max * bar.width()).max(2.0), 4.0)), 2.0, ACCENT);
-                    pt.text(egui::pos2(r.right() - 16.0, r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB", *b as f64 / 1e9), font(T_SMALL), INK_2);
+                    pt.rect_filled(bar, 0.0, pal().raised);
+                    pt.rect_filled(egui::Rect::from_min_size(bar.min, egui::vec2((*b as f32 / max * bar.width()).max(2.0), 4.0)), 0.0, pal().accent);
+                    pt.text(egui::pos2(r.right() - 16.0, r.center().y), egui::Align2::RIGHT_CENTER, format!("{:.1} GB", *b as f64 / 1e9), font(T_SMALL), pal().ink_2);
                     resp.on_hover_text(p.display().to_string());
                 }
                 ui.add_space(8.0);
@@ -930,12 +934,13 @@ impl App {
 
 /// A list row: icon tile, title + detail, trailing controls (right to left).
 pub(crate) fn list_row(ui: &mut egui::Ui, ic: &str, title_text: &str, detail: &str, trailing: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 12)).show(ui, |ui| {
+    let row = nav::row(ui.id().with(("list-row", title_text, detail)));
+    let r = egui::Frame::new().inner_margin(egui::Margin::symmetric(14, 10)).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             let (r, _) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
-            ui.painter().rect_filled(r, 8.0, RAISED);
-            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, ic, font(17.0), INK_2);
+            ui.painter().rect(r, radius(), pal().raised, egui::Stroke::new(1.0_f32, pal().border), egui::StrokeKind::Inside);
+            ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, ic, ifont(16.0), pal().ink_2);
             ui.add_space(4.0);
             // the text wraps before the trailing buttons (room for about two) instead of running under them
             let text_w = (ui.available_width() - 200.0).max(160.0);
@@ -945,14 +950,21 @@ pub(crate) fn list_row(ui: &mut egui::Ui, ic: &str, title_text: &str, detail: &s
                 ui.add(egui::Label::new(strong(title_text)).wrap());
                 ui.add(egui::Label::new(muted(detail)).wrap());
             });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), trailing);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                nav::offer_activation(&row);
+                trailing(ui);
+                nav::withdraw_activation();
+            });
         });
     });
+    if row.current {
+        nav::mark(ui, r.response.rect.shrink(1.0), radius_sm());
+    }
 }
 
 /// A muted note under a list row, aligned with its title.
 pub(crate) fn note(ui: &mut egui::Ui, text: &str) {
-    egui::Frame::new().inner_margin(egui::Margin { left: 60, right: 16, top: 0, bottom: 12 }).show(ui, |ui| {
+    egui::Frame::new().inner_margin(egui::Margin { left: 58, right: 14, top: 0, bottom: 10 }).show(ui, |ui| {
         ui.add(egui::Label::new(muted(text)).wrap());
     });
 }
@@ -966,7 +978,7 @@ fn ver_key(v: &str) -> (u32, u32, u32) {
 /// A download's progress under its row: bar, amount, speed, time left, Cancel. Returns true when Cancel is clicked.
 pub(crate) fn fetch_progress(ui: &mut egui::Ui, f: &host::Fetch) -> bool {
     let mut cancel = false;
-    egui::Frame::new().inner_margin(egui::Margin { left: 60, right: 16, top: 0, bottom: 12 }).show(ui, |ui| {
+    egui::Frame::new().inner_margin(egui::Margin { left: 58, right: 14, top: 0, bottom: 10 }).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.spacing_mut().item_spacing.y = 6.0;
         let gb = |b: u64| b as f64 / 1e9;
@@ -992,10 +1004,7 @@ pub(crate) fn fetch_progress(ui: &mut egui::Ui, f: &host::Fetch) -> bool {
                 cancel = ui.add(Btn::secondary("Cancel").icon(icon::X).small()).on_hover_text("Stop the download; what's downloaded is kept").clicked();
             });
         });
-        match frac {
-            Some(x) => ui.add(egui::ProgressBar::new(x).desired_height(4.0).fill(ACCENT).corner_radius(2).animate(false)),
-            None => ui.add(egui::ProgressBar::new(0.0).desired_height(4.0).fill(ACCENT).corner_radius(2).animate(true)),
-        };
+        progress(ui, frac, pal().accent);
     });
     ui.ctx().request_repaint_after(Duration::from_secs(1));
     cancel

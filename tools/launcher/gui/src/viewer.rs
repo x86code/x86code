@@ -279,26 +279,26 @@ impl Viewer {
         let screen = rect.shrink(bezel);
         let p = ui.painter();
         let radius = (size.x * self.corner).max(4.0);
-        p.rect_filled(rect, radius + bezel * 0.7, BEZEL);
-        p.rect_stroke(rect, radius + bezel * 0.7, egui::Stroke::new(1.0_f32, BORDER_STRONG), egui::StrokeKind::Inside);
+        p.rect_filled(rect, radius + bezel * 0.7, pal().bezel);
+        p.rect_stroke(rect, radius + bezel * 0.7, egui::Stroke::new(1.0_f32, pal().border_strong), egui::StrokeKind::Inside);
         match (&self.tex, live) {
             (Some(t), true) => {
                 egui::Image::new(egui::load::SizedTexture::new(t.id(), size)).corner_radius(radius).paint_at(ui, screen);
             }
             _ => {
-                p.rect_filled(screen, radius, egui::Color32::from_rgb(0x0c, 0x0c, 0x0e));
+                p.rect_filled(screen, radius, pal().well);
                 if !placeholder.is_empty() {
                     let fs = if mode == FULL { T_LG } else { T_SMALL };
                     let ic = if placeholder == "Off" { icon::POWER } else { icon::CIRCLE_NOTCH };
-                    p.text(screen.center() - egui::vec2(0.0, fs * 0.9), egui::Align2::CENTER_CENTER, ic, font(fs * 1.6), INK_3);
-                    p.text(screen.center() + egui::vec2(0.0, fs * 0.9), egui::Align2::CENTER_CENTER, placeholder, font_m(fs), INK_3);
+                    p.text(screen.center() - egui::vec2(0.0, fs * 0.9), egui::Align2::CENTER_CENTER, ic, ifont(fs * 1.6), pal().ink_3);
+                    p.text(screen.center() + egui::vec2(0.0, fs * 0.9), egui::Align2::CENTER_CENTER, placeholder, font_m(fs), pal().ink_3);
                 }
             }
         }
         if interactive {
             self.input(ui, &resp, screen, live);
             if self.focused {
-                ui.painter().rect_stroke(rect, radius + bezel * 0.7, egui::Stroke::new(1.5_f32, ACCENT), egui::StrokeKind::Outside);
+                ui.painter().rect_stroke(rect, radius + bezel * 0.7, egui::Stroke::new(1.0_f32, pal().active), egui::StrokeKind::Outside);
             }
         }
         rect

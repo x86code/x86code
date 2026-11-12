@@ -34,9 +34,9 @@ impl Setup {
 
 fn level_look(l: Level) -> (&'static str, egui::Color32, &'static str) {
     match l {
-        Level::Ok => (icon::CHECK_CIRCLE, GOOD, "OK"),
-        Level::Warn => (icon::WARNING, WARN, "Check"),
-        Level::Fail => (icon::X_CIRCLE, CRIT, "Needed"),
+        Level::Ok => (icon::CHECK_CIRCLE, pal().good, "OK"),
+        Level::Warn => (icon::WARNING, pal().warn, "Check"),
+        Level::Fail => (icon::X_CIRCLE, pal().crit, "Needed"),
     }
 }
 
@@ -44,9 +44,10 @@ fn step_header(ui: &mut egui::Ui, n: usize, title_text: &str, done: bool) {
     ui.add_space(S4);
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), egui::Sense::hover());
-        ui.painter().circle_filled(r.center(), 11.0, if done { GOOD } else { ACCENT_FILL });
+        // a step's number in a quiet box; done: a check in the theme's green
+        ui.painter().rect(r, radius_sm(), if done { pal().selected } else { pal().raised }, egui::Stroke::new(1.0_f32, pal().border_strong), egui::StrokeKind::Inside);
         let t = if done { icon::CHECK.to_string() } else { n.to_string() };
-        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, t, font(12.0), egui::Color32::WHITE);
+        ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, t, ifont(12.0), if done { pal().good } else { pal().ink });
         ui.add_space(4.0);
         ui.label(title(title_text));
     });
@@ -81,8 +82,7 @@ impl App {
                 ui.add_space(S3);
                 ui.horizontal(|ui| {
                     ui.add_space(S4);
-                    ui.spinner();
-                    ui.label(muted("Checking…"));
+                    busy(ui, "Checking…");
                 });
                 ui.add_space(S3);
             }
@@ -125,7 +125,7 @@ impl App {
                     install = ui.add(Btn::primary(if matches!(ds, DarlingState::Outdated { .. }) { "Update" } else { "Install" }).icon(icon::LOCK_KEY)).on_hover_text("Asks for your password once (pkexec)").clicked();
                 }
                 if self.setup.installing {
-                    ui.spinner();
+                    busy(ui, "Installing…");
                 }
             });
             if self.setup.installing {
@@ -240,7 +240,7 @@ impl App {
             };
             list_row(ui, icon::LIGHTNING, "Faster starts", &detail, |ui| {
                 if self.aot.building() {
-                    ui.spinner();
+                    busy(ui, "Translating…");
                 } else if failed {
                     retry = ui.add(Btn::secondary("Try again").icon(icon::ARROW_CLOCKWISE)).clicked();
                 }

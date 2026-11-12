@@ -104,7 +104,7 @@ impl App {
             Phase::Downloading(rel) => {
                 let frac = if rel.asset_size > 0 { self.updater.done.load(Ordering::Relaxed) as f32 / rel.asset_size as f32 } else { 0.0 };
                 ui.label(muted(format!("Downloading {} · {:.0}%", rel.tag, frac.min(1.0) * 100.0)));
-                ui.add(egui::ProgressBar::new(frac.min(1.0)).desired_height(4.0).fill(ACCENT).corner_radius(2));
+                progress(ui, Some(frac.min(1.0)), pal().accent);
                 ui.add_space(4.0);
             }
             Phase::Ready(rel, path) => {
