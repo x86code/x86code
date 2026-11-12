@@ -1402,6 +1402,24 @@ impl State {
         Ok(())
     }
 
+    /// x86Sim: a draw the runtime refuses (a pipeline whose shader-side stencil this device can't
+    /// shadow, ...) records nothing and changes nothing (metal2vulkan-runtime render.rs), so it is
+    /// skipped alone, as Metal's driver would draw what it can. Failing the command buffer instead
+    /// dropped everything encoded after it: visionOS's Home View icons, rendered later in the same
+    /// buffer as a stencil-export draw, went black for good. Logged the first 8 times per message.
+    fn drawn(&self, r: Result<(), metal2vulkan_runtime::Error>) {
+        if let Err(e) = r {
+            static SEEN: std::sync::Mutex<Option<std::collections::HashMap<String, u32>>> = std::sync::Mutex::new(None);
+            let msg = e.to_string();
+            let mut g = SEEN.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let n = g.get_or_insert_with(Default::default).entry(msg.clone()).or_insert(0);
+            *n += 1;
+            if *n <= 8 {
+                eprintln!("mtlvk: draw refused, skipped ({msg}){}", if *n == 8 { "; not logged again" } else { "" });
+            }
+        }
+    }
+
     fn render_command(&self, enc: &mut RenderCommandEncoder, kind: u32, c: &mut Rd) -> Res<()> {
         let e = |e: metal2vulkan_runtime::Error| e.to_string();
         match kind {
@@ -1491,7 +1509,7 @@ impl State {
                 let (p, start, count, inst, base) = (c.u32(), c.u32(), c.u32(), c.u32(), c.u32());
                 let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
                 if !self.skip_draws.get() {
-                    enc.draw_primitives(p, start, count, inst, base).map_err(e)?;
+                    self.drawn(enc.draw_primitives(p, start, count, inst, base));
                 }
             }
             C_RE_DRAW_INDEXED => {
@@ -1500,14 +1518,14 @@ impl State {
                 let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
                 let it = IndexType::try_from(it).map_err(err("index type"))?;
                 if !self.skip_draws.get() {
-                    enc.draw_indexed_primitives(p, count, it, self.buf(ib)?, off, inst, base_vertex, base_inst).map_err(e)?;
+                    self.drawn(enc.draw_indexed_primitives(p, count, it, self.buf(ib)?, off, inst, base_vertex, base_inst));
                 }
             }
             C_RE_DRAW_INDIRECT => {
                 let (p, _pad, ib, off) = (c.u32(), c.u32(), c.u64(), c.u64());
                 let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
                 if !self.skip_draws.get() {
-                    enc.draw_primitives_indirect(p, self.buf(ib)?, off).map_err(e)?;
+                    self.drawn(enc.draw_primitives_indirect(p, self.buf(ib)?, off));
                 }
             }
             C_RE_DRAW_INDEXED_INDIRECT => {
@@ -1515,7 +1533,7 @@ impl State {
                 let p = PrimitiveType::try_from(p).map_err(err("primitive"))?;
                 let it = IndexType::try_from(it).map_err(err("index type"))?;
                 if !self.skip_draws.get() {
-                    enc.draw_indexed_primitives_indirect(p, it, self.buf(xb)?, xoff, self.buf(ib)?, off).map_err(e)?;
+                    self.drawn(enc.draw_indexed_primitives_indirect(p, it, self.buf(xb)?, xoff, self.buf(ib)?, off));
                 }
             }
             C_RE_USE => {
