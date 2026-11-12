@@ -22,9 +22,15 @@ use x86sim_core::{host, instance, logs};
 /// The sidebar's width
 pub const NAV_W: f32 = 192.0;
 
+/// Under Hyprland the compositor owns the window frame: we ask it for server-side decorations, so a floating window
+/// gets Omarchy's title bar (hyprbars) and a tiled one stays bare, like Omarchy's own apps. Elsewhere we draw our own.
+pub fn compositor_decorates() -> bool {
+    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some()
+}
+
 fn main() -> eframe::Result<()> {
     let opts = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]).with_min_inner_size([900.0, 600.0]).with_title("x86Sim").with_app_id("x86sim").with_decorations(false),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 820.0]).with_min_inner_size([900.0, 600.0]).with_title("x86Sim").with_app_id("x86sim").with_decorations(compositor_decorates()),
         ..Default::default()
     };
     eframe::run_native("x86Sim", opts, Box::new(|cc| Ok(Box::new(App::new(cc)))))
@@ -680,9 +686,8 @@ impl eframe::App for App {
             }
         }
 
-        // on Omarchy, Hyprland owns the window: no title bar of our own (Super+W closes, Super+drag moves)
-        let omarchy = pal().omarchy;
-        if !omarchy {
+        // under Hyprland the compositor draws the frame (see compositor_decorates); elsewhere our own title bar
+        if !compositor_decorates() {
             title_bar(ctx);
         }
         let (nrun, mb) = self.running_summary();
@@ -692,14 +697,6 @@ impl eframe::App for App {
             .frame(egui::Frame::new().fill(pal().window).inner_margin(egui::Margin { left: 8, right: 8, top: 10, bottom: 12 }))
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
-                if omarchy {
-                    // the app's name, where the title bar would have said it
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.label(egui::RichText::new("x86Sim").size(T_BODY).family(semibold()).color(pal().ink_2));
-                    });
-                    ui.add_space(S2);
-                }
                 let n = self.insts.len();
                 let on_phones = matches!(self.view, View::Home | View::Phone(_));
                 if nav_item(ui, icon::SQUARES_FOUR, "Devices", on_phones, &if n > 0 { n.to_string() } else { String::new() }, "1") {
