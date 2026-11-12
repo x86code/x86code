@@ -162,7 +162,8 @@ Our own code: GPL-3.0-or-later (LICENSE); bundled components and their licenses 
 2. **License: GPL-3.0-or-later** for our own code (LICENSE), components listed in NOTICE; both ship in the AppImage.
 3. **Root mode: userns (no root) by default, `pkexec` system install as the fallback**, as implemented.
 4. **Distro floor: Ubuntu 24.04+** (glibc 2.39): also Debian 13, Fedora 39+, Arch.
-5. **Pre-translate: on by default.** The setup page starts it on its own once iOS and Darling are ready
-   (`Setup::aot_auto`); phones work while it runs.
+5. **Pre-translate: automatic.** Setup starts it as soon as iOS and Darling are ready (not a choice). Afterwards the
+   launcher keeps every installed version's image up to date on its own (at start, after a device stops, when versions
+   change, every 30 min), niced and while devices run; stopping a run pauses it until the next launcher start.
 6. **First tag**: `v0.1.0-pre1`; first full release `v0.1.0`.
 7. **Pushing**: the gh token has `workflow` scope; push innermost first (darlingserver, darling, then this repo).

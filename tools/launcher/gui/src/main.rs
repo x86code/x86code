@@ -437,8 +437,15 @@ impl eframe::App for App {
             // its .live feedback is written at exit
             self.aot.want_auto(Duration::from_secs(5));
         }
-        self.aot.phones_running = !running.is_empty();
         self.was_running = running;
+        // the versions to keep pre-translated: a new or removed one is checked soon
+        let present: Vec<std::path::PathBuf> = self.runtimes.iter().filter(|r| r.present).map(|r| r.root.clone()).collect();
+        if present != self.aot.runtimes {
+            if !self.aot.runtimes.is_empty() {
+                self.aot.want_auto(Duration::from_secs(5));
+            }
+            self.aot.runtimes = present;
+        }
         self.aot.tick();
         if self.aot.building() {
             ctx.request_repaint_after(Duration::from_millis(500));

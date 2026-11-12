@@ -15,6 +15,9 @@ pub struct AotShared {
     busy: bool,
 }
 
+/// A version checked by the automatic update, and its status (None: couldn't plan it)
+type AutoCheck = (PathBuf, Option<aot::Status>);
+
 pub struct Aot {
     pub runtime_root: Option<PathBuf>,
     pub device: Option<PathBuf>,
@@ -34,12 +37,19 @@ pub struct Aot {
     pub message_pid: Option<u32>,
     /// "Redo all" asked for confirmation
     pub confirm_redo: bool,
-    /// Automatic update: when to look (after a phone stops, and at start) whether phones translated code the image
-    /// lacks (their .live feedback); `auto_check`: a fresh status was asked for and is awaited
+    /// Keeping every version's image up to date on its own (no button to press): at start, 5 s after a device stops
+    /// (its .live feedback is written at exit), when the installed versions change and every 30 min, each present
+    /// version is checked in turn and built or updated if it has no image or a stale one. Runs are niced; the new
+    /// image goes in by a rename, so running devices keep the one they mapped and their next app start gets the new.
     pub auto_at: Option<Instant>,
-    auto_check: bool,
-    /// set each frame by the app: no new image goes in while a phone runs (it waits for the last one to stop)
-    pub phones_running: bool,
+    /// the versions still to check in this round, and the one being checked (its status comes back in `auto_result`)
+    auto_queue: Vec<PathBuf>,
+    auto_checking: bool,
+    auto_result: Arc<Mutex<Option<AutoCheck>>>,
+    /// the user stopped a run: no automatic one until the next start of the launcher or a manual one
+    pub auto_paused: bool,
+    /// set each frame by the app: the present versions (what to keep up to date)
+    pub runtimes: Vec<PathBuf>,
 }
 
 impl Aot {
@@ -66,8 +76,11 @@ impl Aot {
             message_pid: None,
             confirm_redo: false,
             auto_at: Some(Instant::now() + Duration::from_secs(20)),
-            auto_check: false,
-            phones_running: false,
+            auto_queue: Vec::new(),
+            auto_checking: false,
+            auto_result: Arc::new(Mutex::new(None)),
+            auto_paused: false,
+            runtimes: Vec::new(),
         };
         if a.runtime_root.is_some() {
             a.refresh();
@@ -79,13 +92,7 @@ impl Aot {
         self.jc = sim::jc_for(&rt);
         self.paths = aot::Paths::new(&self.jc);
         self.cfg = self.paths.load_config();
-        if device.is_some() {
-            self.device = device;
-        } else if self.cfg.device.as_ref().is_some_and(|d| sim::device_runtime(d) == rt) {
-            self.device = self.cfg.device.clone();
-        } else {
-            self.device = sim::devices().into_iter().map(|d| d.1).find(|d| sim::device_runtime(d) == rt);
-        }
+        self.device = device.or_else(|| device_for(&rt, &self.cfg));
         self.runtime_root = Some(rt);
         self.progress = None;
         self.refresh();
@@ -126,30 +133,51 @@ impl Aot {
         (self.child.is_none() && matches!(p.state.as_str(), "planning" | "building" | "assembling") && aot_alive(p.pid) && pid_is_aot(p.pid)).then_some(p.pid)
     }
 
-    /// Fold what phones translated themselves into the image soon (it is swapped in by a rename: running phones keep
-    /// the one they mapped, the next start of an app gets the new one).
+    /// Check every version again soon (a device stopped, the versions changed).
     pub fn want_auto(&mut self, after: Duration) {
         self.auto_at = Some(Instant::now() + after);
     }
 
     fn auto_tick(&mut self) {
-        if self.auto_at.is_some_and(|t| Instant::now() >= t) && self.runtime_root.is_some() && !self.building() && !self.phones_running {
-            self.auto_at = None;
-            self.auto_check = true;
-            self.refresh();
+        if self.auto_paused || self.building() {
             return;
         }
-        if !self.auto_check || self.shared.lock().unwrap().busy {
-            return;
-        }
-        self.auto_check = false;
-        let st = self.shared.lock().unwrap().status.clone();
-        // only once there is an image (Setup or the Pre-translate page made one) and something to add to it
-        if let Some(Ok(s)) = st {
-            if s.image_present && s.stale + s.missing > 0 && !self.building() && !self.phones_running {
+        let done = self.auto_result.lock().unwrap().take();
+        if let Some((rt, st)) = done {
+            self.auto_checking = false;
+            // no image yet, a stale one, or translated parts not yet put together
+            if st.is_some_and(|s| s.total > 0 && (!s.image_current || s.stale + s.missing > 0)) {
+                self.select(rt, None);
                 self.start_build(false);
+                return;
             }
         }
+        if self.auto_checking {
+            return;
+        }
+        if self.auto_queue.is_empty() {
+            if !self.auto_at.is_some_and(|t| Instant::now() >= t) || self.runtimes.is_empty() {
+                return;
+            }
+            // Darling must be installed: the builder runs its stress test in the runtime
+            if x86sim_core::setup::darling_state() != x86sim_core::setup::DarlingState::Ready {
+                self.auto_at = Some(Instant::now() + Duration::from_secs(30));
+                return;
+            }
+            self.auto_at = Some(Instant::now() + Duration::from_secs(30 * 60));
+            self.auto_queue = self.runtimes.clone();
+        }
+        let rt = self.auto_queue.remove(0);
+        self.auto_checking = true;
+        let slot = self.auto_result.clone();
+        std::thread::spawn(move || {
+            let paths = aot::Paths::new(&sim::jc_for(&rt));
+            let mut cfg = paths.load_config();
+            cfg.device = device_for(&rt, &cfg);
+            cfg.runtime_root = rt.clone();
+            let st = aot::plan(&paths, &cfg).ok().map(|p| p.status(&paths));
+            *slot.lock().unwrap() = Some((rt, st));
+        });
     }
 
     pub fn tick(&mut self) {
@@ -193,8 +221,9 @@ impl Aot {
     pub fn start_build(&mut self, full: bool) {
         let _ = self.paths.save_config(&self.effective_cfg());
         let exe = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("x86sim-aot"))).unwrap_or_else(|| "x86sim-aot".into());
-        let mut cmd = Command::new(exe);
-        cmd.arg("--jc").arg(&self.jc);
+        // background work: niced, so devices and the desktop stay responsive while it runs
+        let mut cmd = Command::new("nice");
+        cmd.args(["-n", "10"]).arg(exe).arg("--jc").arg(&self.jc);
         if let Some(d) = &self.device {
             cmd.arg("--device").arg(d);
         }
@@ -217,6 +246,7 @@ impl Aot {
             Ok(c) => {
                 self.child = Some(c);
                 self.message.clear();
+                self.auto_paused = false;
             }
             Err(e) => self.message = format!("cannot start x86sim-aot: {e}"),
         }
@@ -225,12 +255,19 @@ impl Aot {
     /// Stops the run (ours or another's): x86sim-aot ends its builders and records what finished (resumable).
     fn cancel(&mut self) {
         let pid = self.child.as_ref().map(|c| c.id()).or_else(|| self.external_run());
+        self.auto_paused = true;
+        self.auto_queue.clear();
         if let Some(pid) = pid {
             unsafe {
                 libc_kill(pid as i32, 15);
             }
         }
     }
+}
+
+/// The device whose apps and feature choices a version's image follows: the one saved for it, else its first device.
+fn device_for(rt: &std::path::Path, cfg: &aot::Config) -> Option<PathBuf> {
+    cfg.device.clone().filter(|d| sim::device_runtime(d) == rt).or_else(|| sim::devices().into_iter().map(|d| d.1).find(|d| sim::device_runtime(d) == rt))
 }
 
 extern "C" {
@@ -463,7 +500,7 @@ impl App {
 
     // ---------------- Pre-translate ----------------
     pub fn aot_page(&mut self, ui: &mut egui::Ui) {
-        page_header(ui, "Pre-translate", "Get apps ready ahead of time so they open fast. One cache per version.", |_| {});
+        page_header(ui, "Pre-translate", "Code translated ahead of time, so devices and apps start fast. Kept up to date on its own, one cache per version.", |_| {});
         let present: Vec<host::Runtime> = self.runtimes.iter().filter(|r| r.present).cloned().collect();
         if present.is_empty() {
             card(ui, |ui| empty_state(ui, icon::LIGHTNING, "Nothing to pre-translate yet", "Download a version first.", |_| {}));
@@ -544,8 +581,10 @@ impl App {
                     (Some(s), _) if s.total == 0 => ("Nothing to translate yet", INK_3, "Start a device on this version first: it learns what's used.".to_string()),
                     (Some(s), _) if s.image_current && need == 0 => ("Ready", GOOD, format!("All {} parts are ready", s.total)),
                     (Some(s), _) if need == 0 => ("Almost ready", WARN, "Every part is translated; it needs putting together".to_string()),
-                    (Some(s), _) if s.image_present => ("Needs an update", WARN, format!("{need} of {} parts to redo", s.total)),
-                    (Some(s), _) => ("Not started", INK_3, format!("{} parts to translate", s.total)),
+                    (Some(s), _) if self.aot.auto_paused && s.image_present => ("Paused", WARN, format!("{need} of {} parts to redo; Update picks it up again", s.total)),
+                    (Some(s), _) if self.aot.auto_paused => ("Paused", INK_3, format!("{} parts to translate; Start picks it up again", s.total)),
+                    (Some(s), _) if s.image_present => ("Update queued", INK_3, format!("{need} of {} parts to redo; starts on its own", s.total)),
+                    (Some(s), _) => ("Queued", INK_3, format!("{} parts to translate; starts on its own", s.total)),
                     (None, Some(Err(_))) => ("Couldn't check", CRIT, String::new()),
                     _ => ("Checking…", INK_3, String::new()),
                 };
@@ -568,7 +607,7 @@ impl App {
                         self.aot.refresh();
                     }
                     if building {
-                        let tip = if self.aot.external_run().is_some() { "Stop the run started outside this window" } else { "Stop; Continue picks up the rest" };
+                        let tip = if self.aot.external_run().is_some() { "Stop the run started outside this window" } else { "Stop; automatic runs pause until the launcher starts again" };
                         if ui.add(Btn::secondary("Cancel").icon(icon::X)).on_hover_text(tip).clicked() {
                             self.aot.cancel();
                         }

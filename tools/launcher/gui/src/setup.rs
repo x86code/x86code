@@ -210,20 +210,45 @@ impl App {
             }
         }
 
-        // 4. pre-translate: on by default, started once iOS is there (Darling ready, not built, not running)
+        // 4. pre-translate: part of setup, not a choice. It starts as soon as iOS and Darling are ready, on iOS's own
+        // cache, even if a run was stopped before; afterwards the launcher keeps every version's image up to date.
         let built = !self.aot.building() && self.aot.paths.manifest().exists();
-        if have_rt && ready && !built && !self.aot.building() && !self.setup.aot_auto && self.aot.runtime_root.is_some() {
+        if have_rt && ready && !built && !self.aot.building() && !self.setup.aot_auto {
             self.setup.aot_auto = true;
+            if let Some(r) = present.first() {
+                if self.aot.runtime_root.as_ref() != Some(&r.root) {
+                    self.aot.select(r.root.clone(), None);
+                }
+            }
             self.aot.start_build(false);
         }
         step_header(ui, 4, "Pre-translate", built);
+        let mut retry = false;
         list_card(ui, |ui| {
-            list_row(ui, icon::LIGHTNING, "Faster starts", "Translates iOS ahead of time, once. Starts on its own; phones work meanwhile, just slower.", |ui| {
-                if ui.add_enabled(have_rt, Btn::secondary("Open Pre-translate")).clicked() {
-                    self.view = View::Aot;
+            let failed = !self.aot.building() && !built && !self.aot.message.is_empty();
+            let detail = if built {
+                "Done. New versions and updates are translated on their own.".to_string()
+            } else if self.aot.building() {
+                match self.aot.progress.as_ref().filter(|p| p.chunks_total > 0) {
+                    Some(p) => format!("Translating iOS ahead of time: {} of {} parts. Devices already work meanwhile, just slower.", p.chunks_done, p.chunks_total),
+                    None => "Getting ready to translate iOS ahead of time…".to_string(),
+                }
+            } else if failed {
+                format!("It stopped: {}", self.aot.message)
+            } else {
+                "Translates iOS ahead of time, once, so devices and apps start fast. Starts on its own when iOS is here.".to_string()
+            };
+            list_row(ui, icon::LIGHTNING, "Faster starts", &detail, |ui| {
+                if self.aot.building() {
+                    ui.spinner();
+                } else if failed {
+                    retry = ui.add(Btn::secondary("Try again").icon(icon::ARROW_CLOCKWISE)).clicked();
                 }
             });
         });
+        if retry {
+            self.setup.aot_auto = false;
+        }
 
         // 5. first phone
         let phones = !self.insts.is_empty();
