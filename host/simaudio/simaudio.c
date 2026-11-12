@@ -119,6 +119,9 @@ static struct dev* devof(AudioObjectID o) {
 	return NULL;
 }
 static int nextprocid = 1;
+// Platforms 2: the composition of the last aggregate answered with each device (my_CreateAggregateDevice), for 'acom'
+static CFDictionaryRef aggdesc[2];
+static pthread_mutex_t agglock = PTHREAD_MUTEX_INITIALIZER;
 
 static double ticks_per_sec;
 static void timebase(void) {
@@ -303,6 +306,21 @@ static int scope_ok(struct dev* d, UInt32 scope) {
 	return scope == FCC("glob") || scope == (d->input ? FCC("inpt") : FCC("outp"));
 }
 
+// Platforms 2: our device for a UID: ours, or the UID of an aggregate my_CreateAggregateDevice answered with it
+static AudioObjectID uid_device(CFStringRef u) {
+	if (!u || CFGetTypeID(u) != CFStringGetTypeID()) return 0;
+	if (CFEqual(u, CFSTR("x86sim-output"))) return kOutDev;
+	if (CFEqual(u, CFSTR("x86sim-input"))) return kInDev;
+	AudioObjectID r = 0;
+	pthread_mutex_lock(&agglock);
+	for (int i = 0; i < 2 && !r; i++) {
+		CFStringRef a = aggdesc[i] ? CFDictionaryGetValue(aggdesc[i], CFSTR("uid")) : NULL;
+		if (a && CFEqual(a, u)) r = i ? kInDev : kOutDev;
+	}
+	pthread_mutex_unlock(&agglock);
+	return r;
+}
+
 static OSStatus getprop(AudioObjectID obj, const AudioObjectPropertyAddress* a, UInt32 qsize, const void* qual, UInt32* ioSize, void* out) {
 	UInt32 sel = a->mSelector;
 	if (obj == kSys) {
@@ -324,6 +342,15 @@ static OSStatus getprop(AudioObjectID obj, const AudioObjectPropertyAddress* a, 
 			}
 			PUT(AudioObjectID, r);
 		}
+		case FCC("duid"): {  // Platforms 2: kAudioHardwarePropertyDeviceForUID, an AudioValueTranslation (in/out)
+			struct { void* in; UInt32 insz; void* out; UInt32 outsz; } *t = out;
+			if (*ioSize < sizeof(*t)) return ERR_SIZE;
+			if (!t->in || t->insz < sizeof(CFStringRef) || !t->out || t->outsz < sizeof(AudioObjectID)) return ERR_ILLEGAL;
+			CFStringRef u = *(CFStringRef*)t->in;
+			AudioObjectID r = uid_device(u);
+			if (!r) return -1;  // not ours: the real HAL
+			*(AudioObjectID*)t->out = r; *ioSize = sizeof(*t); return 0;
+		}
 		case FCC("clas"): PUT(UInt32, FCC("asys"));
 		case FCC("bcls"): PUT(UInt32, FCC("aobj"));
 		case FCC("main"): case FCC("pmut"): case FCC("slep"): case FCC("unld"): case FCC("hogr"): case FCC("user"): PUT(UInt32, 1);
@@ -332,6 +359,7 @@ static OSStatus getprop(AudioObjectID obj, const AudioObjectPropertyAddress* a, 
 		case FCC("lnam"): PUTCF("x86sim audio");
 		case FCC("lmak"): PUTCF("x86sim");
 		}
+		{ char b[5]; LOG("system: property %s not ours", fcc(sel, b)); }
 		return -1;  // not ours: let the real HAL answer
 	}
 	struct dev* d = devof(obj);
@@ -419,6 +447,23 @@ static OSStatus getprop(AudioObjectID obj, const AudioObjectPropertyAddress* a, 
 		memcpy(out, l, sizeof(l)); *ioSize = sizeof(l); return 0;
 	}
 	case FCC("jack"): PUT(UInt32, 1);
+	// Platforms 2: the aggregate properties (our device stands in for the simulator's private aggregate)
+	case FCC("acom"): {
+		if (*ioSize < sizeof(CFDictionaryRef)) return ERR_SIZE;
+		pthread_mutex_lock(&agglock);
+		CFDictionaryRef c = aggdesc[d->input];
+		if (c) CFRetain(c);
+		pthread_mutex_unlock(&agglock);
+		if (!c) break;
+		*(CFDictionaryRef*)out = c; *ioSize = sizeof(CFDictionaryRef); return 0;
+	}
+	case FCC("grup"): {
+		if (*ioSize < sizeof(CFArrayRef)) return ERR_SIZE;
+		CFStringRef u = d->input ? CFSTR("x86sim-input") : CFSTR("x86sim-output");
+		*(CFArrayRef*)out = CFArrayCreate(NULL, (const void**)&u, 1, &kCFTypeArrayCallBacks); *ioSize = sizeof(CFArrayRef); return 0;
+	}
+	case FCC("agrp"): PUT(AudioObjectID, d->id);
+	case FCC("amst"): case FCC("apcd"): PUTCF(d->input ? "x86sim-input" : "x86sim-output");
 	case FCC("appm"): PUT(UInt32, 0);
 	}
 	LOG("device %x: unknown property %s scope %s", obj, fcc(sel, b), fcc(a->mScope, (char[5]){0}));
@@ -428,12 +473,14 @@ static OSStatus getprop(AudioObjectID obj, const AudioObjectPropertyAddress* a, 
 static OSStatus my_GetPropertyData(AudioObjectID o, const AudioObjectPropertyAddress* a, UInt32 qs, const void* q, UInt32* sz, void* out) {
 	if ((ours(o) || o == kSys) && a && sz && out) {
 		OSStatus r = getprop(o, a, qs, q, sz, out);
+		if (logon > 1) { char b[5], c[5], e[5]; LOG("get %x %s %s el %u -> %s", o, fcc(a->mSelector, b), fcc(a->mScope, c), a->mElement, r == -1 ? "HAL" : fcc((UInt32)r, e)); }
 		if (r != -1) return r;
 	}
 	return AudioObjectGetPropertyData ? AudioObjectGetPropertyData(o, a, qs, q, sz, out) : ERR_OBJ;
 }
 
 static OSStatus my_GetPropertyDataSize(AudioObjectID o, const AudioObjectPropertyAddress* a, UInt32 qs, const void* q, UInt32* sz) {
+	if (o == kSys && a && sz && a->mSelector == FCC("duid")) { *sz = sizeof(struct { void* i; UInt32 is; void* o; UInt32 os; }); return 0; }
 	if ((ours(o) || o == kSys) && a && sz) {
 		char tmp[1024]; UInt32 n = sizeof(tmp);
 		OSStatus r = getprop(o, a, qs, q, &n, tmp);
@@ -442,7 +489,8 @@ static OSStatus my_GetPropertyDataSize(AudioObjectID o, const AudioObjectPropert
 				*sz = n;
 				// CFString results were created for nothing
 				UInt32 s = a->mSelector;
-				if (s == FCC("lnam") || s == FCC("lmak") || s == FCC("lmod") || s == FCC("uid ") || s == FCC("muid")) CFRelease(*(CFStringRef*)tmp);
+				if (s == FCC("lnam") || s == FCC("lmak") || s == FCC("lmod") || s == FCC("uid ") || s == FCC("muid") ||
+					s == FCC("acom") || s == FCC("grup") || s == FCC("amst") || s == FCC("apcd")) CFRelease(*(CFTypeRef*)tmp);
 			}
 			return r;
 		}
@@ -500,6 +548,7 @@ static OSStatus my_SetPropertyData(AudioObjectID o, const AudioObjectPropertyAdd
 	case FCC("volm"): case FCC("vmvc"): d->volume = sz >= 4 ? *(const float*)data : 1; return 0;
 	case FCC("mute"): d->mute = sz >= 4 ? (int)*(const UInt32*)data : 0; return 0;
 	case FCC("oink"): case FCC("dch2"): case FCC("appm"): return 0;
+	case FCC("srnd"): return 0;  // Platforms 2: AUHAL sets the preferred layout on an aggregate (ours: stereo/mono as is)
 	}
 	return ERR_UNSUP;
 }
@@ -654,10 +703,49 @@ static OSStatus my_GetNearestStartTime(AudioObjectID o, AudioTimeStamp* t, UInt3
 	stamp(d, s, t);
 	return 0;
 }
-static OSStatus my_CreateAggregateDevice(CFDictionaryRef desc, AudioObjectID* out) { return ERR_UNSUP; }
+// Platforms 2: the simulator's AudioToolbox (AQME, visionOS's PHASE/AudioIOUnit) wraps the default device in a private
+// aggregate ("iOSSimulatorAudioDevice-<pid>-<n>", master and subdevices by UID). Our devices already have the IO it
+// wants, so the aggregate is the device itself: the output, or the input when the aggregate has no output channels.
+static OSStatus my_CreateAggregateDevice(CFDictionaryRef desc, AudioObjectID* out) {
+	if (logon) { LOG("CreateAggregateDevice:"); CFShow(desc); }
+	if (!desc || !out) return ERR_ILLEGAL;
+	int wantOut = 0, wantIn = 0, ours = 0, other = 0;
+	CFArrayRef subs = CFDictionaryGetValue(desc, CFSTR("subdevices"));
+	if (subs && CFGetTypeID(subs) == CFArrayGetTypeID()) {
+		for (CFIndex i = 0; i < CFArrayGetCount(subs); i++) {
+			CFDictionaryRef sd = CFArrayGetValueAtIndex(subs, i);
+			if (!sd || CFGetTypeID(sd) != CFDictionaryGetTypeID()) continue;
+			CFStringRef uid = CFDictionaryGetValue(sd, CFSTR("uid"));
+			if (uid && CFGetTypeID(uid) == CFStringGetTypeID() && CFStringHasPrefix(uid, CFSTR("x86sim-"))) ours++; else other++;
+			CFNumberRef ci = CFDictionaryGetValue(sd, CFSTR("channels-in")), co = CFDictionaryGetValue(sd, CFSTR("channels-out"));
+			int n = 0;
+			if (co && CFGetTypeID(co) == CFNumberGetTypeID() && CFNumberGetValue(co, kCFNumberIntType, &n) && n > 0) wantOut = 1;
+			n = 0;
+			if (ci && CFGetTypeID(ci) == CFNumberGetTypeID() && CFNumberGetValue(ci, kCFNumberIntType, &n) && n > 0) wantIn = 1;
+		}
+	}
+	CFStringRef master = CFDictionaryGetValue(desc, CFSTR("master"));
+	if (master && CFGetTypeID(master) == CFStringGetTypeID()) {
+		if (CFEqual(master, CFSTR("x86sim-output"))) { ours++; wantOut = 1; }
+		else if (CFEqual(master, CFSTR("x86sim-input"))) { ours++; if (!wantOut) wantIn = 1; }
+	}
+	if (!ours || other) return ERR_UNSUP;
+	*out = wantOut || !wantIn ? kOutDev : kInDev;
+	pthread_mutex_lock(&agglock);
+	CFDictionaryRef *slot = &aggdesc[*out == kInDev], old = *slot;
+	*slot = CFDictionaryCreateCopy(NULL, desc);
+	pthread_mutex_unlock(&agglock);
+	if (old) CFRelease(old);
+	LOG("CreateAggregateDevice -> %x", *out);
+	return 0;
+}
+static OSStatus my_DestroyAggregateDevice(AudioObjectID o) {
+	if (o == kOutDev || o == kInDev) return 0;
+	return AudioHardwareDestroyAggregateDevice ? AudioHardwareDestroyAggregateDevice(o) : ERR_OBJ;
+}
 
 __attribute__((constructor)) static void init(void) {
-	logon = getenv("X86SIM_AUDIO_LOG") != NULL;
+	logon = getenv("X86SIM_AUDIO_LOG") ? atoi(getenv("X86SIM_AUDIO_LOG")) ?: 1 : 0;  // 2: every property read too
 	timebase();
 }
 
@@ -685,3 +773,4 @@ INTERPOSE(my_GetCurrentTime, AudioDeviceGetCurrentTime);
 INTERPOSE(my_TranslateTime, AudioDeviceTranslateTime);
 INTERPOSE(my_GetNearestStartTime, AudioDeviceGetNearestStartTime);
 INTERPOSE(my_CreateAggregateDevice, AudioHardwareCreateAggregateDevice);
+INTERPOSE(my_DestroyAggregateDevice, AudioHardwareDestroyAggregateDevice);

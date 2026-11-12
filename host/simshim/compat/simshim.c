@@ -18,13 +18,18 @@
 #include <mach-o/getsect.h>
 #include <mach/mach.h>
 #include <objc/message.h>
+#include <mach/mach_time.h>
+#include <time.h>
 #include <objc/runtime.h>
 #include <pthread.h>
+#include <semaphore.h>
 #include <sqlite3.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <libkern/OSCacheControl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <xpc/xpc.h>
@@ -391,6 +396,56 @@ static void shim_pb_added(const struct mach_header* mh, intptr_t slide)
 	method_setImplementation(m, (IMP) shim_pb_sleep);
 	write(2, "simshim: hooked PBPowerManager sleepSystemWithReason:completion:\n", 65);
 }
+// x86Sim Platforms 2 (visionOS): RealityKit's spatial audio. When its PHASE engine fails to start (here AudioToolbox's
+// AQME finds no "Default-InputOutput" device: AudioIOUnit::Initialize -10851), REPHASEContext still turns every
+// scene-understanding mesh into an audio occluder, and -[PHASEMaterial initWithEngine:...] throws "Cannot create a
+// PHASEMaterial with nil or invalid PHASEEngine": backboardd (the RealityKit render server) aborted every few seconds
+// and the compositor never got a frame. Without an engine the occluder calls do nothing (occluders only shape sound).
+static id (*shim_re_create_orig)(id, SEL, const void*);
+static void (*shim_re_void_orig[4])(id, SEL, const void*);
+static bool shim_re_noengine(id self)
+{
+	id e = ((id (*)(id, SEL)) objc_msgSend)(self, sel_registerName("maybeEngine"));
+	static bool said;
+	if (!e && !said) {
+		said = true;
+		write(2, "simshim: RealityKit has no audio engine: audio occluders skipped\n", 65);
+	}
+	return e == nil;
+}
+static id shim_re_create(id self, SEL sel, const void* o)
+{
+	return shim_re_noengine(self) ? nil : shim_re_create_orig(self, sel, o);
+}
+#define SHIM_RE_VOID(k) static void shim_re_void##k(id self, SEL sel, const void* o) \
+	{ if (!shim_re_noengine(self)) shim_re_void_orig[k](self, sel, o); }
+SHIM_RE_VOID(0) SHIM_RE_VOID(1) SHIM_RE_VOID(2) SHIM_RE_VOID(3)
+static void shim_re_added(const struct mach_header* mh, intptr_t slide)
+{
+	static bool done;
+	(void) mh; (void) slide;
+	if (done)
+		return;
+	Class c = objc_getClass("REPHASEContext");
+	if (!c || !class_getInstanceMethod(c, sel_registerName("maybeEngine")))
+		return;
+	done = true;
+	Method m = class_getInstanceMethod(c, sel_registerName("createPHASEShapeAndOccluder:"));
+	if (m)
+		shim_re_create_orig = (id (*)(id, SEL, const void*)) method_setImplementation(m, (IMP) shim_re_create);
+	static const char* const sels[4] = { "addOccluder:", "updateOccluder:", "applyOccluderAdditions:", "applyOccluderUpdates:" };
+	IMP imps[4] = { (IMP) shim_re_void0, (IMP) shim_re_void1, (IMP) shim_re_void2, (IMP) shim_re_void3 };
+	for (int k = 0; k < 4; k++) {
+		m = class_getInstanceMethod(c, sel_registerName(sels[k]));
+		if (m)
+			shim_re_void_orig[k] = (void (*)(id, SEL, const void*)) method_setImplementation(m, imps[k]);
+	}
+}
+__attribute__((constructor)) static void shim_re_init(void)
+{
+	_dyld_register_func_for_add_image(shim_re_added);
+}
+
 __attribute__((constructor)) static void shim_pb_init(void)
 {
 	const char* e = getenv("X86SIM_TV_SLEEP");
