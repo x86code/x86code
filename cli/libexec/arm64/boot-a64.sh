@@ -240,12 +240,17 @@ WATCH_UI_SLIM="com.apple.backboardd com.apple.Carousel com.apple.TextInput.kbd c
 # com.apple.vhmdd-sim) and wakeboardd (the hmd presentable / post-process server) put the room on the screen;
 # pointeruid is the look-and-pinch pointer. RealityEnvironment (a LaunchAngel) is the room itself and hosts
 # com.apple.surfboard.environmentservice: without it SurfBoard aborted in -[SFBSEnvironmentService
-# addEnvironmentsObserver:] ("Value for 'endpoint' was unexpectedly nil"). The rest as on iOS.
+# addEnvironmentsObserver:] ("Value for 'endpoint' was unexpectedly nil"). The rest as on iOS, including the on-demand
+# services sdkcov needs (searchd + corespotlightservice, CoreAuthentication.daemon ... axassetsd, as above). chronod
+# (WidgetCenter) stays the "widgets" feature as on iOS: on visionOS SurfBoard's RealityWidgets starts it at boot and it
+# runs the room's widget extensions (Calendar, News, ...): ~350 MB.
 XR_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.SurfBoard com.apple.vhmdd com.apple.wakeboardd
 	com.apple.RealityEnvironment
 	com.apple.PointerUI.pointeruid com.apple.sleepd com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.usernotificationsd com.apple.assistantd com.apple.splashboardd com.apple.assetsubscriptiond
-	com.apple.mobileassetd"
+	com.apple.mobileassetd com.apple.searchd com.apple.corespotlightservice
+	com.apple.CoreAuthentication.daemon com.apple.storekitd com.apple.quicklook.ThumbnailsAgent com.apple.midiserver-sim
+	com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd"
 XR_UI_SLIM="com.apple.backboardd com.apple.SurfBoard com.apple.vhmdd com.apple.wakeboardd com.apple.RealityEnvironment com.apple.TextInput.kbd
 	com.apple.FileCoordination"
 # No fpsim2host on tvOS / watchOS: their FileProvider has no FPSimulatorSupportInterface (no Files app), so it exited 1
