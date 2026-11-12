@@ -574,9 +574,9 @@ std::optional<uint32_t> agchk_read_code(u64 a) {
 
 // Platforms 1 debug: X86SIM_A64_BLWATCH=<addr>[,<addr>...] (guest addresses of "bl" / "b" instructions, hex): each is read
 // by the JIT as "svc #kBlWatchSvc"; the handler logs the call (target, x0-x2, lr) and makes it. "+<hex>": an offset
-// from the main executable's load address. Translations with the
-// substitution are not meant to be kept: run with X86SIM_A64_JITCACHE=0 X86SIM_A64_AOT=0 (and X86SIM_A64_NOASLR=1 for
-// a non-cache image's unslid addresses).
+// from the main executable's load address; "<image file name>+<hex>": from that image's (resolved once it is mapped). Translations with the
+// substitution are not meant to be kept: run with X86SIM_A64_JITCACHE=0 X86SIM_A64_AOT=0 (ASLR is always off in the
+// simulator; a dylib's address can still vary with what was mapped before it: use "<image>+<hex>").
 static const std::vector<u64> &blwatch_sites() {
     static const std::vector<u64> v = [] {
         std::vector<u64> r;
@@ -598,21 +598,69 @@ static const std::vector<u64> &blwatch_sites() {
         }
         if (const char *e = getenv("X86SIM_A64_BLWATCH"))
             for (const char *q = e; *q;) {
+                const char *comma = strchr(q, ',');
+                if (!comma) comma = q + strlen(q);
                 const bool rel = *q == '+';
-                if (rel) q++;
-                char *end; u64 a = strtoull(q, &end, 16);
-                if (end == q) break;
-                r.push_back(rel ? exe_base + a : a);
-                q = *end == ',' ? end + 1 : end;
+                const char *h = rel ? q + 1 : q;
+                char *end; u64 a = strtoull(h, &end, 16);
+                if (end == comma && end != h) r.push_back(rel ? exe_base + a : a);   // else "<image>+<hex>": blwatch_named
+                q = *comma ? comma + 1 : comma;
             }
         if (!r.empty()) logf("blwatch: %zu sites (main executable at %#lx)", r.size(), (unsigned long)exe_base);
         return r;
     }();
     return v;
 }
+// "<image>+<hex>" sites (a dylib's file name, e.g. H264SW.videocodec+156a88): resolved against /proc/self/maps the
+// first time a translation runs after that image is mapped (dylibs load after the main executable, wherever mmap put
+// them: no randomization, but the order of earlier mappings varies)
+static std::vector<std::pair<std::string, u64>> g_bw_named;  // still unresolved
+static std::vector<u64> g_bw_named_sites;
+static std::mutex g_bw_mu;
+static bool blwatch_named_init() {
+    static const bool any = [] {
+        const char *e = getenv("X86SIM_A64_BLWATCH");
+        for (const char *q = e ? e : ""; *q;) {
+            const char *plus = strchr(q, '+'), *comma = strchr(q, ',');
+            if (!comma) comma = q + strlen(q);
+            if (plus && plus > q && plus < comma) g_bw_named.push_back({std::string(q, plus), strtoull(plus + 1, nullptr, 16)});
+            q = *comma ? comma + 1 : comma;
+        }
+        return !g_bw_named.empty();
+    }();
+    return any;
+}
+static void blwatch_named_resolve() {
+    std::lock_guard<std::mutex> l(g_bw_mu);
+    if (g_bw_named.empty()) return;
+    FILE *f = fopen("/proc/self/maps", "r");
+    if (!f) return;
+    char line[1024];
+    while (fgets(line, sizeof line, f) && !g_bw_named.empty()) {
+        char *nl = strchr(line, '\n');
+        if (nl) *nl = 0;
+        const char *sl = strrchr(line, '/');
+        if (!sl) continue;
+        for (size_t i = 0; i < g_bw_named.size();) {
+            if (!strcmp(sl + 1, g_bw_named[i].first.c_str())) {
+                const u64 site = strtoull(line, nullptr, 16) + g_bw_named[i].second;
+                logf("blwatch: %s+%#lx at %#lx", g_bw_named[i].first.c_str(), (unsigned long)g_bw_named[i].second, (unsigned long)site);
+                g_bw_named_sites.push_back(site);
+                g_bw_named.erase(g_bw_named.begin() + i);
+            } else i++;
+        }
+    }
+    fclose(f);
+}
 std::optional<uint32_t> blwatch_read_code(u64 a) {
     for (u64 w : blwatch_sites())
         if (w == a) return 0xD4000001u | (kBlWatchSvc << 5);
+    if (blwatch_named_init()) {
+        static std::atomic<u32> calls{0};
+        if (!g_bw_named.empty() && (calls.fetch_add(1, std::memory_order_relaxed) & 4095) == 0) blwatch_named_resolve();
+        for (u64 w : g_bw_named_sites)
+            if (w == a) return 0xD4000001u | (kBlWatchSvc << 5);
+    }
     return std::nullopt;
 }
 
@@ -628,7 +676,7 @@ struct Forward final : Dynarmic::A64::UserCallbacks {
         if (auto w = lzfse_read_code(a)) return w;
         if (auto w = agout_read_code(a)) return w;
         if (auto w = agchk_read_code(a)) return w;
-        if (__builtin_expect(!blwatch_sites().empty(), 0))
+        if (__builtin_expect(!blwatch_sites().empty() || blwatch_named_init(), 0))
             if (auto w = blwatch_read_code(a)) return w;
         return GuestThread::rd<uint32_t>(a);
     }
@@ -1131,16 +1179,32 @@ void GuestThread::CallSVC(uint32_t swi) {
             const std::string &nm = g_thunks[swi].name;
             bool path = nm.find("open") != std::string::npos || nm.find("stat") != std::string::npos ||
                         nm.find("access") != std::string::npos || nm.find("getattr") != std::string::npos ||
-                        nm.find("readlink") != std::string::npos || nm.find("realpath") != std::string::npos;
+                        nm.find("readlink") != std::string::npos || nm.find("realpath") != std::string::npos ||
+                        nm.find("unlink") != std::string::npos || nm.find("rename") != std::string::npos ||
+                        nm.find("mkdir") != std::string::npos || nm.find("rmdir") != std::string::npos ||
+                        nm == "_truncate" || nm.find("chmod") != std::string::npos;
             // a user-space pointer, not a small int or AT_FDCWD (-2: 0xfffffffe) taken for a string
             auto uptr = [](u64 v) { return v > 0x10000 && v < 0x800000000000ull && v != 0xfffffffeull; };
             // the *at forms (openat, faccessat, ...; not the stat family) take the path second
             const bool at_form = path && nm.find("at") != std::string::npos && nm.find("stat") == std::string::npos;
-            if (at_form && uptr(x(1)))
-                logf("-> %s(%#lx, \"%.200s\", %#lx)", nm.c_str(), (unsigned long)x(0), (const char *)x(1), (unsigned long)x(2));
+            // the string through process_vm_readv: a pointer-looking value that isn't a mapped string (a call whose
+            // name matched but takes no path) faults there with EFAULT, not here (it killed the traced process)
+            auto str = [](u64 p, char (&b)[201]) {
+                struct iovec l = {b, 200}, r = {(void *)p, 200};
+                ssize_t n = syscall(SYS_process_vm_readv, getpid(), &l, 1, &r, 1, 0);
+                if (n <= 0) {   // the 200 bytes may cross into an unmapped page: the bytes up to it
+                    r.iov_len = l.iov_len = 0x1000 - (p & 0xfff) < 200 ? 0x1000 - (p & 0xfff) : 200;
+                    n = syscall(SYS_process_vm_readv, getpid(), &l, 1, &r, 1, 0);
+                }
+                b[n > 0 ? n : 0] = 0;
+                return n > 0;
+            };
+            char sb[201];
+            if (at_form && uptr(x(1)) && str(x(1), sb))
+                logf("-> %s(%#lx, \"%s\", %#lx)", nm.c_str(), (unsigned long)x(0), sb, (unsigned long)x(2));
             else if (at_form)
                 logf("-> %s(%#lx, %#lx, %#lx)", nm.c_str(), (unsigned long)x(0), (unsigned long)x(1), (unsigned long)x(2));
-            else if (path && uptr(x(0))) logf("-> %s(\"%.200s\", %#lx, %#lx)", nm.c_str(), (const char *)x(0), (unsigned long)x(1), (unsigned long)x(2));
+            else if (path && uptr(x(0)) && str(x(0), sb)) logf("-> %s(\"%s\", %#lx, %#lx)", nm.c_str(), sb, (unsigned long)x(1), (unsigned long)x(2));
             else logf("-> %s(%#lx, %#lx, %#lx)", nm.c_str(), (unsigned long)x(0), (unsigned long)x(1), (unsigned long)x(2));
         }
         // X86SIM_A64_SVC_TIME=1: accumulate rdtsc around the handler body (excludes dispatcher).
