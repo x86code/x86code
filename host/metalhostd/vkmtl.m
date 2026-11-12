@@ -212,6 +212,16 @@ static const char* const kProtocols[] = { "MTLDevice", "MTLBuffer", "MTLTexture"
 @property (copy) NSString* label;
 @end
 
+// Platforms 2: every resource mtlvk makes is hazard-tracked. Fences (updateFence/waitForFence) and render encoders'
+// memory barriers are not carried to mtlvk, so an untracked resource had nothing ordering its uses: RealityKit renders
+// its environment into an untracked texture and composes it into the frame in a later pass ordered only by a fence,
+// and the compose read the texture while it was still being drawn (each visionOS frame showed a room part-drawn at a
+// different point: black walls, missing furniture). Metal's automatic tracking orders at least as much as the
+// program's fences would. The client still sees the options it asked for.
+static inline MTLResourceOptions vk_tracked(MTLResourceOptions o) {
+	return (o & ~(MTLResourceOptions)MTLResourceHazardTrackingModeMask) | MTLResourceHazardTrackingModeTracked;
+}
+
 @implementation VKMTLObject
 @synthesize label = _label;
 - (void)dealloc { [_label release]; [super dealloc]; }
@@ -309,7 +319,7 @@ static pthread_mutex_t g_copied_lock = PTHREAD_MUTEX_INITIALIZER;
 	int fd = x86sim_syscall(SYS_X86SIM_MEMFD_FOR_REGION, (uint64_t)(uintptr_t)p, (uint64_t)(len ? len : 1), &off, &shared);
 	if (fd < 0) VKLOG("buffer %llu: no memfd for %p+%lu (errno %d): mtlvk keeps a copy", _vkid, p, (unsigned long)len, errno);
 	wbuf b = { 0 };
-	wb_u64(&b, _vkid); wb_u64(&b, len); wb_u64(&b, opts); wb_u64(&b, off);
+	wb_u64(&b, _vkid); wb_u64(&b, len); wb_u64(&b, vk_tracked(opts)); wb_u64(&b, off);
 	wb_u32(&b, fd >= 0); wb_u32(&b, shared);
 	uint32_t rs = 0;
 	int32_t* r = vk_call_fd(VKMTL_BUF_NEW, b.p, (uint32_t)b.n, fd, &rs);
@@ -451,7 +461,7 @@ static uint32_t vk_swizzle_bits(MTLTextureSwizzleChannels s) {
 	_allowOpt = d.allowGPUOptimizedContents;
 	_swizzle = d.swizzle;
 	return (vkmtl_texdesc){ (uint32_t)_type, (uint32_t)_format, _width, _height, _depth, (uint32_t)_mips, (uint32_t)_samples, _array,
-		_options, _usage, vk_swizzle_bits(_swizzle), _allowOpt };
+		vk_tracked(_options), _usage, vk_swizzle_bits(_swizzle), _allowOpt };
 }
 - (instancetype)initWithDescriptor:(MTLTextureDescriptor*)d {
 	self = [super init];
@@ -1327,6 +1337,8 @@ uint32_t vk_constant_values(MTLFunctionConstantValues* cv, wbuf* out) {
 	wbuf _rc;
 	uint32_t _rcount;
 	BOOL _ended;
+	id<MTLBuffer> _vis;           // Platforms 2: the pass's visibilityResultBuffer
+	NSMutableIndexSet* _visOffsets;  // offsets a draw's visibility query writes
 }
 @end
 
@@ -1355,9 +1367,10 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 	if (p.stencilAttachment.texture) { vk_att(&_pass.stencil, p.stencilAttachment, cb); _pass.stencil.clear[1] = p.stencilAttachment.clearStencil; }
 	_pass.renderTargetWidth = p.renderTargetWidth; _pass.renderTargetHeight = p.renderTargetHeight;
 	_pass.renderTargetArrayLength = p.renderTargetArrayLength; _pass.defaultRasterSampleCount = p.defaultRasterSampleCount;
+	_vis = [p.visibilityResultBuffer retain];
 	return self;
 }
-- (void)dealloc { free(_rc.p); [super dealloc]; }
+- (void)dealloc { free(_rc.p); [_vis release]; [_visOffsets release]; [super dealloc]; }
 - (void)cmd:(uint32_t)kind data:(const void*)d size:(uint32_t)n {
 	wb_u32(&_rc, kind); wb_u32(&_rc, n); wb_put(&_rc, d, n);
 	_rcount++;
@@ -1374,6 +1387,26 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 	[_cb addCommand:VKMTL_C_RENDER_PASS data:&_pass size:sizeof(_pass)];
 	[_cb appendCommands:_rc.p size:_rc.n count:_rcount];
 	[_cb addCommand:VKMTL_C_RE_END data:NULL size:0];
+	// Platforms 2: occlusion queries answer "visible". Visibility results are not carried to mtlvk, and the buffer was
+	// left as it was: RealityKit's occlusion culling read stale results and dropped whole meshes at random each frame
+	// (visionOS's room flickered: no walls in one frame, no furniture in the next). Every queried draw now reports
+	// samples passed, written as the command buffer completes (when Metal writes them), which culls nothing.
+	if (_vis && _visOffsets.count) {
+		id<MTLBuffer> vb = [_vis retain];
+		NSIndexSet* offs = [_visOffsets copy];
+		[(id<MTLCommandBuffer>)_cb addCompletedHandler:^(id<MTLCommandBuffer> c) {
+			(void)c;
+			uint8_t* base = (uint8_t*)[vb contents];
+			NSUInteger len = [vb length];
+			if (base)
+				[offs enumerateIndexesUsingBlock:^(NSUInteger o, BOOL* stop) {
+					(void)stop;
+					if (o + 8 <= len) { uint64_t v = 0x10000; memcpy(base + o, &v, 8); }
+				}];
+			[vb release];
+			[offs release];
+		}];
+	}
 }
 - (void)setColorStoreAction:(MTLStoreAction)a atIndex:(NSUInteger)i { if (i < VKMTL_MAX_COLOR) _pass.color[i].storeAction = (uint32_t)a; }
 - (void)setDepthStoreAction:(MTLStoreAction)a { _pass.depth.storeAction = (uint32_t)a; }
@@ -1490,7 +1523,11 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 	[_cb keep:d];
 	[self cmd:VKMTL_C_RE_DSS data:&c size:8];
 }
-- (void)setVisibilityResultMode:(MTLVisibilityResultMode)m offset:(NSUInteger)o { (void)m; (void)o; }
+- (void)setVisibilityResultMode:(MTLVisibilityResultMode)m offset:(NSUInteger)o {
+	if (m == MTLVisibilityResultModeDisabled || !_vis) return;
+	if (!_visOffsets) _visOffsets = [[NSMutableIndexSet alloc] init];
+	[_visOffsets addIndex:o];
+}
 - (void)setVertexAmplificationCount:(NSUInteger)n viewMappings:(const MTLVertexAmplificationViewMapping*)v { (void)n; (void)v; }
 - (void)setTriangleFillMode:(MTLTriangleFillMode)m stages:(NSUInteger)s { (void)s; [self setTriangleFillMode:m]; }
 - (void)textureBarrier {}
@@ -2093,6 +2130,10 @@ static NSUInteger vk_arg_offset(MTLStructType* st, NSUInteger idx, NSUInteger ba
 }
 // MTLSimDriver sends the handle's port itself: a send right to a port this process made lands under the same name
 - (id<MTLSharedEvent>)newSharedEventWithMachPort:(mach_port_t)p {
+	// Platforms 2: no port is no event, as Metal answers newSharedEventWithHandle:nil. visionOS's swapchains carry
+	// optional events (CP_OBJECT_cp_swapchain encodes two, one may be nil); a stand-in event here was one that no
+	// other process signals or waits on, and the compositor showed backboardd's frames before they were drawn
+	if (!p) return nil;
 	pthread_mutex_lock(&g_shared_lock);
 	VKMTLSharedEvent* e = p ? [[g_event_ports objectForKey:(id)(uintptr_t)p] retain] : nil;
 	pthread_mutex_unlock(&g_shared_lock);
