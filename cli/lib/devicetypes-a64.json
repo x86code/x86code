@@ -827,5 +827,16 @@
   "suffix": "",
   "json": "devicetype-realitydevice14,1.json",
   "platform": "xros"
+ },
+ "Apple Vision Pro (at 1080p)": {
+  "model": "RealityDevice14,1",
+  "class": "N301",
+  "w": "1920",
+  "h": "1080",
+  "scale": "1.000000",
+  "pitch": "132.000000",
+  "suffix": "",
+  "json": "devicetype-realitydevice14,1.json",
+  "platform": "xros"
  }
 }

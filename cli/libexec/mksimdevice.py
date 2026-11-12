@@ -339,6 +339,13 @@ def main():
         disp[0]["width"], disp[0]["height"] = int(dt["w"]), int(dt["h"])
         sd = caps["capabilities"].get("ScreenDimensionsCapability", {})
         sd["main-screen-width"], sd["main-screen-height"] = dt["w"], dt["h"]
+        # Platforms 2: Apple Vision Pro "at 1080p" also halves the scale (the same 1920x1080 points, a quarter of
+        # the pixels to composite, read back and show)
+        scale = float(dt["scale"])
+        if "scale" in disp[0] and disp[0]["scale"] != scale:
+            disp[0]["scale"] = int(scale) if scale.is_integer() else scale
+            sd["main-screen-scale"] = disp[0]["scale"]
+            sd["main-screen-pitch"] = float(dt["pitch"])
     # x86Sim: no always-on display. With always-on-time (iPhone Pro, Apple Watch) a sleeping device's dimmed lock
     # screen / watch face is rendered ahead as a flipbook, one frame per coming minute, which the hardware shows when
     # each minute arrives. SimFramebuffer shows every frame as it is drawn, so the asleep screen (and the first frame
