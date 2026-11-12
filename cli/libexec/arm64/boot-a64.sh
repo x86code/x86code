@@ -561,6 +561,28 @@ for fw in CoreSpotlight; do
 	ln -sfn "/Volumes/SystemRoot$(realpath "$X86SIM_RUNTIME")/System/Library/Frameworks/$fw.framework" \
 		"$DPREFIX/System/Library/Frameworks/$fw.framework"
 done
+# Private frameworks too: TextToSpeech opens [NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/
+# TextToSpeechMauiSupport.framework"] (the built-in voices, TTSResources): on a Mac that is the host's copy. Without it
+# AVSpeechSynthesisVoice.speechVoices() was empty (axassetsd's VoiceDB: OnDiskVoiceError) and AVSpeechSynthesizer silent.
+for fw in TextToSpeechMauiSupport; do
+	mkdir -p "$DPREFIX/System/Library/PrivateFrameworks"
+	ln -sfn "/Volumes/SystemRoot$(realpath "$X86SIM_RUNTIME")/System/Library/PrivateFrameworks/$fw.framework" \
+		"$DPREFIX/System/Library/PrivateFrameworks/$fw.framework"
+done
+# TextToSpeech's voice database (axassetsd, /var/mobile/Library/Accessibility/voicedb.sqlite) is refilled at every
+# start by its loaders, each skipped when com.apple.SpeakSelection's PreferencesLastLoadedOn says it already loaded in
+# this boot: the value is kern.boottime, which here is the Linux host's for every device boot. So after the first
+# boot the rows were cleared and never reloaded: AVSpeechSynthesisVoice.speechVoices() empty. A device boot is a new
+# boot for it: the marker goes.
+python3 - "$D/data/Library/Preferences/com.apple.SpeakSelection.plist" <<'PY' 2>/dev/null
+import plistlib, sys
+try:
+	d = plistlib.load(open(sys.argv[1], "rb"))
+except Exception:
+	sys.exit(0)
+if d.pop("PreferencesLastLoadedOn", None) is not None:
+	plistlib.dump(d, open(sys.argv[1], "wb"), fmt=plistlib.FMT_BINARY)
+PY
 # Speed 27: and host data a Mac has in /System/Library (cli/libexec/arm64/fetch-macos-host.sh fetches it from the Mac
 # into runtimes/macos-host): geod seeds its resource manifest from /System/Library/GeoServicesData/ResourceManifest.json;
 # without it there was no active tile group and Maps drew a bare globe grid without ever requesting a tile.

@@ -87,7 +87,11 @@ DEMAND = set(os.environ.get("X86SIM_JETSAM_DEMAND", "passd,assistant_cdmd,Contex
 # its startup (containermanagerd_system, its clients' LaunchOnDemand events: passd -> financed, searchd, tccd ...).
 # fontservicesd: HOT kept it (its 300 s activity never let it idle 600 s); with HOT off at an untouched home it would
 # be killed between activities and relaunch with UserFontManager (~170 MB at launch) every 5 min.
-RESIDENT = set(os.environ.get("X86SIM_JETSAM_RESIDENT", "UserFontManager,fontservicesd,nsurlsessiond").split(",")) - {""}
+# axassetsd: its VoiceDatabase deletes voicedb.sqlite at every start and refills it only from loaders not yet run in
+# this boot (com.apple.SpeakSelection PreferencesLastLoadedOn = kern.boottime): after an idle kill it came back with an
+# empty database for the rest of the boot (AVSpeechSynthesisVoice.speechVoices() empty). A Mac's simulator never
+# kills it. ~45 MB.
+RESIDENT = set(os.environ.get("X86SIM_JETSAM_RESIDENT", "UserFontManager,fontservicesd,nsurlsessiond,axassetsd").split(",")) - {""}
 # RAM 4: on-demand daemons that stay dirty (an XPC transaction nobody ends) with nothing to do: reclaimed once CPU-idle for
 # X86SIM_JETSAM_DIRTY_IDLE s anyway, as a device's jetsam takes dirty background daemons under pressure. siriactionsd: a
 # relaunch by a launch event (LaunchServices / Biome / defaults notifications) leaves it dirty for good (~80 MB).
