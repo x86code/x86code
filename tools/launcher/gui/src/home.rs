@@ -61,6 +61,9 @@ impl App {
             let _ = x86sim_core::host::save_hub(&self.hub);
         }
         x86sim_core::instance::sort(&mut self.insts, &self.hub.sort);
+        // devices that are on (starting, running, stopping) come first; the stable sort keeps the chosen order in each group
+        let status = &self.status;
+        self.insts.sort_by_key(|i| status.get(&i.id).map_or(true, |s| s.phase == Phase::Off));
         if add {
             self.open_add_dialog();
         }
