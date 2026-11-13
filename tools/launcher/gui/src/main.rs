@@ -580,8 +580,9 @@ impl App {
                 ui.add_space(2.0);
                 for (k, what) in rows {
                     ui.horizontal(|ui| {
-                        let (r, _) = ui.allocate_exact_size(egui::vec2(150.0, 18.0), egui::Sense::hover());
-                        ui.painter().text(r.left_center(), egui::Align2::LEFT_CENTER, *k, font(T_SMALL), pal().hilite);
+                        let left = ui.cursor().left();
+                        keys(ui, k, pal().hilite);
+                        ui.add_space((left + 150.0 - ui.cursor().left()).max(0.0));
                         ui.label(muted(*what));
                     });
                 }
@@ -742,10 +743,10 @@ impl eframe::App for App {
                     ui.add_space(2.0);
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
-                        ui.label(muted("?"));
+                        keys(ui, "?", pal().ink_2);
                         ui.label(muted("keys"));
                         ui.add_space(6.0);
-                        ui.label(muted("q"));
+                        keys(ui, "q", pal().ink_2);
                         ui.label(muted("quit"));
                     });
                 });

@@ -789,11 +789,11 @@ impl egui::Widget for Btn {
         let p = ui.painter().clone();
         let tg = (!self.text.is_empty()).then(|| p.layout_no_wrap(self.text.clone(), font(ts), pal.ink));
         let ig = self.icon.map(|i| p.layout_no_wrap(i.to_string(), ifont(is), pal.ink));
-        let kg = (!self.key.is_empty() && tg.is_some()).then(|| p.layout_no_wrap(self.key.to_string(), font(T_CAPTION), pal.ink_3));
+        let kg = (!self.key.is_empty() && tg.is_some()).then(|| keycap_galley(&p, self.key));
         let pad = if tg.is_none() { 0.0 } else if small { 8.0 } else { 10.0 };
         let gap = if tg.is_some() && ig.is_some() { 6.0 } else { 0.0 };
         let kgap = if kg.is_some() { 8.0 } else { 0.0 };
-        let content = tg.as_ref().map(|g| g.size().x).unwrap_or(0.0) + ig.as_ref().map(|g| g.size().x).unwrap_or(0.0) + gap + kg.as_ref().map(|g| g.size().x + kgap).unwrap_or(0.0);
+        let content = tg.as_ref().map(|g| g.size().x).unwrap_or(0.0) + ig.as_ref().map(|g| g.size().x).unwrap_or(0.0) + gap + kg.as_ref().map(|g| keycap_w(g) + kgap).unwrap_or(0.0);
         let w = if tg.is_none() { self.h } else { (content + 2.0 * pad).max(self.min_w) };
         let (rect, mut resp) = ui.allocate_exact_size(egui::vec2(w, self.h), Sense::click());
         // Enter on the row with the keyboard cursor presses its first button
@@ -839,14 +839,13 @@ impl egui::Widget for Btn {
                 x += gw + kgap;
             }
             if let Some(g) = kg {
-                let y = rect.center().y - g.size().y / 2.0;
                 let kc = match self.kind {
-                    Kind::Primary if enabled => alpha(pal.on_accent, 0.65),
-                    Kind::Danger | Kind::Tinted(_) if enabled => alpha(fg, 0.65),
-                    _ if enabled => pal.ink_3,
+                    Kind::Primary if enabled => pal.on_accent,
+                    Kind::Danger | Kind::Tinted(_) if enabled => fg,
+                    _ if enabled => pal.ink_2,
                     _ => alpha(pal.ink_3, 0.6),
                 };
-                p.galley_with_override_text_color(egui::pos2(x, y), g, kc);
+                keycap(&p, x, rect.center().y, g, kc);
             }
         }
         if activated {
@@ -1163,6 +1162,76 @@ pub fn segmented(ui: &mut egui::Ui, items: &[&str], sel: Option<usize>, enabled:
     out
 }
 
+// ---------------------------------------------------------------- key hints
+
+const KEYCAP_PAD: f32 = 4.0;
+
+/// A key's name laid out for `keycap`.
+pub fn keycap_galley(p: &egui::Painter, key: &str) -> Arc<egui::Galley> {
+    p.layout_no_wrap(key.to_string(), font_m(T_CAPTION), Color32::PLACEHOLDER)
+}
+
+/// The width a keycap for `g` takes.
+pub fn keycap_w(g: &egui::Galley) -> f32 {
+    (g.size().x + 2.0 * KEYCAP_PAD).max(g.size().y + 2.0)
+}
+
+/// A key hint drawn as a keycap: the key's name in a small bordered chip tinted by `c`, its left edge at `left`,
+/// centred on `cy`. Returns its width.
+pub fn keycap(p: &egui::Painter, left: f32, cy: f32, g: Arc<egui::Galley>, c: Color32) -> f32 {
+    let w = keycap_w(&g);
+    let h = g.size().y + 2.0;
+    let r = Rect::from_min_size(egui::pos2(left, cy - h / 2.0), egui::vec2(w, h));
+    p.rect(r, 3, alpha(c, 0.12), Stroke::new(1.0_f32, alpha(c, 0.45)), egui::StrokeKind::Inside);
+    let gs = g.size();
+    p.galley_with_override_text_color(egui::pos2(r.center().x - gs.x / 2.0, r.center().y - gs.y / 2.0), g, c);
+    w
+}
+
+/// Keys as an inline widget: `spec` is groups split by two spaces, keys in a group by " / " or " – " (drawn as
+/// plain separators); a "key" holding a space is prose and stays plain text ("click the screen").
+pub fn keys(ui: &mut egui::Ui, spec: &str, c: Color32) -> egui::Response {
+    let p = ui.painter().clone();
+    // (text, is a key, gap before)
+    let mut parts: Vec<(String, bool, f32)> = vec![];
+    for (gi, group) in spec.split("  ").filter(|g| !g.trim().is_empty()).enumerate() {
+        let mut rest = group.trim();
+        let mut first = true;
+        loop {
+            let cut = [" / ", " – "].iter().filter_map(|sep| rest.find(sep).map(|i| (i, *sep))).min();
+            let (k, next) = match cut { Some((i, sep)) => (&rest[..i], Some((sep.trim(), &rest[i + sep.len()..]))), None => (rest, None) };
+            let gap = if first { if gi == 0 { 0.0 } else { 8.0 } } else { 4.0 };
+            parts.push((k.to_string(), !k.contains(' '), gap));
+            first = false;
+            match next {
+                Some((sep, r)) => {
+                    parts.push((sep.to_string(), false, 4.0));
+                    rest = r;
+                }
+                None => break,
+            }
+        }
+    }
+    let gs: Vec<_> = parts.iter().map(|(t, k, _)| if *k { keycap_galley(&p, t) } else { p.layout_no_wrap(t.clone(), font(T_SMALL), Color32::PLACEHOLDER) }).collect();
+    let w: f32 = parts.iter().zip(&gs).map(|((_, k, gap), g)| gap + if *k { keycap_w(g) } else { g.size().x }).sum();
+    let h = gs.iter().map(|g| g.size().y + 2.0).fold(16.0, f32::max);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, h), Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let mut x = rect.left();
+        for ((_, k, gap), g) in parts.into_iter().zip(gs) {
+            x += gap;
+            if k {
+                x += keycap(&p, x, rect.center().y, g, c);
+            } else {
+                let gw = g.size().x;
+                p.galley_with_override_text_color(egui::pos2(x, rect.center().y - g.size().y / 2.0), g, pal().ink_3);
+                x += gw;
+            }
+        }
+    }
+    resp
+}
+
 /// A sidebar entry: icon, label, a count or marker, and the key that opens it at the right.
 pub fn nav_item(ui: &mut egui::Ui, ic: &str, label: &str, on: bool, trailing: &str, key: &str) -> bool {
     let pal = pal();
@@ -1179,10 +1248,10 @@ pub fn nav_item(ui: &mut egui::Ui, ic: &str, label: &str, on: bool, trailing: &s
     p.text(rect.left_center() + egui::vec2(30.0, 0.0), egui::Align2::LEFT_CENTER, label, font(T_BODY), col);
     let mut right = rect.right() - 8.0;
     if !key.is_empty() {
-        let g = p.layout_no_wrap(key.to_string(), font(T_CAPTION), pal.ink_3);
-        right -= g.size().x;
-        p.galley(egui::pos2(right, rect.center().y - g.size().y / 2.0), g, pal.ink_3);
-        right -= 10.0;
+        let g = keycap_galley(p, key);
+        right -= keycap_w(&g);
+        keycap(p, right, rect.center().y, g, pal.ink_2);
+        right -= 8.0;
     }
     if !trailing.is_empty() {
         p.text(egui::pos2(right, rect.center().y), egui::Align2::RIGHT_CENTER, trailing, font(T_SMALL), pal.ink_3);
@@ -1205,10 +1274,10 @@ pub fn fold(ui: &mut egui::Ui, title_text: &str, summary: &str, tip: &str, key: 
     p.text(rect.left_center() + egui::vec2(22.0, 0.0), egui::Align2::LEFT_CENTER, title_text, font_sb(T_BODY), pal.ink);
     let mut right = rect.right() - 6.0;
     if !key.is_empty() {
-        let g = p.layout_no_wrap(key.to_string(), font(T_CAPTION), pal.ink_3);
-        right -= g.size().x;
-        p.galley(egui::pos2(right, rect.center().y - g.size().y / 2.0), g, pal.ink_3);
-        right -= 10.0;
+        let g = keycap_galley(p, key);
+        right -= keycap_w(&g);
+        keycap(p, right, rect.center().y, g, pal.ink_2);
+        right -= 8.0;
     }
     if !summary.is_empty() {
         p.text(egui::pos2(right, rect.center().y), egui::Align2::RIGHT_CENTER, summary, font(T_SMALL), pal.ink_3);
@@ -1349,7 +1418,9 @@ pub fn menu_row(ui: &mut egui::Ui, ic: &str, label: &str, hint: &str, enabled: b
     p.text(r.left_center() + egui::vec2(8.0, 0.0), egui::Align2::LEFT_CENTER, ic, ifont(13.0), if enabled && !danger { pal.ink_2 } else { col });
     p.text(r.left_center() + egui::vec2(30.0, 0.0), egui::Align2::LEFT_CENTER, label, font(T_BODY), col);
     if !hint.is_empty() {
-        p.text(r.right_center() - egui::vec2(8.0, 0.0), egui::Align2::RIGHT_CENTER, hint, font(T_CAPTION), pal.ink_3);
+        let g = keycap_galley(p, hint);
+        let kx = r.right() - 8.0 - keycap_w(&g);
+        keycap(p, kx, r.center().y, g, if enabled { pal.ink_2 } else { pal.ink_3 });
     }
     if enabled {
         resp.on_hover_cursor(egui::CursorIcon::PointingHand)
