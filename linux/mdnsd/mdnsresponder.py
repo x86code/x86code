@@ -55,6 +55,9 @@ IF_LOCALONLY = 0xFFFFFFFF
 LOG = os.environ.get("X86SIM_MDNS_LOG") == "1"
 
 
+REG_PROBE_S = 0.75   # mDNSResponder's probing before a registration is answered
+
+
 def log(*a):
     if LOG:
         print(time.strftime("%H:%M:%S"), *a, file=sys.stderr, flush=True)
@@ -230,8 +233,15 @@ class Connection(threading.Thread):
             answer_error(ERR_NONE)
             if not (ipc_flags & IPC_FLAGS_NOREPLY):
                 name = name or socket.gethostname().split(".")[0]
-                self.reply(REPLY[REG_SERVICE], ctx, F_ADD, ifindex, ERR_NONE,
-                           s(name) + s(regtype if regtype.endswith(".") else regtype + ".") + s(domain or "local."))
+                # as mDNSResponder, which answers a registration only once its name is probed (3 probes, 250 ms
+                # apart): an immediate reply raced a client that registers and cancels at once (MCNearbyService-
+                # Advertiser start + stop): it arrived for a registration already torn down and libsystem_dnssd
+                # called its NULL callback (SIGSEGV at pc 0 in DNSServiceProcessResult). reply() drops it once
+                # the client cancelled or closed.
+                t = threading.Timer(REG_PROBE_S, self.reply, (REPLY[REG_SERVICE], ctx, F_ADD, ifindex, ERR_NONE,
+                    s(name) + s(regtype if regtype.endswith(".") else regtype + ".") + s(domain or "local.")))
+                t.daemon = True
+                t.start()
         elif op == REG_RECORD:
             log("register record")
             answer_error(ERR_NONE)
