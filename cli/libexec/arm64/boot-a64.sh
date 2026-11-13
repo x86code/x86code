@@ -574,6 +574,15 @@ for fw in TextToSpeechMauiSupport; do
 	ln -sfn "/Volumes/SystemRoot$(realpath "$X86SIM_RUNTIME")/System/Library/PrivateFrameworks/$fw.framework" \
 		"$DPREFIX/System/Library/PrivateFrameworks/$fw.framework"
 done
+# The SF Symbols catalogs: CoreLocationUI's button drawing (and IconServices, SocialLayer) opens [NSBundle bundleWithPath:
+# @"/System/Library/CoreServices/CoreGlyphs.bundle"], on a Mac the host's copy. Without it -[CLLocationButtonDrawing
+# _computeImageMetrics] bailed before setting its size: CLLocationButton.sizeThatFits was 1x1 (Apple: 204x51).
+for b in CoreGlyphs CoreGlyphsPriority CoreGlyphsPrivate; do
+	[ -d "$X86SIM_RUNTIME/System/Library/CoreServices/$b.bundle" ] || continue
+	mkdir -p "$DPREFIX/System/Library/CoreServices"
+	ln -sfn "/Volumes/SystemRoot$(realpath "$X86SIM_RUNTIME")/System/Library/CoreServices/$b.bundle" \
+		"$DPREFIX/System/Library/CoreServices/$b.bundle"
+done
 # TextToSpeech's voice database (axassetsd, /var/mobile/Library/Accessibility/voicedb.sqlite) is refilled at every
 # start by its loaders, each skipped when com.apple.SpeakSelection's PreferencesLastLoadedOn says it already loaded in
 # this boot: the value is kern.boottime, which here is the Linux host's for every device boot. So after the first
