@@ -249,14 +249,23 @@ void objc_cache_gc_guard(GuestThread &t) {
 // Platforms 1: tvOS / watchOS 27.2 have it at +0xb0b0 (PineBoard and Carousel use the overseer too), so it is found by
 // its first 9 instructions (one hit in each 27.2 runtime's BackBoardServices), else the iOS offset.
 constexpr u64 kUISensorConnect = 0xb22c;  // -[_BKSHIDUISensorOverseer _connectionLock_connectToRemoteServiceIfNeeded]
+// visionOS 27.2: the same function with a longer body (cbz x0 to a farther label: b4001840 at 0x1a4c5d93c), so the
+// cbz's offset is not compared (mask): before, the iOS-offset fallback hit another prologue and every visionOS
+// process logged "prologue mismatch ...; not patched".
 static u64 find_ui_sensor_connect() {
     static const uint32_t sig[] = {0xd102c3ffu, 0xa9075ff8u, 0xa90857f6u, 0xa9094ff4u, 0xa90a7bfdu,
-                                   0x910283fdu, 0xb40016e0u, 0xaa0003f3u, 0x91004000u};
+                                   0x910283fdu, 0xb4000000u, 0xaa0003f3u, 0x91004000u};
+    static const uint32_t mask[] = {~0u, ~0u, ~0u, ~0u, ~0u, ~0u, 0xff00001fu, ~0u, ~0u};
+    constexpr size_t kN = sizeof sig / sizeof sig[0];
     u64 hit = 0;
     int n = 0;
     if (g_bks_hi > g_bks_text)
-        for (u64 a = g_bks_text; a + sizeof sig <= g_bks_hi; a += 4)
-            if (!memcmp((const void *)a, sig, sizeof sig)) { hit = a; n++; }
+        for (u64 a = g_bks_text; a + sizeof sig <= g_bks_hi; a += 4) {
+            const uint32_t *w = (const uint32_t *)a;
+            size_t i = 0;
+            while (i < kN && (w[i] & mask[i]) == sig[i]) i++;
+            if (i == kN) { hit = a; n++; }
+        }
     return n == 1 ? hit : g_bks_text + kUISensorConnect;
 }
 void sim_service_patches(GuestThread &t) {
