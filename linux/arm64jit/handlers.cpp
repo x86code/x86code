@@ -242,8 +242,11 @@ static bool guard_unmap(GuestThread &t, u64 a, u64 len, const char *what, u64 *n
     const u64 end = clip_unmap(a, len);
     *new_len = end - a;
     if (end == a + len) return false;
+    // the guard working as designed (a guest 16K-page free over Darling's 4K-granular mapping), not an error: logged
+    // with X86SIM_A64_STATS only (every visionOS process logged it 8 times)
     static std::atomic<int> n{0};
-    if (n++ < 8)
+    static const bool stats = getenv("X86SIM_A64_STATS") != nullptr;
+    if (stats && n++ < 8)
         logf("%s(%#lx, %#lx) would spill into the next file mapping at %#lx: trimmed (lr %#lx)", what, (unsigned long)a,
              (unsigned long)len, (unsigned long)end, (unsigned long)t.x(30));
     return true;
