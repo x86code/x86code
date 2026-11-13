@@ -329,6 +329,21 @@ void *gh_realloc(void *p, size_t size) {
     return q;
 }
 // memlog line: small chunks carved / blocks on the global free lists (thread caches not counted) / large blocks, MB
+// x86Sim (2026-11-13): fork() safety. libSystem's fork() calls _malloc_fork_prepare / _parent / _child around the
+// syscall (malloc.cpp maps them here). These locks were not held across it: a fork while another thread was inside
+// the guest heap left its lock held in the child, whose next malloc waited forever (tests/arm64/forkstress.c: 3 of 200
+// forks hung in an app). Every heap lock is taken in one order before the fork and released on both sides after.
+void gheap_fork_lock() {
+    g_caches_mu.lock();
+    for (int c = 0; c < kClasses; c++) g_global[c].mu.lock();
+    g_large_mu.lock();
+}
+void gheap_fork_unlock() {
+    g_large_mu.unlock();
+    for (int c = kClasses - 1; c >= 0; c--) g_global[c].mu.unlock();
+    g_caches_mu.unlock();
+}
+
 void gheap_stats() {
     u64 chunks = 0, freeb = 0; std::string top;
     std::vector<std::pair<u64, int>> v;

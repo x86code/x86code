@@ -206,6 +206,14 @@ void h_zone_statistics(GuestThread &t, u32) { if (t.x(1)) memset((void *)t.x(1),
 void h_mstats(GuestThread &t, u32) { if (t.x(8)) memset((void *)t.x(8), 0, 5 * 8); }  // struct mstats: returned via x8
 void h_zone_check(GuestThread &t, u32) { t.set_x(0, 1); }
 void h_malloc_init(GuestThread &t, u32) { t.set_x(0, 0); }
+// x86Sim (2026-11-13): libSystem's fork() calls these around the syscall: the heap's locks (and malloc.cpp's zone
+// lock) are held across it, then released in parent and child (gheap.cpp gheap_fork_lock). They were no-ops.
+// The translation lock first (a translating thread finishes), then the heap's.
+// X86SIM_A64_MALLOC_FORK=0: no-ops as before (bisecting).
+const bool g_fork_hooks = [] { const char *e = getenv("X86SIM_A64_MALLOC_FORK"); return !(e && *e == '0'); }();
+void h_fork_prepare(GuestThread &, u32) { if (g_fork_hooks) { jit_fork_lock(); g_mu.lock(); gheap_fork_lock(); } }
+void h_fork_parent(GuestThread &, u32) { if (g_fork_hooks) { gheap_fork_unlock(); g_mu.unlock(); jit_fork_unlock(); } }
+void h_fork_child(GuestThread &, u32) { if (g_fork_hooks) { gheap_fork_unlock(); g_mu.unlock(); jit_fork_unlock(); } }
 void h_unknown(GuestThread &t, u32 i) {
     static std::mutex mu; static std::set<u32> seen;
     { std::lock_guard l(mu); if (seen.insert(i).second) logf("native malloc: %s not implemented (returns 0)", g_thunks[i].name.c_str()); }
@@ -249,8 +257,8 @@ const std::map<std::string, Handler> &handlers() {
         {"_malloc_zone_unregister", h_noop}, {"_malloc_destroy_zone", h_noop}, {"_malloc_set_zone_name", h_set_zone_name},
         {"_malloc_get_zone_name", h_get_zone_name}, {"_malloc_get_all_zones", h_get_all_zones},
         {"_malloc_zone_statistics", h_zone_statistics}, {"_mstats", h_mstats}, {"_malloc_zone_check", h_zone_check},
-        {"___malloc_init", h_malloc_init}, {"___malloc_late_init", h_noop}, {"__malloc_fork_prepare", h_noop},
-        {"__malloc_fork_parent", h_noop}, {"__malloc_fork_child", h_noop}, {"_malloc_make_purgeable", h_noop},
+        {"___malloc_init", h_malloc_init}, {"___malloc_late_init", h_noop}, {"__malloc_fork_prepare", h_fork_prepare},
+        {"__malloc_fork_parent", h_fork_parent}, {"__malloc_fork_child", h_fork_child}, {"_malloc_make_purgeable", h_noop},
         {"_malloc_make_nonpurgeable", h_zero}, {"_malloc_engaged_nano", h_zero},
         {"_malloc_engaged_secure_allocator", h_zero}, {"_malloc_memory_event_handler", h_noop},
         {"_malloc_enter_process_memory_limit_warn_mode", h_noop}, {"_malloc_zone_print", h_noop},
