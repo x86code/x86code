@@ -92,6 +92,11 @@ DEMAND = set(os.environ.get("X86SIM_JETSAM_DEMAND", "passd,assistant_cdmd,Contex
 # empty database for the rest of the boot (AVSpeechSynthesisVoice.speechVoices() empty). A Mac's simulator never
 # kills it. ~45 MB.
 RESIDENT = set(os.environ.get("X86SIM_JETSAM_RESIDENT", "UserFontManager,fontservicesd,nsurlsessiond,axassetsd").split(",")) - {""}
+# watchOS: chronod serves the watch face's complications, so ClockFace asks for it again at once. Reclaimed, it "came back
+# 0 s after its kill" each time and relaunched ~13 widget extensions, which were killed again 10 s later (52 extension
+# kills in 20 idle minutes, at 30, 60, 120, ... s). iOS reclaims it for good (no face holds it there).
+if "/watchos-" in os.environ.get("X86SIM_RUNTIME", "") and "X86SIM_JETSAM_RESIDENT" not in os.environ:
+    RESIDENT.add("chronod")
 # RAM 4: on-demand daemons that stay dirty (an XPC transaction nobody ends) with nothing to do: reclaimed once CPU-idle for
 # X86SIM_JETSAM_DIRTY_IDLE s anyway, as a device's jetsam takes dirty background daemons under pressure. siriactionsd: a
 # relaunch by a launch event (LaunchServices / Biome / defaults notifications) leaves it dirty for good (~80 MB).
@@ -169,6 +174,8 @@ UISVC = ("Spotlight.app/", "DockFolderViewService.app/")
 UISVC_GRACE = float(os.environ.get("X86SIM_JETSAM_UISVC", "60"))
 _kills = {}       # executable -> quick relaunches so far (each doubles its grace period)
 _killed_at = {}   # executable -> time of its last kill
+_instant = {}     # executable -> relaunches within INSTANT s of a kill
+INSTANT = float(os.environ.get("X86SIM_JETSAM_INSTANT", "5"))
 _seen = {}        # (dpid, start) -> {"bg": since, "clean": since, "cpu": [(t, cpu s)]}
 
 
@@ -413,6 +420,14 @@ def sweep(verbose=False, status=False):
         if k is not None and k < start < k + RELAUNCH:
             _kills[exe] = _kills.get(exe, 0) + 1
             _killed_at[exe] = None
+            # a daemon a client asks for again at once (visionOS pointeruid: back 1 s after each kill, ~0.7 CPU s per
+            # relaunch, at 30, 60, 120, ... s for the whole boot) is in use: twice that fast and it stays for this boot
+            if start < k + INSTANT and ".app/" not in exe and ".appex/" not in exe:
+                _instant[exe] = _instant.get(exe, 0) + 1
+                if _instant[exe] >= 2 and name_of(exe) not in RESIDENT:
+                    RESIDENT.add(name_of(exe))
+                    print("%s jetsam: %s is in use (back at once twice): kept from now on" % (
+                        time.strftime("%H:%M:%S"), name_of(exe)), flush=True)
             print("%s jetsam: %s came back %.0f s after its kill; grace now x%d" % (
                 time.strftime("%H:%M:%S"), name_of(exe), start - k, 2 ** _kills[exe]), flush=True)
         elif k is not None and start >= k + RELAUNCH:

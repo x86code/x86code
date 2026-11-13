@@ -282,6 +282,10 @@ void jitcache_save_if_shared();  // no-op when SHARED=0 or no live shared code
 u64 reserve_aligned(u64 size, u64 mask);  // guest-VM range [12 GB, 63 GB), PROT_NONE
 // gheap.cpp
 void gheap_set_native(void (*nfree)(void *), size_t (*nsize)(const void *));
+void gheap_fork_lock();    // x86Sim: around fork() (gheap.cpp)
+void jit_fork_lock();      // x86Sim: around fork() (jitcache.cpp)
+void jit_fork_unlock();
+void gheap_fork_unlock();
 void *gh_malloc(size_t); void *gh_calloc(size_t, size_t); void *gh_realloc(void *, size_t); void gh_free(void *);
 void *gh_memalign(size_t align, size_t size); size_t gh_size(const void *); size_t gh_good_size(size_t);
 void ax_euid_prepare(const std::string &cache);  // handlers.cpp: libAccessibility's text range for h_geteuid

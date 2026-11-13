@@ -364,6 +364,14 @@ def main():
     # model's file says 3840x2160): the main display takes the device type's own size
     disp = caps.get("capabilities", {}).get("displays") or []
     if disp and str(disp[0].get("width")) != dt["w"]:
+        # the same panel at fewer pixels: its dpi goes down with them, as in Apple's tvOS "at 1080p" profiles (40; the
+        # 4K model's file says 80), which were otherwise identical to ours. tvOS only: Apple's Vision Pro "at
+        # 2732x2048" keeps the full model's 264.
+        ratio = int(dt["w"]) / float(disp[0].get("width") or dt["w"])
+        for k in ("hdpi", "vdpi"):
+            if dt.get("platform") == "tvos" and isinstance(disp[0].get(k), (int, float)):
+                v = disp[0][k] * ratio
+                disp[0][k] = int(v) if float(v).is_integer() else v
         disp[0]["width"], disp[0]["height"] = int(dt["w"]), int(dt["h"])
         sd = caps["capabilities"].get("ScreenDimensionsCapability", {})
         sd["main-screen-width"], sd["main-screen-height"] = dt["w"], dt["h"]

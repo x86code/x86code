@@ -39,6 +39,9 @@ join_prefix_cgroup
 (
 	for _ in $(seq 1 30); do
 		sleep 3
+		# (2026-11-13) a stopped phone's loop ended only after its 90 s: it kept moving the next boot's processes
+		# into this (stopped) scope. It ends with this phone's darlingserver.
+		pgrep -f "darlingserver ${DPREFIX} " > /dev/null || break
 		join_prefix_cgroup
 	done
 ) &

@@ -467,6 +467,18 @@ static void save_if_grown(Dynarmic::A64::Jit::SharedCode &sc, const char *why) {
          (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6);
 }
 
+// x86Sim (2026-11-13): the shared translation lock across a fork() (malloc.cpp's fork hooks): a child forked while
+// another thread translated (Jit::Impl::GetBlock) waited for the lock forever at its first new block.
+static std::shared_ptr<Dynarmic::A64::Jit::SharedCode> g_fork_shared;
+void jit_fork_lock() {
+    g_fork_shared = g_shared.lock();
+    if (g_fork_shared) Dynarmic::A64::Jit::LockShared(*g_fork_shared);
+}
+void jit_fork_unlock() {
+    if (g_fork_shared) Dynarmic::A64::Jit::UnlockShared(*g_fork_shared);
+    g_fork_shared.reset();
+}
+
 void jitcache_set_shared(const std::shared_ptr<Dynarmic::A64::Jit::SharedCode> &sp) {
     g_shared = sp;
     g_saved_blocks = Dynarmic::A64::Jit::GetSharedStats(*sp).blocks;  // what the load brought in

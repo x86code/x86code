@@ -554,6 +554,13 @@ fi
 # the marks of the last boot (Darling pids are reused)
 rm -rf "$DPREFIX/private/var/run/x86sim-suspended" "$DPREFIX/private/var/run/x86sim-jetsam" \
 	"$DPREFIX/private/var/run/x86sim-unsupported.log"
+# libarm64jit's per-process logs (X86SIM_A64_LOG, <exe>.<pid>.log): the last boot's are kept as x86sim-a64.prev, older
+# ones go. They were never removed: ~100 files a boot, 7000 files / 253 MB in a day on an sdkcov device.
+if [ -d "$DPREFIX/private/var/tmp/x86sim-a64" ]; then
+	rm -rf "$DPREFIX/private/var/tmp/x86sim-a64.prev"
+	mv "$DPREFIX/private/var/tmp/x86sim-a64" "$DPREFIX/private/var/tmp/x86sim-a64.prev"
+	mkdir -p "$DPREFIX/private/var/tmp/x86sim-a64"
+fi
 # the Darling pieces our build fixed (libsystem_kernel ...), also into a recreated prefix: cli/libexec/arm64/prefix-heal.sh
 [ "${A64_PREFIX_HEAL:-1}" != 0 ] && sh "$X/cli/libexec/arm64/prefix-heal.sh" "$DPREFIX"
 # Speed 27: frameworks a Mac host has in /System/Library/Frameworks that the simulator opens there by absolute path (not
@@ -573,6 +580,15 @@ for fw in TextToSpeechMauiSupport; do
 	mkdir -p "$DPREFIX/System/Library/PrivateFrameworks"
 	ln -sfn "/Volumes/SystemRoot$(realpath "$X86SIM_RUNTIME")/System/Library/PrivateFrameworks/$fw.framework" \
 		"$DPREFIX/System/Library/PrivateFrameworks/$fw.framework"
+done
+# The SF Symbols catalogs: CoreLocationUI's button drawing (and IconServices, SocialLayer) opens [NSBundle bundleWithPath:
+# @"/System/Library/CoreServices/CoreGlyphs.bundle"], on a Mac the host's copy. Without it -[CLLocationButtonDrawing
+# _computeImageMetrics] bailed before setting its size: CLLocationButton.sizeThatFits was 1x1 (Apple: 204x51).
+for b in CoreGlyphs CoreGlyphsPriority CoreGlyphsPrivate; do
+	[ -d "$X86SIM_RUNTIME/System/Library/CoreServices/$b.bundle" ] || continue
+	mkdir -p "$DPREFIX/System/Library/CoreServices"
+	ln -sfn "/Volumes/SystemRoot$(realpath "$X86SIM_RUNTIME")/System/Library/CoreServices/$b.bundle" \
+		"$DPREFIX/System/Library/CoreServices/$b.bundle"
 done
 # TextToSpeech's voice database (axassetsd, /var/mobile/Library/Accessibility/voicedb.sqlite) is refilled at every
 # start by its loaders, each skipped when com.apple.SpeakSelection's PreferencesLastLoadedOn says it already loaded in
@@ -692,6 +708,8 @@ if [ "${A64_PREFETCH:-1}" != 0 ]; then
 fi
 sleep 3
 (timeout $((SECS + 2)) tail -n +1 -F "$L" 2>/dev/null | grep --line-buffered -v -E "failed lookup|Last log repeated" > "$ST/launchd.log" &)
+# a boot that hangs before home (black, every process idle): diagnostics + one restart (cli/libexec/arm64/bootwatch.sh)
+[ "${A64_BOOTWATCH:-0}" = 1 ] && (bash "$X/cli/libexec/arm64/bootwatch.sh" "$D" "$ST" "$DPREFIX" < /dev/null > /dev/null 2>&1 &)
 sleep "$SECS"
 echo "== spawns/exits"
 grep -E "Successfully spawned|exited due|exited with" "$ST/launchd.log" | sed "s/^[0-9-]* [0-9:.]* //; s/\[[0-9]*\]//g; s/ because.*//; s/, ran for.*//; s/<Notice>: //" | sort | uniq -c | cut -c1-140
