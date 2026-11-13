@@ -708,6 +708,8 @@ if [ "${A64_PREFETCH:-1}" != 0 ]; then
 fi
 sleep 3
 (timeout $((SECS + 2)) tail -n +1 -F "$L" 2>/dev/null | grep --line-buffered -v -E "failed lookup|Last log repeated" > "$ST/launchd.log" &)
+# a boot that hangs before home (black, every process idle): diagnostics + one restart (cli/libexec/arm64/bootwatch.sh)
+[ "${A64_BOOTWATCH:-0}" = 1 ] && (bash "$X/cli/libexec/arm64/bootwatch.sh" "$D" "$ST" "$DPREFIX" < /dev/null > /dev/null 2>&1 &)
 sleep "$SECS"
 echo "== spawns/exits"
 grep -E "Successfully spawned|exited due|exited with" "$ST/launchd.log" | sed "s/^[0-9-]* [0-9:.]* //; s/\[[0-9]*\]//g; s/ because.*//; s/, ran for.*//; s/<Notice>: //" | sort | uniq -c | cut -c1-140
