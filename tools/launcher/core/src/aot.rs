@@ -325,7 +325,25 @@ const STUB_BASE: u64 = 0x2_FFF0_0000;
 const STUB_SLOT: u64 = 0x4_0000;
 fn stub_sources(p: &Paths, uuid: &str) -> Vec<discover::Source> {
     let image = key::image_name(uuid, key::build_id(&p.placement()));
-    let hash = std::fs::read_to_string(p.jc.join(image.replace(".aot", ".stubs"))).unwrap_or_default();
+    let mut hash = std::fs::read_to_string(p.jc.join(image.replace(".aot", ".stubs"))).unwrap_or_default();
+    // 2026-11-13: a new placement (an app install) is a new key, whose .stubs file the first process started under it
+    // writes. An update before that (appinstall's) planned no stub chunks, so the image left out the libsystem stub
+    // dylibs every process calls (1169 of 1172 chunks on visionOS): every process then translated and linked them
+    // itself, ~50 MB more each (idle 1.2 -> 2.9-3.1 GB). The stubs' code hash does not depend on the placement
+    // (every key of a runtime records the same one), so the newest .stubs of this cache stands in; the file itself is
+    // still left to the first process (it records what the running libarm64jit really has).
+    if hash.trim().is_empty() {
+        let newest = std::fs::read_dir(&p.jc)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(uuid) && e.file_name().to_string_lossy().ends_with(".stubs"))
+            .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+            .max_by_key(|(t, _)| *t);
+        if let Some((_, f)) = newest {
+            hash = std::fs::read_to_string(f).unwrap_or_default();
+        }
+    }
     let hash = hash.trim();
     if hash.is_empty() {
         return vec![];
@@ -447,6 +465,13 @@ pub fn plan(p: &Paths, cfg: &Config) -> Result<Plan> {
         .collect();
     // scope
     let loaded: HashSet<String> = if cfg.scope == "loaded" { dependency_closure(&cache, &placed_deps) } else { HashSet::new() };
+    if std::env::var_os("X86SIM_AOT_DEBUG").is_some() && cfg.scope == "hot" {
+        for c in chunks.iter().filter(|c| c.hot.is_empty() && !whole_static(c)) {
+            if let Some(r) = man0.chunks.get(&c.src.name).filter(|r| r.file.is_some() && r.slot_size > 0) {
+                eprintln!("plan: built chunk with no training now (dropped): {} (state {}, {} blocks)", c.src.name, r.state, r.blocks);
+            }
+        }
+    }
     chunks.retain(|c| match cfg.scope.as_str() {
         // Speed 31: app-tier chunks always (an app on the image never trains: it would translate its own code live)
         "hot" => !c.hot.is_empty() || whole_static(c),
@@ -468,6 +493,16 @@ pub fn plan(p: &Paths, cfg: &Config) -> Result<Plan> {
         chunks.sort_by_key(|c| c.src.name.ends_with(COLD_SUFFIX));
     }
     let build = key::build_id(&p.placement());
+    // X86SIM_AOT_DEBUG_PLAN=<file>: append this plan's chunks (want > 0) with their hot counts, to compare two plans
+    if let Some(f) = std::env::var_os("X86SIM_AOT_DEBUG_PLAN") {
+        use std::io::Write;
+        if let Ok(mut w) = std::fs::OpenOptions::new().create(true).append(true).open(f) {
+            let _ = writeln!(w, "== plan {} pid {} build {build:x}", now(), std::process::id());
+            for c in chunks.iter().filter(|c| c.want > 0) {
+                let _ = writeln!(w, "{}\t{}\t{}\t{:?}", c.src.name, c.hot.len(), c.want, c.src.kind);
+            }
+        }
+    }
     Ok(Plan { image_name: key::image_name(&uuid, build), cache_uuid: uuid, build, chunks, hot, cfg: cfg.clone() })
 }
 
@@ -493,6 +528,9 @@ fn is_system_app_exe(key: &str) -> bool {
 fn trim_to_slab(chunks: &mut Vec<PlanChunk>) -> bool {
     let room = (SLAB_MB - FULL_LIVE_ROOM_MB - 8) << 20;
     let total: u64 = chunks.iter().map(|c| c.want).sum();
+    if std::env::var_os("X86SIM_AOT_DEBUG").is_some() {
+        eprintln!("trim_to_slab: chunks want {} MB of {} MB ({} chunks)", total >> 20, room >> 20, chunks.len());
+    }
     if total <= room {
         return false;
     }
@@ -1386,8 +1424,19 @@ fn build_once(p: &Paths, cfg: &Config, opts: &BuildOpts, on_progress: &mut dyn F
     }
     prog.state = "assembling".into();
     publish(&mut prog, on_progress);
+    let prev_chunks = man.image.as_ref().map(|i| i.chunks);
     let img = assemble(p, &plan, &mut man)?;
     write_json(&p.manifest(), &man)?;
+    // 2026-11-13: an image with fewer chunks than the one it replaces cost every process ~50 MB (the 3 stub-dylib
+    // chunks left out after an install, see stub_sources). An --only update (an app install) should never shrink it:
+    // say so if one does.
+    if opts.only.is_some() && prev_chunks.is_some_and(|n| img.chunks < n) {
+        eprintln!(
+            "x86sim-aot: this --only image has {} chunks, the one before had {}: run `x86sim-aot update` (processes on an incomplete image use more memory)",
+            img.chunks,
+            prev_chunks.unwrap_or(0)
+        );
+    }
     let _ = std::fs::remove_dir_all(&work);
     prog.state = "done".into();
     prog.message = format!("image {} ({:.0} MB code, {} chunks, {} blocks)", img.file, img.code_size as f64 / 1048576.0, img.chunks, img.blocks);
@@ -1462,6 +1511,17 @@ impl ChunkFile {
 }
 
 pub fn assemble(p: &Paths, plan: &Plan, man: &mut Manifest) -> Result<Image> {
+    // X86SIM_AOT_DEBUG=1: the plan's chunks this image leaves out, and why
+    if std::env::var_os("X86SIM_AOT_DEBUG").is_some() {
+        for c in plan.chunks.iter().filter(|c| c.want > 0) {
+            match man.chunks.get(&c.src.name) {
+                None => eprintln!("assemble: out (no record): {}", c.src.name),
+                Some(r) if r.key != c.key => eprintln!("assemble: out (key {} != plan {}): {}", r.key, c.key, c.src.name),
+                Some(r) if r.file.is_none() => eprintln!("assemble: out (no file, state {} slot {}): {}", r.state, r.slot_size, c.src.name),
+                _ => {}
+            }
+        }
+    }
     let mut recs: Vec<ChunkRec> = plan.built_records(man).into_iter().cloned().collect();
     recs.sort_by_key(|r| r.slot_off);
     let files: Vec<ChunkFile> = recs.iter().map(|r| ChunkFile::open(&p.chunks().join(r.file.as_ref().unwrap()))).collect::<Result<_>>()?;
