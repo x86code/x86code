@@ -136,11 +136,18 @@ fn prof_dump_on_request() {
 /// path maps again each tick stays) since the last trim, their page-table entries are dropped
 /// (MADV_DONTNEED: the pages stay in the page cache, a later touch maps them again without I/O). Only mappings with
 /// no anonymous (written, copy-on-write) page: relocated RELRO / data pages are never touched. MTLVK_FILETRIM=0 off.
+/// A busy tick counts as quiet too once the file RSS has held within 1 MB for STEADY_TICKS ticks (30 s at the default
+/// 5 s): visionOS's compositor keeps mtlvk at ~9% CPU rendering every frame, so the CPU test alone never let it trim
+/// (NVIDIA's compiler stayed at ~34 MB, mapped once at the boot's pipeline compiles); a steady render loop maps no new
+/// file pages, and after a trim it maps its frame path's few MB again.
 pub struct FileTrim {
     last_cpu: u64,
     base_kb: u64,
     grow_kb: u64,
+    last_kb: u64,
+    steady: u32,
 }
+const STEADY_TICKS: u32 = 6;
 fn cpu_ticks() -> u64 {
     let s = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
     let rest = s.rsplit_once(')').map(|(_, r)| r).unwrap_or("");
@@ -158,7 +165,7 @@ fn rss_file_kb() -> u64 {
 }
 impl FileTrim {
     pub fn new(grow_kb: u64) -> Self {
-        FileTrim { last_cpu: cpu_ticks(), base_kb: 0, grow_kb }
+        FileTrim { last_cpu: cpu_ticks(), base_kb: 0, grow_kb, last_kb: 0, steady: 0 }
     }
     /// Returns (RssFile before, after) in KiB when it trimmed.
     pub fn tick(&mut self, secs: f64) -> Option<(u64, u64)> {
@@ -168,13 +175,17 @@ impl FileTrim {
         let busy = (cpu.saturating_sub(self.last_cpu)) as f64 / hz / secs;
         self.last_cpu = cpu;
         let now = rss_file_kb();
-        if busy >= 0.03 || now < self.base_kb + self.grow_kb {
+        self.steady = if now.abs_diff(self.last_kb) < 1024 { self.steady + 1 } else { 0 };
+        self.last_kb = now;
+        if (busy >= 0.03 && self.steady < STEADY_TICKS) || now < self.base_kb + self.grow_kb {
             self.base_kb = self.base_kb.min(now);
             return None;
         }
         trim_file_pages();
         let after = rss_file_kb();
         self.base_kb = after;
+        self.last_kb = after;
+        self.steady = 0;
         Some((now, after))
     }
 }
