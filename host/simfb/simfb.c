@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -215,6 +216,13 @@ static void fill_mode(SFBDisplayRef d, SFBDisplayMode* m) {
 	m->pixel_format = 'BGRA';
 	m->colorspace = 1;
 	m->refresh_centihz = 6000;
+	// x86Sim: 0x0C is the mode's preferred UI scale (QuartzCore -[CADisplayMode preferredScale] returns it when
+	// non-zero; else 2 for a virtual device or a mode at least 1080 high). It was 0, so the 1080p Apple TV's mode said
+	// 2 and FrontBoard made its display "960x540@2x": UIScreen.scale 2 (Apple: 1), HeadBoard asked for 3840x2160
+	// buffers, MapKit refused snapshots ("Invalid content scale"). The device type's scale, as the Mac's simulator.
+	const char* sc = getenv("SIMULATOR_MAINSCREEN_SCALE");
+	long scale = sc ? lround(strtod(sc, NULL)) : 0;
+	m->unknown_0c = scale > 0 && scale <= 4 ? (uint32_t)scale : 0;
 	m->is_preferred = 1;
 	m->is_current = 1;
 }
