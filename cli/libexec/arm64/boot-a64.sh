@@ -554,6 +554,13 @@ fi
 # the marks of the last boot (Darling pids are reused)
 rm -rf "$DPREFIX/private/var/run/x86sim-suspended" "$DPREFIX/private/var/run/x86sim-jetsam" \
 	"$DPREFIX/private/var/run/x86sim-unsupported.log"
+# libarm64jit's per-process logs (X86SIM_A64_LOG, <exe>.<pid>.log): the last boot's are kept as x86sim-a64.prev, older
+# ones go. They were never removed: ~100 files a boot, 7000 files / 253 MB in a day on an sdkcov device.
+if [ -d "$DPREFIX/private/var/tmp/x86sim-a64" ]; then
+	rm -rf "$DPREFIX/private/var/tmp/x86sim-a64.prev"
+	mv "$DPREFIX/private/var/tmp/x86sim-a64" "$DPREFIX/private/var/tmp/x86sim-a64.prev"
+	mkdir -p "$DPREFIX/private/var/tmp/x86sim-a64"
+fi
 # the Darling pieces our build fixed (libsystem_kernel ...), also into a recreated prefix: cli/libexec/arm64/prefix-heal.sh
 [ "${A64_PREFIX_HEAL:-1}" != 0 ] && sh "$X/cli/libexec/arm64/prefix-heal.sh" "$DPREFIX"
 # Speed 27: frameworks a Mac host has in /System/Library/Frameworks that the simulator opens there by absolute path (not
