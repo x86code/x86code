@@ -988,6 +988,15 @@ static void shim_quiet_os_log(void)
 	// looked up com.apple.diagnosticd for every message (Spotlight and the Maps widget: ~45,000 failed lookups in
 	// a few minutes, darlingserver at 90% CPU and launchd_sim at 40%, the UI stalled). libtrace reads the
 	// variable at its first log call, after this constructor.
+	// x86Sim: installed apps (and their extensions: data/Containers/Bundle/Application/...) log as on Apple's simulator,
+	// into their firehose buffer, which logd drains into the device's data/var/db/diagnostics (logd and logd_helper
+	// are boot-a64.sh MIN jobs). OSLogStore(scope: .currentProcessIdentifier) reads them back from there through
+	// OSLog's OSLogService; with os_log disabled it found nothing (tests/apps/sdkcov func:OSLog). The runtime's own
+	// apps and extensions stay quiet (their volume under the JIT, see above).
+	char exe[1024];
+	uint32_t exelen = sizeof exe;
+	if (_NSGetExecutablePath(exe, &exelen) == 0 && strstr(exe, "/Containers/Bundle/Application/"))
+		return;
 	if (!getenv("OS_ACTIVITY_MODE") && !getenv("OS_ACTIVITY_DT_MODE"))
 		setenv("OS_ACTIVITY_MODE", "disable", 1);
 }

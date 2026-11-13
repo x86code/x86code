@@ -129,7 +129,7 @@ MIN="com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.appl
 	com.apple.mobilegestalt.xpc com.apple.UserEventAgent-System com.apple.securityd com.apple.trustd com.apple.syslogd
 	com.apple.mobile.installd com.apple.systemstatusd com.apple.distnoted.xpc.daemon com.apple.tccd
 	com.apple.fontservicesd com.apple.iconservices.iconservicesagent com.apple.pluginkit.pkd
-	com.apple.cloudd com.apple.diagnosticd com.apple.nsurlsessiond com.apple.appprotectiond"
+	com.apple.cloudd com.apple.diagnosticd com.apple.nsurlsessiond com.apple.appprotectiond com.apple.logd com.apple.logd_helper"
 # x86Sim: lean UI set (every arm64 process costs 150-450 MB under the JIT). No chronod (widget extensions, +~0.8 GB);
 # A64_JOBS=full adds it (A64_KEEP_WIDGETS=1 keeps the home widgets).
 # A64_JOBS=slim drops sleepd + usernotificationsd (~400-450 MB RSS each under the JIT); home + one app
@@ -138,6 +138,11 @@ MIN="com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.appl
 # in the job set, securityd busy-retries those Mach lookups (~1.9 cores idle). Those two stay
 # runnable (not parked): a parked MachServices daemon accepts the lookup then hangs clients forever.
 # nsurlsessiond: without it cloudd busy-retries getActiveSessionIdentifiers (~70% of a core + huge log).
+# logd + logd_helper (on demand): the log store (data/var/db/diagnostics, uuidtext). Installed apps log into their
+# firehose buffer as on Apple's simulator (simshim keeps os_log on for them only) and read it back with OSLogStore
+# (scope .currentProcessIdentifier: OSLog's OSLogService reads logd's store). logd asks logd_helper to harvest each
+# sender's UUID text (format strings; the dyld cache's at boot): without it every harvest failed ("Error connecting to
+# logd_helper") and stored entries came back without their messages ("<compose failure [shared UUID]>"). ~15 MB each.
 # appprotectiond (Speed 5): without it SpringBoard's ServerBackedClientPolicyStore retries com.apple.appprotectiond.read
 # ~5x/s for the whole boot (on-demand, EnablePressuredExit: idle cost only once looked up).
 # openurl: com.x86sim.openurl (arm64 build) so simtouch.py app/openurl works on the a64 device.
