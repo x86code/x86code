@@ -13,6 +13,7 @@ CoreSimulator produced on a Mac (research/macref/launchd_bootstrap.xml).
 import json
 import os
 import plistlib
+import re
 import shutil
 import sys
 import uuid
@@ -210,6 +211,33 @@ def main():
     if "Session Language" not in prefs:
         prefs["Session Language"] = "en-US"
         with open(ap, "wb") as f:
+            plistlib.dump(prefs, f, fmt=plistlib.FMT_BINARY)
+
+    # x86Sim: the device's language and region, which CoreSimulator writes into a new device's .GlobalPreferences
+    # (AppleLanguages + AppleLocale, from the Mac user's settings; seen in a fresh `simctl create` before any boot).
+    # Here from the Linux locale, only when the device has none yet. Without them (the tvOS and watchOS devices had
+    # none) the locale was en_001 (region "001", the world) and region-dependent API failed: DataDetection found no
+    # phone numbers, CNPostalAddressFormatter returned "" for an address without a country.
+    gp = os.path.join(data, "Library/Preferences/.GlobalPreferences.plist")
+    try:
+        with open(gp, "rb") as f:
+            prefs = plistlib.load(f)
+    except FileNotFoundError:
+        prefs = {}
+    except Exception:
+        prefs = None  # unreadable: left alone
+    if prefs is not None and ("AppleLanguages" not in prefs or "AppleLocale" not in prefs):
+        loc = ""
+        for v in ("LC_ALL", "LC_MESSAGES", "LANG"):
+            loc = os.environ.get(v, "")
+            if loc:
+                break
+        loc = loc.split(".")[0].split("@")[0]
+        if not re.fullmatch(r"[a-z]{2,3}_[A-Z]{2}", loc):
+            loc = "en_US"
+        prefs.setdefault("AppleLocale", loc)
+        prefs.setdefault("AppleLanguages", [loc.replace("_", "-")])
+        with open(gp, "wb") as f:
             plistlib.dump(prefs, f, fmt=plistlib.FMT_BINARY)
 
     daemons = device + "/LaunchDaemons"

@@ -24,6 +24,7 @@ coverage), **F** = faithful fix listed for contrast because it replaced an earli
 | Device type (CoreSimulator's `.simdevicetype`: capabilities.plist via `SIMULATOR_CAPABILITIES`) | cli/lib/devicetypes-a64.json, cli/lib/devicetype-*.json, mksimdevice.py | The models in devicetypes-a64.json (`<device>/model`). The profile's other parts (chrome, framebuffer mask PDF, sensor-bar image) are not used. |
 | Host /System/Library lookups by absolute path | cli/libexec/arm64/boot-a64.sh (links into the Darling prefix) | CoreSpotlight.framework (the runtime's copy) and host data fetched from a Mac by fetch-macos-host.sh (GeoServicesData); others the simulator might open on the host path are absent. |
 | Host time zone (/etc/localtime) | cli/libexec/arm64/boot-inner.sh | Links the container's /private/etc/localtime to Linux's zone. |
+| A new device's language and region (CoreSimulator writes `AppleLanguages` / `AppleLocale` into its `.GlobalPreferences` from the Mac user's settings) | cli/libexec/mksimdevice.py | From the Linux locale (`LC_ALL` / `LC_MESSAGES` / `LANG`), `en_US` otherwise; written only when the device has none. Without them the tvOS / watchOS devices ran as `en_001` (region "001"): no phone numbers from DataDetection, an empty CNPostalAddressFormatter. |
 | Host macOS version seen by simulator processes | Darling sysctl_kern.c: kern.osproductversion = 26.4 for iOS, tvOS and watchOS simulator processes | A fixed value; the real host is Linux. |
 
 ## Workarounds in the simulator processes (W)
