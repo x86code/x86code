@@ -77,6 +77,8 @@ extern IOHIDEventRef IOHIDEventCreateScrollEvent(CFAllocatorRef, uint64_t ts, IO
 	IOOptionBits options);
 extern IOHIDEventRef IOHIDEventCreateVendorDefinedEvent(CFAllocatorRef, uint64_t ts, uint32_t page, uint32_t usage, uint32_t version,
 	const uint8_t* data, CFIndex length, IOOptionBits options);
+extern IOHIDEventRef IOHIDEventCreateButtonEvent(CFAllocatorRef, uint64_t ts, uint32_t buttonMask, IOHIDFloat pressure, IOOptionBits options);
+extern CFDataRef IOCFSerialize(CFTypeRef object, CFOptionFlags options);
 
 #define kDigitizerTransducerHand 3
 #define kDigitizerRange 0x1
@@ -134,7 +136,7 @@ typedef struct {
 
 static VService touch_svc, buttons_svc, keyboard_svc;
 // Models 2: a device with two integrated displays (capabilities) gets a touchscreen per extra display and a hinge
-static VService inner_touch_svc, hinge_svc;
+static VService inner_touch_svc, hinge_svc, avp_svc;
 static uint32_t inner_display_id;
 static VService* cur_touch = &touch_svc;   // the touchscreen of the command being handled (@<screenID> prefix)
 // Platforms 1: an Apple Watch's Digital Crown, as Apple's watchOS SimulatorHID registers it
@@ -293,6 +295,34 @@ static IOHIDEventRef hinge_event(void) {
 		if (c) { IOHIDEventAppendEvent(e, c, 0); CFRelease(c); }
 	}
 	return e;
+}
+// Models 2: the hinge as Apple's Simulator gives it. The Duo's runtime (24B91016s) has locationd's
+// CMDeviceStateRelayManager: its CLAVPMonitor matches a service {0xff61, 0x5b} and takes vendor-defined events from it
+// whose data is an IOCFSerialize'd dictionary (at most 256 bytes) {source, type, value}: "hinge-slider-control" /
+// "range" / angle in degrees, "orientation-picker-control" / "enum" / "portrait" (also landscape-left, landscape-right,
+// faceup, facedown, ambiguous); a button event (type 3) carries the standby state in field (3 << 16) | 2. Once it has
+// angle, orientation and standby, the relay interpolates the angle and publishes it on its own virtual services
+// "CoreMotion_DeviceStateRelay_Crane" {0xff0c, 0x21} and "_DeviceState" {0xff0c, 0x22}. CoreMotion's angle notifier
+// in SpringBoard then reads the relay and ignored hinge_svc: with locationd running (feature "location") the fold
+// went nowhere. hinge_svc stays for boots without locationd, where it is the only hinge.
+static void avp_send(NSDictionary* d) {
+	if (!avp_svc.service) return;
+	CFDataRef data = IOCFSerialize((CFTypeRef)d, 0);
+	if (!data) { slog("avp: IOCFSerialize failed"); return; }
+	IOHIDEventRef e = IOHIDEventCreateVendorDefinedEvent(kCFAllocatorDefault, mach_absolute_time(), 0xff61, 0x5b, 0,
+		CFDataGetBytePtr(data), CFDataGetLength(data), 0);
+	CFRelease(data);
+	dispatch_event(&avp_svc, e);
+}
+static void avp_send_angle(double deg) {
+	avp_send(@{ @"source": @"hinge-slider-control", @"type": @"range", @"value": @(deg) });
+}
+// the inputs besides the angle the relay waits for: portrait, not in standby
+static void avp_send_pose(void) {
+	if (!avp_svc.service) return;
+	IOHIDEventRef b = IOHIDEventCreateButtonEvent(kCFAllocatorDefault, mach_absolute_time(), 0, 0, 0);
+	if (b) { IOHIDEventSetIntegerValue(b, (3 << 16) | 2, 0); dispatch_event(&avp_svc, b); }
+	avp_send(@{ @"source": @"orientation-picker-control", @"type": @"enum", @"value": @"portrait" });
 }
 static IOHIDEventSystemRef_ hid_system;
 
@@ -531,11 +561,13 @@ static void handle_line(char* line, Client* cl) {
 		double from = hinge_deg;
 		int steps = ms > 0 ? (ms + 9) / 10 : 0;
 		slog("hinge %.1f -> %.1f in %d ms", from, to, ms);
+		avp_send_pose();   // the relay's other inputs (it may have started after the last command)
 		for (int i = 1; i <= steps; i++) {
 			hinge_deg = from + (to - from) * i / steps;
 			hinge_vel = (to - from) * 1000.0 / ms;
 			hinge_phase = i == 1 ? 1 : 2;
 			dispatch_event(&hinge_svc, hinge_event());
+			avp_send_angle(hinge_deg);   // as Simulator's hinge slider while it is dragged
 			if (i == 1) post_device_state(hinge_deg);
 			pthread_mutex_unlock(&cmd_mu);
 			usleep(10000);
@@ -543,6 +575,7 @@ static void handle_line(char* line, Client* cl) {
 		}
 		hinge_deg = to; hinge_vel = 0; hinge_phase = 4;
 		dispatch_event(&hinge_svc, hinge_event());
+		avp_send_angle(to);
 		hinge_phase = 2;
 		post_device_state(hinge_deg);
 		return;
@@ -883,6 +916,18 @@ static void* listen_thread(void* arg) {
 			add_service(system, &inner_touch_svc);
 			add_service(system, &hinge_svc);
 			write_hinge_file(hinge_deg);
+			avp_svc = (VService){ "avp", 0x7863000000000009ull, make_props(@"x86Sim AVP", 0xff61, 0x5b, nil) };
+			add_service(system, &avp_svc);
+			// the relay has no state until it gets all three inputs; locationd starts during the boot, after us:
+			// the boot pose a few times over its first two minutes
+			for (int i = 0; i < 6; i++)
+				dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 + i * 20) * NSEC_PER_SEC),
+					dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+						pthread_mutex_lock(&cmd_mu);
+						avp_send_pose();
+						avp_send_angle(hinge_deg);
+						pthread_mutex_unlock(&cmd_mu);
+					});
 		}
 	}
 	// x86Sim arm64: an attached keyboard service puts UIKit in hardware-keyboard mode, so a text field never shows the

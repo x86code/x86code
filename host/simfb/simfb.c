@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -215,6 +216,13 @@ static void fill_mode(SFBDisplayRef d, SFBDisplayMode* m) {
 	m->pixel_format = 'BGRA';
 	m->colorspace = 1;
 	m->refresh_centihz = 6000;
+	// x86Sim: 0x0C is the mode's preferred UI scale (QuartzCore -[CADisplayMode preferredScale] returns it when
+	// non-zero; else 2 for a virtual device or a mode at least 1080 high). It was 0, so the 1080p Apple TV's mode said
+	// 2 and FrontBoard made its display "960x540@2x": UIScreen.scale 2 (Apple: 1), HeadBoard asked for 3840x2160
+	// buffers, MapKit refused snapshots ("Invalid content scale"). The device type's scale, as the Mac's simulator.
+	const char* sc = getenv("SIMULATOR_MAINSCREEN_SCALE");
+	long scale = sc ? lround(strtod(sc, NULL)) : 0;
+	m->unknown_0c = scale > 0 && scale <= 4 ? (uint32_t)scale : 0;
 	m->is_preferred = 1;
 	m->is_current = 1;
 }
@@ -614,21 +622,31 @@ static void hooked_commit(id self, SEL cmd) {
 	((void (*)(id, SEL, void (^)(id)))objc_msgSend)(self, sel_registerName("addCompletedHandler:"), h);
 	((void (*)(id, SEL))orig_commit)(self, cmd);
 }
+// x86Sim: under a lock. Each display's swapchain calls SwapBegin on its own thread, so on a two-display device
+// (iPhone Duo) two threads got past an unlocked `done` together: the second found hooked_commit already added,
+// method_setImplementation returned it as the "original", and every commit recursed into itself until the stack
+// overflowed (backboardd SIGSEGV right after both swapchains were made, GitHub issue #2).
 static void gpu_hook(void) {   // MTLSimDriver may load after us: retried at every SwapBegin until found
-	static bool done;
+	static pthread_mutex_t hook_lock = PTHREAD_MUTEX_INITIALIZER;
+	static _Atomic bool done;
 	if (done) return;
-	Class c = objc_getClass("MTLSimCommandBuffer");
-	if (!c) return;
+	pthread_mutex_lock(&hook_lock);
+	Class c = done ? Nil : objc_getClass("MTLSimCommandBuffer");
+	if (!c) { pthread_mutex_unlock(&hook_lock); return; }
 	done = true;
 	SEL sel = sel_registerName("commit");
 	Method m = class_getInstanceMethod(c, sel);   // inherited from Metal's _MTLCommandBuffer
-	if (!m) return;
-	orig_commit = method_getImplementation(m);
-	// override on MTLSimCommandBuffer only (class_addMethod), so other _MTLCommandBuffer subclasses keep theirs
-	if (!class_addMethod(c, sel, (IMP)hooked_commit, method_getTypeEncoding(m))) {
-		orig_commit = method_setImplementation(class_getInstanceMethod(c, sel), (IMP)hooked_commit);
+	IMP cur = m ? method_getImplementation(m) : NULL;
+	if (cur && cur != (IMP)hooked_commit) {
+		orig_commit = cur;
+		// override on MTLSimCommandBuffer only (class_addMethod), so other _MTLCommandBuffer subclasses keep theirs
+		if (!class_addMethod(c, sel, (IMP)hooked_commit, method_getTypeEncoding(m))) {
+			IMP prev = method_setImplementation(class_getInstanceMethod(c, sel), (IMP)hooked_commit);
+			if (prev != (IMP)hooked_commit) orig_commit = prev;
+		}
+		fprintf(stderr, "simfb: presents wait for GPU completion of MTLSimCommandBuffers\n");
 	}
-	fprintf(stderr, "simfb: presents wait for GPU completion of MTLSimCommandBuffers\n");
+	pthread_mutex_unlock(&hook_lock);
 }
 // a present still waiting after 1 s (e.g. mtlvk died and completions never come) is copied anyway, with the older ones
 static void present_watchdog(struct disp* D, uint64_t id) {

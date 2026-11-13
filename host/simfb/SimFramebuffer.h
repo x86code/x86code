@@ -226,7 +226,7 @@ typedef struct { SimPoint origin; SimSize size; } SimRect;
 typedef struct SFBDisplayMode {
     uint32_t mode_id;        /* 0x00 UNCERTAIN meaning (index/id); CA ignores          */
     SimSize  size;           /* 0x04 width, 0x08 height (pixels). CA: 14-bit fields     */
-    uint32_t unknown_0c;     /* 0x0C UNCERTAIN (CA copies into SimDisplay, unused here)*/
+    uint32_t unknown_0c;     /* 0x0C INFERRED: preferred UI scale (-[CADisplayMode preferredScale] when non-zero) */
     uint32_t unknown_10;     /* 0x10 UNCERTAIN                                          */
     uint32_t pixel_format;   /* 0x14 INFERRED: IOSurface fourcc passed to CA            */
                              /*      allocate_surface. Use 'BGRA' = 0x42475241.         */
