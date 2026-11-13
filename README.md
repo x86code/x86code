@@ -2,7 +2,7 @@
 
 # x86Sim
 
-**Apple's iOS, iPadOS, tvOS and watchOS simulators on x86-64 Linux.**
+**Apple's iOS, iPadOS, tvOS, watchOS and visionOS simulators on x86-64 Linux.**
 
 [![Latest release](https://img.shields.io/github/v/release/x86sim/x86sim?label=release)](https://github.com/x86sim/x86sim/releases/latest)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
@@ -26,8 +26,8 @@ from scripts or by an AI agent. No Mac and no Apple ID are needed.
 
 **Devices**
 
-- iPhone, iPad, Apple TV and Apple Watch: 80 device models, including the dual-screen iPhone Duo, which folds and
-  unfolds.
+- iPhone, iPad, Apple TV, Apple Watch and Apple Vision Pro: 82 device models, including the dual-screen iPhone
+  Duo, which folds and unfolds.
 - Several devices at once. Each runs in its own container with its own apps, data and settings; starting or stopping
   one leaves the others alone.
 - The stock system apps of each runtime, such as Settings, Safari, Photos, Files, Maps and Health.
@@ -47,7 +47,7 @@ from scripts or by an AI agent. No Mac and no Apple ID are needed.
 - Touch with the mouse: tap, swipe, edge gestures, pinch and two-finger scroll. Your keyboard types into the device,
   and Ctrl+V pastes from the Linux clipboard.
 - Home, lock and volume buttons; an on-screen Siri Remote for Apple TV; a Digital Crown and side button for Apple
-  Watch.
+  Watch; look-and-pinch for Apple Vision Pro, driven by the mouse.
 
 **Performance and memory**
 
@@ -65,15 +65,18 @@ from scripts or by an AI agent. No Mac and no Apple ID are needed.
   opening URLs, and adding photos and videos to the Photos library.
 - Screenshots and H.264 / HEVC video recording.
 - Scripted input: tap, swipe, pinch, type, hardware keys, Digital Crown.
-- Per-service logs for every device, with filtering.
+- Per-service logs for every device, with filtering. Installed apps' `os_log` / `Logger` output is stored and can be
+  read back with `OSLogStore`.
 
 **Setup and updates**
 
 - One AppImage. A setup page checks the computer, downloads a runtime from Apple, pre-translates it and creates the
   first device.
 - No root where unprivileged user namespaces are available.
-- Runtimes are managed on a Versions page: download, resume and remove iOS, tvOS and watchOS versions.
+- Runtimes are managed on a Versions page: download, resume and remove iOS, tvOS, watchOS and visionOS versions.
 - The AppImage updates itself, on a stable or a pre-release channel.
+- The launcher follows the Omarchy theme live (or the desktop's light / dark setting), and every page can be driven
+  from the keyboard: `?` lists the shortcuts.
 
 <table>
 <tr>
@@ -92,6 +95,14 @@ from scripts or by an AI agent. No Mac and no Apple ID are needed.
 <td align="center"><sub>Apple TV</sub></td>
 <td align="center"><sub>Apple Watch</sub></td>
 </tr>
+<tr>
+<td width="50%"><img src="docs/screens/launcher-vision-pro.webp" alt="An Apple Vision Pro in the launcher, showing its Home View"></td>
+<td width="50%"><img src="docs/screens/launcher-keys.webp" alt="The launcher's keyboard shortcuts"></td>
+</tr>
+<tr>
+<td align="center"><sub>Apple Vision Pro</sub></td>
+<td align="center"><sub>Driven from the keyboard</sub></td>
+</tr>
 </table>
 
 ## Quick start
@@ -109,7 +120,8 @@ Where unprivileged user namespaces are available, nothing is installed outside y
 needed. Where they are blocked (Ubuntu's default, for example), Setup asks for your password once to install the
 simulator host under `/opt/x86sim`.
 
-For an Apple TV or an Apple Watch, download tvOS or watchOS on the **Versions** page, then choose **Add device**.
+For an Apple TV, an Apple Watch or an Apple Vision Pro, download tvOS, watchOS or visionOS on the **Versions** page,
+then choose **Add device**.
 
 ## Requirements
 
@@ -133,6 +145,7 @@ missing. Everything else is inside the AppImage.
 | **iPad** | iOS 27 (iPadOS) | 29: iPad, iPad mini, iPad Air, iPad Pro | Touch and gestures, keyboard, Home, lock and volume |
 | **Apple TV** | tvOS 27 | 4: Apple TV 4K, 2nd and 3rd generation | Siri Remote on screen; arrow keys, Return and Escape |
 | **Apple Watch** | watchOS 27 | 13: Series 9 to 12, SE 3, Ultra 2 to 4 | Touch, Digital Crown, side button |
+| **Apple Vision Pro** | visionOS 27 | 2: at 4K, or at 1080p (the same layout, a quarter of the pixels) | Look and pinch with the mouse, Digital Crown |
 
 Runtimes come straight from Apple's own catalogue, the one Xcode reads. Each copy is downloaded on your machine and
 is never redistributed. iOS 27.2 is the default; the Versions page lists the other 27.x releases Apple offers,
@@ -144,15 +157,17 @@ with betas if you ask for them.
 
 The launcher is what the AppImage opens. Its pages:
 
-- **Devices**: every device as a card with a live screen. Start, stop, restart, add, rename and remove devices, or
-  open one in its own window. A device's page has its screen and buttons, its feature toggles, memory, CPU and
+- **Devices**: every device as a card with a live screen, running devices first. Click a card to open it; start,
+  stop, restart, add, rename and remove devices, or open one in its own window. A device's page has its screen and buttons, its feature toggles, memory, CPU and
   processes, and its logs.
 - **Versions**: the runtimes on this computer and those available from Apple.
 - **Pre-translate**: build or update the ahead-of-time image for a runtime, and see what it takes on disk.
-- **Settings**: graphics (GPU or software), screen scaling, memory cap and clean-up, disk use, and updates.
+- **Settings**: appearance (System, Dark or Light), graphics (GPU or software), screen scaling, memory cap and
+  clean-up, disk use, and updates.
 - **Setup**: the first-run steps, which stay available afterwards as a check of the computer.
 
-Closing the launcher leaves running devices running.
+Arrow keys or `hjkl` move between devices and rows, Enter opens, the number keys switch pages, `?` lists every
+shortcut and `q` quits. Closing the launcher leaves running devices running.
 
 ### Command line
 
@@ -262,7 +277,8 @@ above work. These are the known gaps:
 - **Pairing** an Apple Watch with an iPhone is not supported.
 - **Networking**: ordinary DNS and sockets work; Bonjour (multicast DNS) does not.
 - **Sandboxing**: simulator processes are not sandboxed.
-- **System logging**: the unified log daemon does not run. `x86sim log stream` covers one app or process at a time.
+- **System logging**: `logd` runs for installed apps only; the runtime's own processes do not log. `x86sim log stream`
+  covers one app or process at a time.
 
 [WORKAROUNDS.md](docs/WORKAROUNDS.md) lists everything that is approximated and what a faithful version would need.
 
