@@ -53,8 +53,12 @@ def request(cmd, timeout=60, **kw):
     os.rename(Q + ".new", Q)
     key = "result %s " % rid
     end = time.monotonic() + timeout
+    # most answers come within tens of ms: poll fast first, then back off to 0.2 s (a fixed 0.2 s added up to that
+    # much to every command)
+    d = 0.01
     while time.monotonic() < end:
-        time.sleep(0.2)
+        time.sleep(d)
+        d = min(0.2, d * 1.5)
         try:
             with open(LOG, errors="replace") as f:
                 f.seek(start)
