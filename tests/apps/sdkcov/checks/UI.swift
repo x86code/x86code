@@ -69,6 +69,26 @@ import WatchKit
 #if canImport(ClockKit)
 import ClockKit
 #endif
+#if canImport(Accessibility)
+import Accessibility
+#endif
+#if canImport(PaperKit)
+import PaperKit
+#endif
+#if canImport(Social)
+import Social
+#endif
+#if canImport(IntentsUI)
+import IntentsUI
+#endif
+#if canImport(HealthKitUI)
+import HealthKitUI
+import HealthKit
+#endif
+#if canImport(CoreAudioKit)
+import CoreAudioKit
+import AVFAudio
+#endif
 
 /// render a SwiftUI view to a CGImage and return the RGBA of pixel (x, y) (image pixels, y from the top)
 @MainActor func renderPixel<V: View>(_ v: V, size: CGSize, at p: CGPoint) throws -> (CGImage, [UInt8]) {
@@ -96,6 +116,42 @@ extension Registry {
                 }
             },
         ]
+        c.append(check("SwiftUICore", "color-path-spring-geometry") {
+            // the value types SwiftUI's views are built from, which live in SwiftUICore
+            var dark = EnvironmentValues(); dark.colorScheme = .dark
+            let light = EnvironmentValues()
+            let fixed = Color(.sRGB, red: 0.2, green: 0.4, blue: 0.6), r = fixed.resolve(in: light)
+            try expect(abs(r.red - 0.2) < 0.005 && abs(r.blue - 0.6) < 0.005 && abs(r.linearRed - 0.0331) < 0.002, "resolved \(r), linear red \(r.linearRed)")
+            try expect(fixed.resolve(in: dark) == r, "a fixed color changed with the scheme")
+            // system colors adapt to the scheme (on platforms with a light appearance): informational
+            let adapts = Color.red.resolve(in: light) != Color.red.resolve(in: dark)
+            let p = Path(roundedRect: CGRect(x: 0, y: 0, width: 100, height: 50), cornerRadius: 10)
+            try expect(p.boundingRect == CGRect(x: 0, y: 0, width: 100, height: 50), "bounds \(p.boundingRect)")
+            try expect(p.contains(CGPoint(x: 50, y: 25)) && !p.contains(CGPoint(x: 1, y: 1)), "contains (rounded corner)")
+            let stroked = p.strokedPath(StrokeStyle(lineWidth: 10)).boundingRect
+            try expect(abs(stroked.width - 110) < 0.5, "stroked width \(stroked.width)")
+            try expect(!p.trimmedPath(from: 0, to: 0.25).isEmpty && p.trimmedPath(from: 0, to: 0.25).boundingRect.width < 100, "trim")
+            let s = Spring(duration: 0.5, bounce: 0)
+            let mid = s.value(target: 1.0, initialVelocity: 0, time: 0.1), end = s.value(target: 1.0, initialVelocity: 0, time: 5)
+            try expect(mid > 0.05 && mid < 0.95 && abs(end - 1) < 1e-3, "spring at 0.1 s \(mid), at 5 s \(end)")
+            try expect(abs(Angle(degrees: 90).radians - .pi / 2) < 1e-12 && UnitPoint.bottomTrailing == UnitPoint(x: 1, y: 1), "Angle / UnitPoint")
+            return "spring settles in \(String(format: "%.2f", s.settlingDuration)) s, system red adapts to dark \(adapts)"
+        })
+        #if canImport(Accessibility)
+        c.append(check("Accessibility", "chart-descriptor-custom-content") {
+            let x = AXNumericDataAxisDescriptor(title: "Day", range: 0...6, gridlinePositions: []) { "day \(Int($0))" }
+            let y = AXNumericDataAxisDescriptor(title: "Steps", range: 0...12000, gridlinePositions: [5000, 10000]) { "\(Int($0)) steps" }
+            let pts: [AXDataPoint] = (0..<7).map { (i: Int) -> AXDataPoint in AXDataPoint(x: Double(i), y: Double(4000 + i * 1000)) }
+            let chart = AXChartDescriptor(title: "Week", summary: "rising", xAxis: x, yAxis: y, additionalAxes: [], series: [AXDataSeriesDescriptor(name: "steps", isContinuous: true, dataPoints: pts)])
+            try expect(chart.series.first?.dataPoints.count == 7 && chart.xAxis.title == "Day", "chart")
+            try expect(y.valueDescriptionProvider(8000) == "8000 steps" && y.gridlinePositions == [5000, 10000], "value description")
+            let cc = AXCustomContent(label: "Calories", value: "320"); cc.importance = .high
+            let d = try NSKeyedArchiver.archivedData(withRootObject: cc, requiringSecureCoding: true)
+            let back = try NSKeyedUnarchiver.unarchivedObject(ofClass: AXCustomContent.self, from: d)
+            try expect(back?.label == "Calories" && back?.value == "320" && back?.importance == .high, "custom content round trip")
+            return "chart \(chart.series.count) series, custom content \(d.count) B"
+        })
+        #endif
         #if canImport(Charts)
         c.append(check("Charts", "bar-line-render") {
             try await onMain {
@@ -274,7 +330,7 @@ extension Registry {
             return "scanner \(scan), document camera \(doc), image analyzer \(ImageAnalyzer.isSupported)"
         })
         #endif
-        #if canImport(RealityKit) && (os(iOS) || os(visionOS))
+        #if canImport(RealityKit) && !os(watchOS)
         c.append(check("RealityKit", "entities-meshes") {
             try await onMain {
                 let box = ModelEntity(mesh: .generateBox(size: 0.1), materials: [SimpleMaterial(color: .red, isMetallic: false)])
@@ -284,6 +340,79 @@ extension Registry {
                 let sphere = MeshResource.generateSphere(radius: 1)
                 try expect(sphere.bounds.extents.x > 1.9, "mesh bounds \(sphere.bounds.extents)")
                 return "ok"
+            }
+        })
+        #endif
+        #if canImport(PaperKit) && (os(iOS) || os(visionOS))
+        c.append(check("PaperKit", "markup-insert-archive-draw", timeout: 60) {
+            var m = PaperMarkup(bounds: CGRect(x: 0, y: 0, width: 200, height: 100))
+            m.insertNewShape(configuration: ShapeConfiguration(type: .rectangle, fillColor: CGColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)), frame: CGRect(x: 10, y: 10, width: 60, height: 60))
+            m.insertNewTextbox(attributedText: AttributedString("PaperKit sdkcov"), frame: CGRect(x: 80, y: 10, width: 110, height: 40))
+            try expect(m.subelements.count == 2, "\(m.subelements.count) elements")
+            let d = try await m.dataRepresentation()
+            let back = try PaperMarkup(dataRepresentation: d)
+            let n = await back.subelements.count, text = await back.indexableContent ?? ""
+            try expect(n == 2 && text.contains("sdkcov"), "round trip: \(n) elements, text '\(text)'")
+            let ctx = bitmap(200, 100)
+            ctx.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)); ctx.fill(CGRect(x: 0, y: 0, width: 200, height: 100))
+            await back.draw(in: ctx, frame: CGRect(x: 0, y: 0, width: 200, height: 100))
+            // the rectangle covers (10..70, 10..70) in markup coordinates: its middle is red whichever way y runs
+            let px = pixel(ctx, 40, 40)
+            try expect(px[0] > 200 && px[1] < 80 && px[2] < 80, "rectangle pixel \(px)")
+            return "\(d.count) B markup"
+        })
+        #endif
+        #if canImport(Social) && os(iOS)
+        c.append(check("Social", "request-signing-objects") {
+            // SLRequest builds the HTTP request locally; no account, no network
+            guard let r = SLRequest(forServiceType: SLServiceTypeTwitter, requestMethod: .POST, url: URL(string: "https://api.example.com/1/update.json"), parameters: ["status": "x86sim sdkcov", "n": "1"]) else { throw Fail("SLRequest") }
+            r.addMultipartData(Data("payload".utf8), withName: "media", type: "application/octet-stream", filename: "x.bin")
+            let u = r.preparedURLRequest()
+            try expect(u?.httpMethod == "POST" && u?.url?.host == "api.example.com", "prepared \(String(describing: u))")
+            return "\(u?.value(forHTTPHeaderField: "Content-Type")?.prefix(19) ?? "no content type"), compose available \(SLComposeViewController.isAvailable(forServiceType: SLServiceTypeTwitter))"
+        })
+        #endif
+        #if canImport(IntentsUI) && (os(iOS) || os(visionOS))
+        c.append(check("IntentsUI", "voice-shortcut-button-controller") {
+            try await onMain {
+                let sc = INShortcut(userActivity: NSUserActivity(activityType: "com.x86sim.test.sdkcov.activity"))
+                let b = INUIAddVoiceShortcutButton(style: .automaticOutline); b.shortcut = sc
+                b.frame = CGRect(x: 0, y: 0, width: 300, height: 60); b.layoutIfNeeded()
+                let sz = b.intrinsicContentSize
+                try expect(sz.width > 50 && sz.height > 20 && b.shortcut != nil, "button \(sz)")
+                let vc = INUIAddVoiceShortcutViewController(shortcut: sc); vc.loadViewIfNeeded()
+                return "button \(sz)"
+            }
+        })
+        #endif
+        #if canImport(HealthKitUI) && (os(iOS) || os(visionOS))
+        c.append(check("HealthKitUI", "activity-ring-view") {
+            try await onMain {
+                let s = HKActivitySummary()
+                s.activeEnergyBurned = HKQuantity(unit: .kilocalorie(), doubleValue: 300); s.activeEnergyBurnedGoal = HKQuantity(unit: .kilocalorie(), doubleValue: 400)
+                s.appleExerciseTime = HKQuantity(unit: .minute(), doubleValue: 20); s.appleExerciseTimeGoal = HKQuantity(unit: .minute(), doubleValue: 30)
+                s.appleStandHours = HKQuantity(unit: .count(), doubleValue: 8); s.appleStandHoursGoal = HKQuantity(unit: .count(), doubleValue: 12)
+                let r = HKActivityRingView(frame: CGRect(x: 0, y: 0, width: 120, height: 120)); r.setActivitySummary(s, animated: false); r.layoutIfNeeded()
+                try expect(r.activitySummary?.activeEnergyBurned.doubleValue(for: .kilocalorie()) == 300, "summary")
+                // the rings draw through Core Animation layers: how much of the view they ink (informational)
+                let ctx = bitmap(120, 120); r.layer.render(in: ctx)
+                var ink = 0
+                for y in stride(from: 0, to: 120, by: 4) { for x in stride(from: 0, to: 120, by: 4) where pixel(ctx, x, y)[3] > 0 { ink += 1 } }
+                return "\(r.layer.sublayers?.count ?? 0) layers, \(ink) sampled pixels inked"
+            }
+        })
+        #endif
+        #if canImport(CoreAudioKit) && (os(iOS) || os(visionOS))
+        c.append(check("CoreAudioKit", "generic-au-view") {
+            // the generic parameter view of a real audio unit (an EQ: its bands' parameters)
+            try await onMain {
+                let eq = AVAudioUnitEQ(numberOfBands: 3)
+                let vc = AUGenericViewController(); vc.auAudioUnit = eq.auAudioUnit
+                vc.view.frame = CGRect(x: 0, y: 0, width: 400, height: 600); vc.view.layoutIfNeeded()
+                let params = eq.auAudioUnit.parameterTree?.allParameters.count ?? 0
+                try expect(vc.auAudioUnit === eq.auAudioUnit && params >= 3, "\(params) parameters")
+                let midi = CABTMIDICentralViewController(); midi.loadViewIfNeeded()
+                return "EQ with \(params) parameters, \(vc.view.subviews.count) subviews"
             }
         })
         #endif
@@ -331,6 +460,22 @@ extension Registry {
                 d.play(.click)   // haptic: a no-op in the simulator
                 return "\(d.model) \(d.systemVersion), screen \(d.screenBounds.size) @\(d.screenScale)x, state \(st.rawValue), wrist \(d.wristLocation.rawValue)"
             }
+        })
+        #endif
+        #if canImport(UIKit) && os(watchOS)
+        c.append(check("UIKit", "image-color-font") {
+            // watchOS UIKit: images, colors and fonts (no views)
+            guard let sym = UIImage(systemName: "heart.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 40)) else { throw Fail("SF Symbol") }
+            try expect(sym.size.width > 20, "symbol size \(sym.size)")
+            let ctx = bitmap(8, 8); ctx.setFillColor(UIColor(red: 0, green: 0.5, blue: 1, alpha: 1).cgColor); ctx.fill(CGRect(x: 0, y: 0, width: 8, height: 8))
+            guard let png = UIImage(cgImage: ctx.makeImage()!).pngData(), let back = UIImage(data: png)?.cgImage else { throw Fail("PNG round trip") }
+            let c2 = bitmap(8, 8); c2.draw(back, in: CGRect(x: 0, y: 0, width: 8, height: 8))
+            try expect(pixel(c2, 4, 4)[2] > 240 && abs(Int(pixel(c2, 4, 4)[1]) - 128) < 3, "PNG pixel \(pixel(c2, 4, 4))")
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            try expect(UIColor(red: 1, green: 0, blue: 0, alpha: 1).getHue(&h, saturation: &s, brightness: &b, alpha: &a) && h == 0 && s == 1, "HSB")
+            let f = UIFont.preferredFont(forTextStyle: .body), big = UIFont.systemFont(ofSize: 30, weight: .bold)
+            try expect(f.pointSize > 10 && big.lineHeight > 30 && big.fontDescriptor.symbolicTraits.contains(.traitBold), "fonts \(f.pointSize) \(big.lineHeight)")
+            return "\(png.count) B PNG, body \(f.pointSize) pt"
         })
         #endif
         #if canImport(ClockKit) && os(watchOS)

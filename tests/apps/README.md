@@ -53,7 +53,8 @@ prints their results (stderr only; the results file is left alone).
 
 watchOS and visionOS build against Xcode's own simulator SDKs, copied from the Mac to `sdks/WatchSimulator-xcode.sdk` and
 `sdks/XRSimulator-xcode.sdk` (`sdks/XRSimulator.sdk` is sim-sdk.py's substitute, which has iOS's framework list).
-`ref-mac.sh xros` needs a visionOS simulator runtime installed on the Mac.
+`ref-mac.sh xros` needs a visionOS simulator runtime installed on the Mac. `ref-mac.sh <platform> --only ID[,ID...]` runs
+just those checks once on Apple's simulator and prints their results, as `run.sh --only` does on x86Sim.
 The sdkcov devices run with the "widgets" feature on (`features.json`), as WidgetKit needs chronod; run.sh says so
 when a device has it off. Boot them with `X86SIM_AUDIO=1` for the audio checks (simaudio: real-time output, PHASE,
 OpenAL, speech). The first speech synthesis after a boot can time out while its extension is translated.

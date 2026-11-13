@@ -40,7 +40,16 @@ import MusicKit
 #if canImport(MediaAccessibility)
 import MediaAccessibility
 #endif
+#if canImport(MediaToolbox)
+import MediaToolbox
+#endif
 
+/// write `b` as an AAC .m4a (AVAudioFile, AVFAudio's encoder)
+func writeM4A(_ b: AVAudioPCMBuffer, to u: URL) throws {
+    try? FileManager.default.removeItem(at: u)
+    let f = try AVAudioFile(forWriting: u, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: b.format.sampleRate, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64000])
+    try f.write(from: b)
+}
 /// a mono float sine buffer
 func sine(_ hz: Double, secs: Double, rate: Double = 44100) -> AVAudioPCMBuffer {
     let f = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 1)!
@@ -231,6 +240,72 @@ extension Registry {
             let cams = AVCaptureDevice.DiscoverySession(deviceTypes: [.builtInWideAngleCamera], mediaType: .video, position: .unspecified).devices
             try skipIf(cams.isEmpty, "no cameras in the Simulator (Apple's has none either)")
             return "\(cams.count) cameras"
+        })
+        #endif
+        #if os(watchOS)
+        c.append(check("AVFoundation", "audio-asset-composition", timeout: 60) {
+            // watchOS AVFoundation has no writer / reader / image generator: assets, compositions and player items
+            let u = FileManager.default.temporaryDirectory.appendingPathComponent("sdkcov-watch.m4a")
+            defer { try? FileManager.default.removeItem(at: u) }
+            try writeM4A(sine(440, secs: 1), to: u)
+            let a = AVURLAsset(url: u)
+            let (dur, tracks) = try await a.load(.duration, .tracks)
+            try expect(abs(dur.seconds - 1) < 0.1 && tracks.count == 1, "asset \(dur.seconds) s, \(tracks.count) tracks")
+            let fd = try await tracks[0].load(.formatDescriptions)
+            try expect(fd.first.map { CMFormatDescriptionGetMediaSubType($0) } == kAudioFormatMPEG4AAC, "format \(fd)")
+            let comp = AVMutableComposition()
+            guard let t = comp.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw Fail("composition track") }
+            let range = CMTimeRange(start: .zero, duration: dur)
+            try t.insertTimeRange(range, of: tracks[0], at: .zero); try t.insertTimeRange(range, of: tracks[0], at: dur)
+            try expect(abs(comp.duration.seconds - 2 * dur.seconds) < 0.01, "composition \(comp.duration.seconds) s")
+            let item = AVPlayerItem(asset: a); let p = AVPlayer(playerItem: item); p.isMuted = true
+            for _ in 0..<100 where item.status == .unknown { try await Task.sleep(for: .milliseconds(100)) }
+            try expect(item.status == .readyToPlay, "player item \(item.status.rawValue) \(String(describing: item.error))")
+            return "\(String(format: "%.3f", dur.seconds)) s AAC, composition \(String(format: "%.3f", comp.duration.seconds)) s"
+        })
+        #endif
+        #if canImport(MediaToolbox) && !os(watchOS)
+        c.append(check("MediaToolbox", "audio-processing-tap", timeout: 60) {
+            // an MTAudioProcessingTap in an audio mix: AVAssetReader pulls the asset's audio through the tap's process
+            // callback, which counts the frames and silences the second half
+            let u = FileManager.default.temporaryDirectory.appendingPathComponent("sdkcov-tap.m4a")
+            defer { try? FileManager.default.removeItem(at: u) }
+            try writeM4A(sine(440, secs: 1), to: u)
+            final class Counts { var frames = 0; var calls = 0 }
+            let counts = Counts()
+            var cb = MTAudioProcessingTapCallbacks(version: kMTAudioProcessingTapCallbacksVersion_0, clientInfo: Unmanaged.passUnretained(counts).toOpaque(),
+                init: { _, info, storage in storage.pointee = info }, finalize: nil, prepare: nil, unprepare: nil,
+                process: { tap, n, _, abl, framesOut, flagsOut in
+                    guard MTAudioProcessingTapGetSourceAudio(tap, n, abl, flagsOut, nil, framesOut) == noErr else { return }
+                    let c = Unmanaged<Counts>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
+                    if c.frames >= 22050 { for b in UnsafeMutableAudioBufferListPointer(abl) { memset(b.mData, 0, Int(b.mDataByteSize)) } }
+                    c.frames += framesOut.pointee; c.calls += 1
+                })
+            var tapOut: MTAudioProcessingTap?
+            try expect(MTAudioProcessingTapCreate(nil, &cb, kMTAudioProcessingTapCreationFlag_PostEffects, &tapOut) == noErr && tapOut != nil, "MTAudioProcessingTapCreate")
+            let a = AVURLAsset(url: u)
+            let tracks = try await a.loadTracks(withMediaType: .audio)
+            let params = AVMutableAudioMixInputParameters(track: tracks[0]); params.audioTapProcessor = tapOut
+            let mix = AVMutableAudioMix(); mix.inputParameters = [params]
+            let r = try AVAssetReader(asset: a)
+            let o = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [AVFormatIDKey: kAudioFormatLinearPCM, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false])
+            o.audioMix = mix; r.add(o)
+            try expect(r.startReading(), "reader \(String(describing: r.error))")
+            var firstHalf: Float = 0, secondHalf: Float = 0, pos = 0
+            while let sb = o.copyNextSampleBuffer() {
+                guard let bb = CMSampleBufferGetDataBuffer(sb) else { continue }
+                var len = 0, ptr: UnsafeMutablePointer<CChar>?
+                CMBlockBufferGetDataPointer(bb, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &len, dataPointerOut: &ptr)
+                let ch = Int(CMAudioFormatDescriptionGetStreamBasicDescription(CMSampleBufferGetFormatDescription(sb)!)!.pointee.mChannelsPerFrame)
+                ptr!.withMemoryRebound(to: Float.self, capacity: len / 4) { f in
+                    for i in stride(from: 0, to: len / 4, by: ch) { if pos + i / ch < 20000 { firstHalf += abs(f[i]) } else if pos + i / ch > 24000 { secondHalf += abs(f[i]) } }
+                }
+                pos += len / 4 / ch
+            }
+            try expect(r.status == .completed, "reader status \(r.status.rawValue) \(String(describing: r.error))")
+            try expect(counts.calls > 0 && abs(counts.frames - 44100) < 4096, "tap processed \(counts.frames) frames in \(counts.calls) calls")
+            try expect(firstHalf > 1000 && secondHalf == 0, "audio through the tap: first half \(firstHalf), second half \(secondHalf)")
+            return "\(counts.frames) frames through the tap in \(counts.calls) calls"
         })
         #endif
         #if canImport(VideoToolbox)

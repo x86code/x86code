@@ -27,6 +27,16 @@ import System
 #if canImport(OSLog)
 import OSLog
 #endif
+import CoreFoundation
+#if canImport(CoreServices)
+import CoreServices
+#endif
+#if canImport(MobileCoreServices)
+import MobileCoreServices
+#endif
+#if canImport(GSS)
+import GSS
+#endif
 
 @Observable final class ObsBox { var n = 0 }
 distributed actor Greeter {
@@ -561,6 +571,116 @@ extension Registry {
             return "\(d.count) B"
         },
         ]
+        c.append(check("CoreFoundation", "strings-plist-uuid-runloop") {
+            let s = CFStringCreateWithCString(nil, "Grüße aus x86sim", CFStringBuiltInEncodings.UTF8.rawValue)!
+            try expect(CFStringGetLength(s) == 16, "length \(CFStringGetLength(s))")
+            let m = CFStringCreateMutableCopy(nil, 0, s)!
+            CFStringUppercase(m, Locale(identifier: "de_DE") as CFLocale)
+            try expect(m as String == "GRÜSSE AUS X86SIM", "uppercase '\(m)'")
+            try expect(CFStringTransform(m, nil, kCFStringTransformStripDiacritics, false) && m as String == "GRUSSE AUS X86SIM", "strip diacritics '\(m)'")
+            let r = CFStringFind(s, "x86" as CFString, [.compareCaseInsensitive])
+            try expect(r.location == 10 && r.length == 3, "find \(r)")
+            // a binary property list round trip, compared with CFEqual
+            let plist: [String: Any] = ["name": "sdkcov", "n": 42, "xs": [1.5, 2.5], "d": Data([1, 2, 3]), "when": Date(timeIntervalSince1970: 1e9)]
+            var err: Unmanaged<CFError>?
+            guard let bin = CFPropertyListCreateData(nil, plist as CFDictionary, .binaryFormat_v1_0, 0, &err)?.takeRetainedValue() else { throw Fail("CFPropertyListCreateData \(String(describing: err))") }
+            var fmt = CFPropertyListFormat.xmlFormat_v1_0
+            let back = CFPropertyListCreateWithData(nil, bin, 0, &fmt, &err)?.takeRetainedValue()
+            try expect(back != nil && fmt == .binaryFormat_v1_0 && CFEqual(back, plist as CFDictionary), "plist round trip")
+            let u = CFUUIDCreateFromString(nil, "68753A44-4D6F-1226-9C60-0050E4C00067" as CFString)!
+            try expect(CFUUIDCreateString(nil, u) as String == "68753A44-4D6F-1226-9C60-0050E4C00067", "CFUUID")
+            // a block and a timer on the main run loop
+            let fired: Bool = await withCheckedContinuation { k in
+                CFRunLoopPerformBlock(CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue) {
+                    let t = CFRunLoopTimerCreateWithHandler(nil, CFAbsoluteTimeGetCurrent() + 0.02, 0, 0, 0) { _ in k.resume(returning: true) }
+                    CFRunLoopAddTimer(CFRunLoopGetMain(), t, .commonModes)
+                }
+                CFRunLoopWakeUp(CFRunLoopGetMain())
+            }
+            try expect(fired, "run loop timer")
+            return "\(CFDataGetLength(bin)) B binary plist"
+        })
+        #if canImport(CoreServices)
+        c.append(check("CoreServices", "uttype-tags-conformance") {
+            // the C UTType API apps still call (deprecated, not removed)
+            guard let png = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, "png" as CFString, nil)?.takeRetainedValue() else { throw Fail("no type for .png") }
+            try expect(png as String == "public.png" && UTTypeConformsTo(png, kUTTypeImage) && !UTTypeConformsTo(png, kUTTypeMovie), "png \(png)")
+            let mime = UTTypeCopyPreferredTagWithClass(png, kUTTagClassMIMEType)?.takeRetainedValue()
+            try expect(mime as String? == "image/png", "MIME \(String(describing: mime))")
+            let mov = UTTypeCreatePreferredIdentifierForTag(kUTTagClassMIMEType, "video/quicktime" as CFString, nil)?.takeRetainedValue()
+            try expect(mov.map { UTTypeConformsTo($0, kUTTypeAudiovisualContent) } == true, "video/quicktime \(String(describing: mov))")
+            let dyn = UTTypeCreatePreferredIdentifierForTag(kUTTagClassFilenameExtension, "sdkcovxyz" as CFString, kUTTypeData)!.takeRetainedValue()
+            try expect((dyn as String).hasPrefix("dyn."), "dynamic type \(dyn)")
+            return "\(png), \(mov.map { $0 as String } ?? "")"
+        })
+        #endif
+        #if canImport(MobileCoreServices)
+        c.append(check("MobileCoreServices", "uttype-declarations") {
+            let ids = (UTTypeCreateAllIdentifiersForTag(kUTTagClassFilenameExtension, "jpg" as CFString, nil)?.takeRetainedValue() as? [String]) ?? []
+            try expect(ids.contains(kUTTypeJPEG as String), "jpg -> \(ids)")
+            guard let decl = UTTypeCopyDeclaration(kUTTypeJPEG)?.takeRetainedValue() as? [String: Any] else { throw Fail("no declaration for public.jpeg") }
+            let conforms = decl[kUTTypeConformsToKey as String].map { "\($0)" } ?? ""
+            try expect(conforms.contains("public.image"), "public.jpeg conforms to \(conforms)")
+            try expect(UTTypeEqual(kUTTypeJPEG, "public.jpeg" as CFString) && UTTypeIsDeclared(kUTTypePDF), "UTTypeEqual / UTTypeIsDeclared")
+            let ext = UTTypeCopyAllTagsWithClass(kUTTypeJPEG, kUTTagClassFilenameExtension)?.takeRetainedValue() as? [String] ?? []
+            try expect(ext.contains("jpeg") && ext.contains("jpg"), "extensions \(ext)")
+            return "public.jpeg: \(ext.joined(separator: ", "))"
+        })
+        #endif
+        #if !os(watchOS)   // watchOS's SDK has no IOKit
+        c.append(check("IOKit", "cf-serialize-matching") {
+            // IOKit has no Swift module in the iOS-family SDKs: its C API by dlsym
+            let L = "/System/Library/Frameworks/IOKit.framework/IOKit"
+            func fn<T>(_ n: String, _: T.Type) throws -> T {
+                guard let h = dlopen(L, RTLD_NOW), let p = dlsym(h, n) else { throw Fail("IOKit: no \(n)") }
+                return unsafeBitCast(p, to: T.self)
+            }
+            let ser = try fn("IOCFSerialize", (@convention(c) (AnyObject?, UInt) -> Unmanaged<CFData>?).self)
+            let unser = try fn("IOCFUnserialize", (@convention(c) (UnsafePointer<CChar>?, CFAllocator?, UInt, UnsafeMutablePointer<Unmanaged<CFString>?>?) -> Unmanaged<AnyObject>?).self)
+            let matching = try fn("IOServiceMatching", (@convention(c) (UnsafePointer<CChar>?) -> Unmanaged<CFMutableDictionary>?).self)
+            let root = try fn("IORegistryGetRootEntry", (@convention(c) (mach_port_t) -> UInt32).self)
+            let name = try fn("IORegistryEntryGetName", (@convention(c) (UInt32, UnsafeMutablePointer<CChar>?) -> kern_return_t).self)
+            let release = try fn("IOObjectRelease", (@convention(c) (UInt32) -> kern_return_t).self)
+            // IOKit's own XML serialization of CF objects, and back
+            let obj: [String: Any] = ["name": "sdkcov", "n": 42, "on": true, "list": ["a", "b"], "blob": Data([0xde, 0xad])]
+            guard let xml = ser(obj as NSDictionary, 0)?.takeRetainedValue() else { throw Fail("IOCFSerialize") }
+            let text = String(decoding: xml as Data, as: UTF8.self)
+            try expect(text.contains("<key>name</key>") && text.contains("sdkcov"), "serialized '\(text.prefix(120))'")
+            var e: Unmanaged<CFString>?
+            let back = text.withCString { unser($0, nil, 0, &e)?.takeRetainedValue() } as? [String: Any]
+            try expect(back?["name"] as? String == "sdkcov" && back?["n"] as? Int == 42 && back?["list"] as? [String] == ["a", "b"], "unserialized \(String(describing: back)) \(e.map { $0.takeRetainedValue() as String } ?? "")")
+            guard let m = matching("IOResources")?.takeRetainedValue() as? [String: Any] else { throw Fail("IOServiceMatching") }
+            try expect(m["IOProviderClass"] as? String == "IOResources", "matching \(m)")
+            // the registry itself is the host kernel's (Apple's simulator) or emulated: informational
+            let r = root(0); var nb = [CChar](repeating: 0, count: 128)
+            let rn = r != 0 && name(r, &nb) == KERN_SUCCESS ? String(cString: nb) : "none"
+            if r != 0 { _ = release(r) }
+            return "\(CFDataGetLength(xml)) B XML; registry root '\(rn)'"
+        })
+        #endif
+        #if canImport(GSS)
+        c.append(check("GSS", "names-oids") {
+            var minor: OM_uint32 = 0, name: gss_name_t?
+            var svc = Array("HTTP@www.example.com".utf8)
+            var maj = svc.withUnsafeMutableBytes { b -> OM_uint32 in
+                var buf = gss_buffer_desc(length: b.count, value: b.baseAddress)
+                return gss_import_name(&minor, &buf, &__gss_c_nt_hostbased_service_oid_desc, &name)
+            }
+            try expect(maj == 0 && name != nil, "gss_import_name \(maj)/\(minor)")   // GSS_S_COMPLETE
+            defer { gss_release_name(&minor, &name) }
+            var out = gss_buffer_desc(); var type: gss_OID?
+            maj = gss_display_name(&minor, name!, &out, &type)
+            let shown = String(decoding: UnsafeRawBufferPointer(start: out.value, count: out.length), as: UTF8.self)
+            gss_release_buffer(&minor, &out)
+            try expect(maj == 0 && shown == "HTTP@www.example.com" && gss_oid_equal(type, &__gss_c_nt_hostbased_service_oid_desc) != 0, "gss_display_name \(maj) '\(shown)'")
+            // Apple's CF interface
+            guard let user = GSSCreateName("ada@EXAMPLE.COM" as CFString, &__gss_c_nt_user_name_oid_desc, nil) else { throw Fail("GSSCreateName") }
+            let disp = GSSNameCreateDisplayString(user)?.takeRetainedValue() as String?
+            var u: gss_name_t? = user; gss_release_name(&minor, &u)
+            try expect(disp == "ada@EXAMPLE.COM", "GSSNameCreateDisplayString \(String(describing: disp))")
+            return "\(shown), \(disp!)"
+        })
+        #endif
         #if canImport(SystemConfiguration)
         c.append(
         check("SystemConfiguration", "reachability") {

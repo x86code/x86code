@@ -17,6 +17,12 @@ import Translation
 #if canImport(ImagePlayground)
 import ImagePlayground
 #endif
+#if canImport(DataDetection)
+import DataDetection
+#endif
+#if canImport(CreateMLComponents)
+import CreateMLComponents
+#endif
 
 /// minimal protobuf writer for the Core ML model spec (coremltools' Model.proto)
 struct PB {
@@ -115,6 +121,44 @@ extension Registry {
             let ok = await onMain { ImagePlaygroundViewController.isAvailable }
             try skipIf(!ok, "Image Playground needs Apple Intelligence (not in the Simulator here)")
             return "available"
+        })
+        #endif
+        #if canImport(DataDetection)
+        c.append(check("DataDetection", "detect-matches", timeout: 60) {
+            let text = "Mail ada@example.com or call +1 (408) 555-0100, docs at https://example.com/sdkcov, flight UA 920 on Friday."
+            var kinds: [String] = []
+            for await m in text.dataDetectorMatches([.emailAddress, .phoneNumber, .link, .flightNumber]) {
+                switch m.details {
+                case .emailAddress(let e): kinds.append("email \(e.emailAddress)")
+                case .phoneNumber(let p): kinds.append("phone \(p.phoneNumber)")
+                case .link(let l): kinds.append("link \(l.url.absoluteString)")
+                case .flightNumber(let f): kinds.append("flight \(f.airlineCode)\(f.flightNumber)")
+                default: kinds.append("other")
+                }
+            }
+            for want in ["email ada@example.com", "link https://example.com/sdkcov"] { try expect(kinds.contains(want), "no '\(want)' in \(kinds)") }
+            try expect(kinds.contains { $0.hasPrefix("phone") }, "no phone number in \(kinds)")
+            return kinds.joined(separator: "; ")
+        })
+        #endif
+        #if canImport(CreateMLComponents)
+        c.append(check("CreateMLComponents", "scalers-regressor-fit", timeout: 60) {
+            let xs: [Double] = [2, 4, 4, 4, 5, 5, 7, 9]
+            let std = try await StandardScaler<Double>().fitted(to: xs)
+            try expect(abs(std.mean - 5) < 1e-9 && (abs(std.standardDeviation - 2) < 1e-9 || abs(std.standardDeviation - 2.138) < 1e-3), "mean \(std.mean) sd \(std.standardDeviation)")
+            let scaled = try await std.applied(to: 9.0)
+            try expect(abs(scaled - 4 / std.standardDeviation) < 1e-9, "scaled \(scaled)")
+            let mm = try await MinMaxScaler<Double>().fitted(to: xs)
+            try expect(try await mm.applied(to: 5.5) == 0.5, "min-max")
+            // y = 2 x0 - 3 x1 + 1, fitted by the linear regressor
+            let samples = (0..<64).map { i -> AnnotatedFeature<MLShapedArray<Float>, Float> in
+                let a = Float(i % 8) / 4, b = Float(i / 8) / 4
+                return AnnotatedFeature(feature: MLShapedArray(scalars: [a, b], shape: [2]), annotation: 2 * a - 3 * b + 1)
+            }
+            let model = try await LinearRegressor<Float>().fitted(to: samples)
+            let y = try await model.applied(to: MLShapedArray(scalars: [1, 1], shape: [2]))
+            try expect(abs(y - 0) < 0.05, "prediction at (1, 1): \(y), want 0")
+            return "sd \(String(format: "%.3f", std.standardDeviation)), regression (1, 1) -> \(String(format: "%.4f", y))"
         })
         #endif
         return c

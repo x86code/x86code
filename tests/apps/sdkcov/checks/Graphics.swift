@@ -41,7 +41,7 @@ import OpenGLES
 #if canImport(GLKit)
 import GLKit
 #endif
-#if canImport(Vision) && !os(watchOS)
+#if canImport(Vision)
 import Vision
 #endif
 #if canImport(PDFKit)
@@ -49,6 +49,18 @@ import PDFKit
 #endif
 #if canImport(CoreVideo)
 import CoreVideo
+#endif
+#if canImport(ColorSync)
+import ColorSync
+#endif
+#if canImport(Symbols)
+import Symbols
+#endif
+#if canImport(USDKit)
+import USDKit
+#endif
+#if canImport(RealityKit)
+import RealityKit
 #endif
 
 /// an RGBA8 bitmap context of w x h
@@ -72,9 +84,9 @@ func textImage(_ s: String, _ w: Int = 600, _ h: Int = 160, size: CGFloat = 64) 
     CTLineDraw(CTLineCreateWithAttributedString(a), c)
     return c.makeImage()!
 }
-func encode(_ img: CGImage, _ type: UTType, props: [CFString: Any] = [:]) throws -> Data {
+func encode(_ img: CGImage, _ type: UTType, props: [CFString: Any] = [:], create: [CFString: Any]? = nil) throws -> Data {
     let d = NSMutableData()
-    guard let dst = CGImageDestinationCreateWithData(d, type.identifier as CFString, 1, nil) else { throw Fail("no \(type.identifier) encoder") }
+    guard let dst = CGImageDestinationCreateWithData(d, type.identifier as CFString, 1, create as CFDictionary?) else { throw Fail("no \(type.identifier) encoder") }
     CGImageDestinationAddImage(dst, img, props as CFDictionary)
     try expect(CGImageDestinationFinalize(dst), "finalize \(type.identifier)")
     return d as Data
@@ -125,7 +137,15 @@ extension Registry {
                 for t in [UTType.png, .jpeg, .tiff, .gif, .bmp, .heic] {
                     let types = (CGImageDestinationCopyTypeIdentifiers() as? [String]) ?? []
                     guard types.contains(t.identifier) else { out.append("\(t.preferredFilenameExtension ?? "?") no encoder"); continue }
-                    let d = try encode(img, t, props: [kCGImageDestinationLossyCompressionQuality: 0.8])
+                    // watchOS's ImageIO creates a HEIC destination only with kCGImageDestinationPreferSoftwareEncoder
+                    // (exported, in no header): findWriterForTypeAndAlternateType refuses public.heic without it
+                    // ("unsupported output file format"); iOS / tvOS / visionOS's take any options (no hardware
+                    // HEVC encoder on the watch: its runtime ships VCPHEVC, the software one)
+                    var create: [CFString: Any]? = nil
+                    #if os(watchOS)
+                    if t == .heic { create = ["kCGImageDestinationPreferSoftwareEncoder" as CFString: true] }
+                    #endif
+                    let d = try encode(img, t, props: [kCGImageDestinationLossyCompressionQuality: 0.8], create: create)
                     guard let src = CGImageSourceCreateWithData(d as CFData, nil), let back = CGImageSourceCreateImageAtIndex(src, 0, nil) else { throw Fail("decode \(t.identifier)") }
                     try expect(back.width == 256 && back.height == 96, "\(t.identifier) size")
                     out.append("\(t.preferredFilenameExtension ?? "?") \(d.count)")
@@ -420,6 +440,149 @@ extension Registry {
             let th = doc.page(at: 0)!.thumbnail(of: CGSize(width: 100, height: 50), for: .mediaBox)
             try expect(th.size.width > 0, "thumbnail")
             return "'\(s)'"
+        })
+        #endif
+        #if canImport(ColorSync)
+        c.append(check("ColorSync", "profiles-transform") {
+            guard let srgb = ColorSyncProfileCreateWithName(kColorSyncSRGBProfile.takeUnretainedValue())?.takeRetainedValue(),
+                  let p3 = ColorSyncProfileCreateWithName(kColorSyncDisplayP3Profile.takeUnretainedValue())?.takeRetainedValue() else { throw Fail("built-in profiles") }
+            let desc = ColorSyncProfileCopyDescriptionString(p3)?.takeRetainedValue() as String? ?? ""
+            func step(_ p: ColorSyncProfile, _ tag: Unmanaged<CFString>) -> [CFString: Any] {
+                [kColorSyncProfile.takeUnretainedValue(): p, kColorSyncRenderingIntent.takeUnretainedValue(): kColorSyncRenderingIntentPerceptual.takeUnretainedValue(),
+                 kColorSyncTransformTag.takeUnretainedValue(): tag.takeUnretainedValue()]
+            }
+            guard let t = ColorSyncTransformCreate([step(srgb, kColorSyncTransformDeviceToPCS), step(p3, kColorSyncTransformPCSToDevice)] as CFArray, nil)?.takeRetainedValue() else { throw Fail("ColorSyncTransformCreate") }
+            // sRGB red, green, white in Display P3 (matrix profiles: the colorimetric result)
+            var src: [Float] = [1, 0, 0, 0, 1, 0, 1, 1, 1], dst = [Float](repeating: -1, count: 9)
+            let layout = ColorSyncDataLayout(kColorSyncAlphaNone.rawValue) | ColorSyncDataLayout(kColorSyncByteOrderDefault)
+            try expect(ColorSyncTransformConvert(t, 3, 1, &dst, kColorSync32BitFloat, layout, 36, &src, kColorSync32BitFloat, layout, 36, nil), "ColorSyncTransformConvert")
+            let want: [Float] = [0.9175, 0.2003, 0.1386, 0.4584, 0.9853, 0.2983, 1, 1, 1]
+            try expect(zip(dst, want).allSatisfy { abs($0 - $1) < 0.01 }, "sRGB -> P3 \(dst.map { String(format: "%.4f", $0) })")
+            return "\(desc): red \(dst.prefix(3).map { String(format: "%.3f", $0) })"
+        })
+        #endif
+        #if canImport(Symbols)
+        c.append(check("Symbols", "effects-options") {
+            // every effect and modifier is a distinct configuration, equal values hash alike
+            let cfgs: [SymbolEffectConfiguration] = [BounceSymbolEffect.bounce.up.configuration, BounceSymbolEffect.bounce.down.byLayer.configuration,
+                PulseSymbolEffect.pulse.wholeSymbol.configuration, VariableColorSymbolEffect.variableColor.iterative.reversing.configuration,
+                VariableColorSymbolEffect.variableColor.cumulative.configuration, ScaleSymbolEffect.scale.up.configuration,
+                AppearSymbolEffect.appear.configuration, DisappearSymbolEffect.disappear.down.configuration,
+                WiggleSymbolEffect.wiggle.clockwise.configuration, RotateSymbolEffect.rotate.counterClockwise.configuration,
+                BreatheSymbolEffect.breathe.configuration, DrawOnSymbolEffect.drawOn.individually.configuration]
+            try expect(Set(cfgs).count == cfgs.count, "\(Set(cfgs).count) distinct of \(cfgs.count) configurations")
+            try expect(BounceSymbolEffect.bounce.up.byLayer == BounceSymbolEffect.bounce.up.byLayer && BounceSymbolEffect.bounce.up != BounceSymbolEffect.bounce.down, "equality")
+            let o = SymbolEffectOptions.repeat(.periodic(3, delay: 0.5)).speed(2)
+            try expect(o == SymbolEffectOptions.repeat(.periodic(3, delay: 0.5)).speed(2) && o != .default && SymbolEffectOptions.repeating != .nonRepeating, "options")
+            // the Objective-C effect objects behind them are NSSecureCoding values (no -isEqual: of their own: the class survives)
+            var archived = 0
+            for (cls, sel) in [("NSSymbolBounceEffect", "bounceUpEffect"), ("NSSymbolPulseEffect", "effect"), ("NSSymbolWiggleEffect", "wiggleClockwiseEffect")] {
+                guard let c = NSClassFromString(cls) as? NSObject.Type, let e = c.perform(NSSelectorFromString(sel))?.takeUnretainedValue() as? NSObject else { throw Fail("\(cls) +\(sel)") }
+                let d = try NSKeyedArchiver.archivedData(withRootObject: e, requiringSecureCoding: true)
+                let back = try NSKeyedUnarchiver.unarchivedObject(ofClasses: [c], from: d) as? NSObject
+                try expect(back.map { type(of: $0) == c } == true, "\(cls) archive round trip gave \(String(describing: back))")
+                archived += 1
+            }
+            return "\(cfgs.count) effects, \(archived) archived"
+        })
+        #endif
+        #if canImport(USDKit) && !os(watchOS)
+        c.append(check("USDKit", "stage-parse-edit-export") {
+            let src = """
+            #usda 1.0
+            (
+                defaultPrim = "World"
+                upAxis = "Z"
+                metersPerUnit = 0.01
+            )
+            def Xform "World"
+            {
+                def Sphere "Ball"
+                {
+                    double radius = 2.5
+                }
+            }
+            """
+            let stage = try USDStage(string: src)
+            try expect(stage.metersPerUnit == 0.01 && stage.defaultPrim?.path.description == "/World", "stage metadata \(stage.metersPerUnit) \(String(describing: stage.defaultPrim?.path))")
+            let r: Double? = stage.prim(at: USDLayer.Path("/World/Ball")).attribute(named: "radius").value()
+            try expect(r == 2.5, "radius \(String(describing: r))")
+            let cube = stage.definePrim(at: USDLayer.Path("/World/Box"), type: "Cube")
+            try expect(cube.isValid && cube.attribute(named: "size").setValue(4.0), "define a Cube and set its size")
+            try expect(stage.allDescendants.count == 3, "prims \(stage.allDescendants.map(\.path.description))")
+            let u = FileManager.default.temporaryDirectory.appendingPathComponent("sdkcov-\(UUID().uuidString).usda")
+            defer { try? FileManager.default.removeItem(at: u) }
+            try stage.rootLayer.export(to: u)
+            let text = try String(contentsOf: u, encoding: .utf8)
+            try expect(text.contains("def Cube \"Box\"") && text.contains("double size = 4"), "exported '\(text.prefix(200))'")
+            let again = try USDStage.open(u)
+            let size: Double? = again.prim(at: USDLayer.Path("/World/Box")).attribute(named: "size").value()
+            try expect(size == 4, "reopened size \(String(describing: size))")
+            return "\(text.utf8.count) B usda"
+        })
+        #endif
+        #if canImport(Vision)
+        c.append(check("Vision", "swift-requests-rectangles-contours", timeout: 60) {
+            // the Swift Vision API (all four platforms, watchOS included), on classical detectors: no neural network
+            let c = bitmap(200, 200); c.setFillColor(CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)); c.fill(CGRect(x: 0, y: 0, width: 200, height: 200))
+            c.setFillColor(CGColor(srgbRed: 0, green: 0, blue: 0, alpha: 1)); c.fill(CGRect(x: 40, y: 60, width: 120, height: 80))
+            let img = c.makeImage()!
+            let rects = try await DetectRectanglesRequest().perform(on: img)
+            guard let r = rects.first else { throw Fail("no rectangle") }
+            let bb = r.boundingBox.cgRect
+            try expect(abs(bb.minX - 0.2) < 0.03 && abs(bb.width - 0.6) < 0.03 && abs(bb.height - 0.4) < 0.03, "rectangle \(bb)")
+            var cr = DetectContoursRequest(); cr.contrastAdjustment = 1
+            let contours = try await cr.perform(on: img)
+            try expect(contours.contourCount >= 1, "contours \(contours.contourCount)")
+            return "rectangle \(String(format: "%.2f %.2f %.2f %.2f", bb.minX, bb.minY, bb.width, bb.height)), \(contours.contourCount) contours"
+        })
+        #endif
+        #if canImport(RealityKit) && !os(watchOS)
+        c.append(check("RealityFoundation", "mesh-descriptor-transforms", timeout: 30) {
+            // RealityKit's engine-free layer: a mesh from raw triangles, transforms, entity trees
+            try await onMain {
+                var md = MeshDescriptor(name: "tri")
+                md.positions = MeshBuffers.Positions([[0, 0, 0], [1, 0, 0], [0, 2, 0], [0, 0, 3]])
+                md.primitives = .triangles([0, 1, 2, 0, 2, 3, 0, 3, 1])
+                let mesh = try MeshResource.generate(from: [md])
+                let ext = mesh.bounds.extents
+                try expect(abs(ext.x - 1) < 1e-4 && abs(ext.y - 2) < 1e-4 && abs(ext.z - 3) < 1e-4, "mesh bounds \(ext)")
+                let t = Transform(scale: [2, 2, 2], rotation: simd_quatf(angle: .pi / 2, axis: [0, 0, 1]), translation: [10, 0, 0])
+                let p = t.matrix * SIMD4<Float>(1, 0, 0, 1)
+                try expect(abs(p.x - 10) < 1e-4 && abs(p.y - 2) < 1e-4, "transform \(p)")
+                let root = Entity(); root.name = "root"
+                let child = ModelEntity(mesh: mesh); child.name = "tri"; child.transform = t; root.addChild(child)
+                let grand = Entity(); grand.name = "leaf"; grand.position = [0, 1, 0]; child.addChild(grand)
+                try expect(root.findEntity(named: "leaf") === grand, "findEntity")
+                let w = grand.position(relativeTo: nil)
+                try expect(abs(w.x - 8) < 1e-4 && abs(w.y) < 1e-4, "world position \(w)")
+                let copy = root.clone(recursive: true)
+                try expect(copy.findEntity(named: "leaf") != nil && copy.findEntity(named: "leaf") !== grand, "clone")
+                let vb = child.visualBounds(relativeTo: nil)
+                return "visual bounds \(vb.extents)"
+            }
+        })
+        #endif
+        #if canImport(CoreVideo) && os(watchOS)
+        c.append(check("CoreVideo", "pixelbuffer-pool-planes") {
+            // watchOS: no IOSurface or Metal behind the buffers, plain memory
+            var pool: CVPixelBufferPool?
+            let attrs: [String: Any] = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 48]
+            try expect(CVPixelBufferPoolCreate(nil, [kCVPixelBufferPoolMinimumBufferCountKey: 2] as CFDictionary, attrs as CFDictionary, &pool) == kCVReturnSuccess, "pool")
+            var pb: CVPixelBuffer?; try expect(CVPixelBufferPoolCreatePixelBuffer(nil, pool!, &pb) == kCVReturnSuccess, "buffer")
+            try expect(CVPixelBufferIsPlanar(pb!) && CVPixelBufferGetPlaneCount(pb!) == 2, "planes \(CVPixelBufferGetPlaneCount(pb!))")
+            try expect(CVPixelBufferGetWidthOfPlane(pb!, 1) == 32 && CVPixelBufferGetHeightOfPlane(pb!, 1) == 24, "chroma plane size")
+            CVPixelBufferLockBaseAddress(pb!, [])
+            let y = CVPixelBufferGetBaseAddressOfPlane(pb!, 0)!, bpr = CVPixelBufferGetBytesPerRowOfPlane(pb!, 0)
+            memset(y, 0x80, bpr * 48); y.storeBytes(of: 0xAB, toByteOffset: bpr * 47 + 63, as: UInt8.self)
+            CVPixelBufferUnlockBaseAddress(pb!, [])
+            CVPixelBufferLockBaseAddress(pb!, .readOnly)
+            let v = CVPixelBufferGetBaseAddressOfPlane(pb!, 0)!.load(fromByteOffset: bpr * 47 + 63, as: UInt8.self)
+            CVPixelBufferUnlockBaseAddress(pb!, .readOnly)
+            try expect(v == 0xAB, "read back \(v)")
+            CVBufferSetAttachment(pb!, kCVImageBufferYCbCrMatrixKey, kCVImageBufferYCbCrMatrix_ITU_R_709_2, .shouldPropagate)
+            try expect(CVBufferCopyAttachment(pb!, kCVImageBufferYCbCrMatrixKey, nil) as? String == kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String, "attachment")
+            return "64x48 4:2:0, luma row \(bpr) B"
         })
         #endif
         #if canImport(CoreVideo) && canImport(Metal)
