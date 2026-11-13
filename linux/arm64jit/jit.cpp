@@ -1032,8 +1032,8 @@ bool with_shared_code_lock(void (*fn)(void *), void *arg) {
     return true;
 }
 
-// Called from host.cpp memlog_once / SIGUSR1. Safe when this tid has no GuestThread.
-void memlog_shared_stats() {
+// Called from host.cpp memlog_once (the periodic MEMLOG thread; with_save: the SIGUSR1 thread). Any thread.
+void memlog_shared_stats(bool with_save) {
     // g_shared_code is set when the first GuestThread's Jit is made, so a thread with a GuestThread always has it
     if (!shared_translations() || !g_shared_code) return;
     auto st = Dynarmic::A64::Jit::GetSharedStats(*g_shared_code);
@@ -1041,7 +1041,7 @@ void memlog_shared_stats() {
          (unsigned long long)st.blocks, (unsigned long long)st.guest_instructions, st.code_bytes / 1048576.0,
          st.translate_ns / 1e9, (unsigned long long)st.lookups, g_live_threads.load());
     logf("memlog: maps (MB) %s", Dynarmic::A64::Jit::GetMemoryReport(*g_shared_code).c_str());
-    if (!GuestThread::current()) return;  // RAM 3: a host thread (SIGUSR1 lands on one mostly): the maps line only
+    if (!with_save) return;  // RAM 3: the periodic MEMLOG thread: the maps line only
     native_objc_stats();
     jitcache_save_if_shared();
 }
@@ -1454,6 +1454,7 @@ void die(const char *fmt, ...) {
     abort();
 }
 thread_local bool g_non_darling_thread = false;
+thread_local bool g_log_linux_path = false;
 void logf(const char *fmt, ...) {
     char buf[1024];
     va_list ap; va_start(ap, fmt);
@@ -1469,7 +1470,10 @@ void logf(const char *fmt, ...) {
     // the freed string's bytes in the cwd
     static char path[512];
     static bool init;
-    if (!init) {
+    // the log file's Linux path (/proc/self/fd of the first Darling open), for g_log_linux_path threads
+    static char lpath[512];
+    static std::atomic<bool> lpath_set{false};
+    if (!init && !g_non_darling_thread) {
         init = true;
         if (const char *dir = getenv("X86SIM_A64_LOG")) {
             static auto *dmkdir = (int (*)(const char *, int))dsym("mkdir");
@@ -1484,7 +1488,22 @@ void logf(const char *fmt, ...) {
         static auto *dwrite = (long (*)(int, const void *, size_t))dsym("write");
         static auto *dclose = (int (*)(int))dsym("close");
         int fd = dopen ? dopen(path, 0x1000209 /* O_WRONLY|O_APPEND|O_CREAT|O_CLOEXEC */, 0644) : -1;
-        if (fd >= 0) { dwrite(fd, buf, n); dclose(fd); }
+        if (fd >= 0) {
+            if (!lpath_set.load(std::memory_order_acquire)) {
+                static std::atomic_flag once = ATOMIC_FLAG_INIT;
+                char l[32];
+                snprintf(l, sizeof l, "/proc/self/fd/%d", fd);
+                if (!once.test_and_set()) {
+                    ssize_t k = readlink(l, lpath, sizeof lpath - 1);
+                    if (k > 0 && lpath[0] == '/') { lpath[k] = 0; lpath_set.store(true, std::memory_order_release); }
+                }
+            }
+            dwrite(fd, buf, n);
+            dclose(fd);
+        }
+    } else if (g_log_linux_path && lpath_set.load(std::memory_order_acquire)) {  // plain Linux calls, no Darling
+        int fd = open(lpath, O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0644);
+        if (fd >= 0) { if (write(fd, buf, n) < 0) {} close(fd); }
     }
 }
 

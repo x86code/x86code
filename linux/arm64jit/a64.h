@@ -257,6 +257,7 @@ void jitcache_save_on_exit();
 extern std::shared_mutex g_cache_prot_mu;
 extern std::mutex g_text_patch_mu;  // RAM 4: held while libarm64jit patches guest __TEXT (host.cpp file trim)
 extern thread_local bool g_non_darling_thread;  // logf: stderr only (plain std::thread, e.g. the cache saver)
+extern thread_local bool g_log_linux_path;      // with it: logf also to the log file, by plain Linux calls
 // Speed 6: state that translated code addresses, at a fixed address (jit.cpp; shared AOT image).
 struct FixedData {
     alignas(64) unsigned char callbacks[256];  // the shared code's UserCallbacks object

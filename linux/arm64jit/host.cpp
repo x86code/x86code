@@ -27,6 +27,7 @@ namespace Dynarmic::Backend { bool IsJitCodeAddress(unsigned long host_pc); }
 #include <sys/stat.h>
 #include <unistd.h>
 #include <signal.h>
+#include <semaphore.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <ucontext.h>
@@ -691,8 +692,8 @@ static void hook_native_abort() {
     f[10] = 0xFF; f[11] = 0xE0;                       // jmp rax
     mprotect((void *)page, 0x2000, PROT_READ | PROT_EXEC);
 }
-// Forward decl: jit.cpp logs SharedStats (block count / code bytes) when a GuestThread exists.
-void memlog_shared_stats();
+// Forward decl: jit.cpp logs SharedStats (block count / code bytes); with_save: also objc stats + the jitcache save.
+void memlog_shared_stats(bool with_save);
 void gheap_stats();
 
 // X86SIM_A64_STATS: the most called svc thunks (counted in jit.cpp CallSVC)
@@ -704,8 +705,8 @@ static void log_top_thunks(size_t top, const char *prefix) {
     for (size_t k = 0; k < v.size() && k < top; k++) logf("%s%10lu %s", prefix, (unsigned long)v[k].first, g_thunks[v[k].second].name.c_str());
 }
 
-// One-shot glibc + anon RSS line (also used by the periodic MEMLOG thread and SIGUSR1).
-static void memlog_once() {
+// One-shot glibc + anon RSS line (also used by the periodic MEMLOG thread and SIGUSR1; with_save: SIGUSR1's).
+static void memlog_once(bool with_save) {
     struct mallinfo2 mi = mallinfo2();
     long anon = 0;
     if (FILE *f = fopen("/proc/self/status", "r")) {
@@ -716,7 +717,7 @@ static void memlog_once() {
     if (getenv("X86SIM_A64_STATS")) log_top_thunks(25, "memlog: thunk ");  // Speed 6: so far (SIGUSR1; was only at exit)
     logf("memlog: anon %ld MB, glibc arena %zu MB (in use %zu MB, mmapped %zu MB in %zu blocks, free %zu MB)", anon / 1024,
          mi.arena >> 20, mi.uordblks >> 20, mi.hblkhd >> 20, mi.hblks, mi.fordblks >> 20);
-    memlog_shared_stats();
+    memlog_shared_stats(with_save);
     gheap_stats();
     // RAM 11: glibc's mmapped chunks (each its own anon mapping starting with the chunk header: size | IS_MMAPPED),
     // as a size histogram with the first payload words of one of each size, for attribution without ptrace
@@ -754,27 +755,53 @@ static void memlog_once() {
       close(pfd[0]); close(pfd[1]);
     }
 }
-static void on_usr1(int, siginfo_t *, void *) { memlog_once(); }
+// SIGUSR1 (kill -USR1 <linux pid> of a guest process) dumps the memlog lines, the objc stats and the jitcache save.
+// The handler only posts a semaphore; a native thread with every signal blocked does the work. The dump used to run
+// in the handler, on whichever guest thread the signal landed on, mostly one parked in a darlingserver call (a
+// daemon's main thread sleeps in semaphore_timedwait). Its logf()s are Darling open/write/close, and close walks
+// libkqueue's kqueues under their pthread mutexes: when one was contended, psynch_mutexwait went to darlingserver
+// for a thread it still had waiting in the interrupted call (a raw Linux handler skips Darling's
+// interrupt_enter/exit), and darlingserver panicked "thread already waiting" (waitq.c): every process of the device
+// died with it (SIGILL in __simple_abort on its next call). Glibc's malloc, gheap's locks and the jitcache save were
+// no safer there. Send it to guest processes only: darlingserver has no SIGUSR1 handler (only in its ASan build), so
+// the signal terminates it, and the whole device with it.
+static sem_t g_memlog_sem;
+static void on_usr1(int, siginfo_t *, void *) {
+    const int e = errno;
+    sem_post(&g_memlog_sem);  // async-signal-safe
+    errno = e;
+}
 // X86SIM_A64_MEMLOG=<seconds>: a native thread logs the ELF side's malloc use (glibc mallinfo2) and the anon RSS.
 // SIGUSR1 always dumps one memlog line (no env needed) for live attribution of host anon blobs.
 static void start_memlog() {
+    sigset_t all, old;  // RAM 14: native threads block every signal (see gheap.cpp start_scavenger)
+    sigfillset(&all);
+    pthread_sigmask(SIG_SETMASK, &all, &old);
+    sem_init(&g_memlog_sem, 0, 0);
+    std::thread([] {
+        g_non_darling_thread = true;
+        g_log_linux_path = true;  // logf: to the log file by its Linux path (no Darling calls on this thread)
+        for (;;) {
+            if (sem_wait(&g_memlog_sem) != 0) continue;  // EINTR
+            while (sem_trywait(&g_memlog_sem) == 0) {}    // signals sent while this one waited: one dump for all
+            memlog_once(true);
+        }
+    }).detach();
     struct sigaction su{};
     su.sa_sigaction = on_usr1;
     su.sa_flags = SA_SIGINFO | SA_RESTART;
     sigaction(SIGUSR1, &su, nullptr);
     const char *e = getenv("X86SIM_A64_MEMLOG");
-    if (!e || atoi(e) <= 0) return;
-    int secs = atoi(e);
-    sigset_t all, old;  // RAM 14: native threads block every signal (see gheap.cpp start_scavenger)
-    sigfillset(&all);
-    pthread_sigmask(SIG_SETMASK, &all, &old);
-    std::thread([secs] {
-        g_non_darling_thread = true;
-        for (;;) {
-            sleep(secs);
-            memlog_once();
-        }
-    }).detach();
+    if (e && atoi(e) > 0) {
+        int secs = atoi(e);
+        std::thread([secs] {
+            g_non_darling_thread = true;
+            for (;;) {
+                sleep(secs);
+                memlog_once(false);
+            }
+        }).detach();
+    }
     pthread_sigmask(SIG_SETMASK, &old, nullptr);
 }
 // RAM 4: every read fault on a file mapping maps the whole fault-around window (fault_around_bytes = 64 KB, or the
