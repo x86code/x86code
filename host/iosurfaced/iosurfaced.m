@@ -16,6 +16,11 @@
 #import <mach/mach.h>
 #import <sys/mman.h>
 #import <stdatomic.h>
+#import <fcntl.h>
+#import <errno.h>
+#import <string.h>
+#import <sys/stat.h>
+#import <mach/mach_time.h>
 
 extern xpc_connection_t x86_xpc_connection_create_mach_service(const char* name, dispatch_queue_t q, uint64_t flags)
 	__asm__("_xpc_connection_create_mach_service");
@@ -80,6 +85,7 @@ static uint32_t gNextID = 1;
 static bool gLog;
 
 #define LOG(...) do { if (gLog) fprintf(stderr, "iosurfaced: " __VA_ARGS__); } while (0)
+
 
 static Surf* surfFor(uint32_t sid) { return (Surf*)[gByID[@(sid)] pointerValue]; }
 
@@ -246,6 +252,46 @@ static bool dropRef(Refs* refs, uint32_t sid) {
 	return true;
 }
 
+// x86Sim: implicit IOSurface GPU sync. On a Mac, IOSurfaceLock without kIOSurfaceLockAvoidSync waits until the GPU
+// work already submitted against the surface is done, so a CPU reader sees what the GPU wrote: CoreAnimation relies
+// on it (UIKit's drawViewHierarchyInRect:afterScreenUpdates: has backboardd render the window into an IOSurface,
+// then reads it in the app; backboardd does not wait for its command buffer). metalhostd (vkmtl.m) counts, per
+// surface, the committed command buffers that use a texture over it (IOSURF_PENDING_PATH, IOSURF_PENDING_N atomic
+// counters indexed by id % N); a Lock waits for that count to reach 0 (deferred reply, at most 1 s).
+#define IOSURF_PENDING_PATH "/private/tmp/x86sim-iosurface-pending"
+#define IOSURF_PENDING_N 65536
+#define kIOSurfaceLockAvoidSync 2
+static _Atomic uint32_t* gPending;
+static void pendingInit(void) {
+	int fd = open(IOSURF_PENDING_PATH, O_RDWR | O_CREAT, 0666);
+	if (fd < 0) { fprintf(stderr, "iosurfaced: %s: %s (no implicit GPU sync)\n", IOSURF_PENDING_PATH, strerror(errno)); return; }
+	fchmod(fd, 0666);
+	// a new table: counts left by an earlier metalhostd belong to command buffers that will never complete
+	if (ftruncate(fd, 0) == 0 && ftruncate(fd, IOSURF_PENDING_N * sizeof(uint32_t)) == 0) {
+		void* m = mmap(NULL, IOSURF_PENDING_N * sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (m != MAP_FAILED) gPending = m;
+	}
+	close(fd);
+}
+/// reply to a Lock once the surface has no GPU work in flight (or after 1 s)
+static void lockReplyWhenIdle(xpc_connection_t peer, xpc_object_t reply, uint32_t sid, uint64_t deadline, int polls) {
+	uint32_t n = gPending ? atomic_load(&gPending[sid % IOSURF_PENDING_N]) : 0;
+	if (n && mach_absolute_time() < deadline) {
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_USEC), dispatch_get_main_queue(), ^{
+			lockReplyWhenIdle(peer, reply, sid, deadline, polls + 1);
+		});
+		return;
+	}
+	if (n) fprintf(stderr, "iosurfaced: lock of surface %u: GPU work still pending after 1 s (%u command buffers)\n", sid, n);
+	else if (polls) LOG("lock of surface %u waited %d polls for the GPU\n", sid, polls);
+	Surf* s = surfFor(sid);
+	if (s) putState(reply, s);
+	xpc_dictionary_set_uint64(reply, "ErrorCode", s ? 0 : kIOReturnNotFound);
+	xpc_connection_send_message(peer, reply);
+	xpc_release(reply);
+	xpc_release(peer);
+}
+
 static void handle(xpc_connection_t peer, Refs* refs, xpc_object_t msg) {
 	xpc_object_t reply = xpc_dictionary_create_reply(msg);
 	if (!reply) return;
@@ -311,6 +357,14 @@ static void handle(xpc_connection_t peer, Refs* refs, xpc_object_t msg) {
 		if (!dropRef(refs, sid)) kr = kIOReturnNotFound;
 		break;
 	case 4:  // Lock
+		if (gPending && !(xpc_dictionary_get_uint64(msg, "Options") & kIOSurfaceLockAvoidSync) &&
+			atomic_load(&gPending[sid % IOSURF_PENDING_N])) {
+			mach_timebase_info_data_t tb; mach_timebase_info(&tb);
+			uint64_t deadline = mach_absolute_time() + NSEC_PER_SEC * tb.denom / tb.numer;
+			xpc_retain(peer);
+			lockReplyWhenIdle(peer, reply, sid, deadline, 0);   // takes the reply
+			return;
+		}
 		break;
 	case 5:  // Unlock
 		if (!(xpc_dictionary_get_uint64(msg, "Options") & 1)) s->st.seed++;
@@ -429,6 +483,7 @@ int main(int argc, char** argv) {
 	(void)argc; (void)argv;
 	setvbuf(stderr, NULL, _IOLBF, 0);
 	gLog = getenv("X86SIM_IOSURFACE_LOG") != NULL;
+	pendingInit();
 	gByID = [NSMutableDictionary new];
 	gByPort = [NSMutableDictionary new];
 	// all state lives on the main queue: one serial queue for every peer
