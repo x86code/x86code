@@ -200,7 +200,8 @@ MIN="com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.appl
 # accessibility.axassetsd (on demand too): UIPasteboard (a string set was read back as nil), WatchConnectivity
 # (WCSession.activate() never called back) and the speech voices (AVSpeechSynthesisVoice.speechVoices() was empty, so
 # AVSpeechSynthesizer said nothing). locationd: feature "location" (SpringBoard looks it up at boot, ~94 MB); without it
-# CMPedometer.isStepCountingAvailable() never returned.
+# CMPedometer.isStepCountingAvailable() never returned. liveactivitiesd (on demand: com.apple.sessionservices): Live
+# Activities; without it ActivityAuthorizationInfo().areActivitiesEnabled was false where Apple's simulator says true.
 UI="com.apple.installcoordinationd com.apple.mobiletimerd com.apple.backboardd com.apple.SpringBoard com.apple.sleepd com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.usernotificationsd com.apple.InputUI com.apple.assistantd com.apple.assetsd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd
 	com.apple.campo com.apple.FileProvider com.apple.DesktopServicesHelper com.apple.PosterBoard com.apple.financed
@@ -209,7 +210,7 @@ UI="com.apple.installcoordinationd com.apple.mobiletimerd com.apple.backboardd c
 	com.apple.siriinferenced com.apple.siriknowledged com.apple.siriactionsd com.apple.searchd com.apple.corespotlightservice
 	com.apple.assistant_cdmd com.apple.nanoregistryd com.apple.nanotimekitcompaniond
 	com.apple.CoreAuthentication.daemon com.apple.storekitd com.apple.quicklook.ThumbnailsAgent com.apple.midiserver-sim
-	com.apple.locationd com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd"
+	com.apple.locationd com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd com.apple.liveactivitiesd"
 UI_SLIM="com.apple.backboardd com.apple.SpringBoard com.apple.TextInput.kbd com.apple.FileCoordination com.apple.InputUI
 	com.apple.assistantd"
 FULLUI="com.apple.chronod"
