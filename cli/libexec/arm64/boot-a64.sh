@@ -226,11 +226,15 @@ OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl
 # retried com.apple.geod ~15000 times in one sdkcov run (and its SwiftUI Map built 19 views, Apple's 21); without
 # mediaremoted NowPlaying's MediaSession.requestToBecomeApplicationPrimary() failed (internalFailure: no
 # com.apple.mediaremoted.xpc). Both checked against Apple's tvOS 27.2 simulator (tests/apps/sdkcov/ref-mac.sh tvos).
+# gamecontrollerd (on demand: an app's GameController looks it up): it turns host/simhid's virtual gamepad (the
+# simulator's "Gamepad", as Apple's tvOS SimulatorHID adds) into a GCController. Without it GCController.controllers()
+# stayed empty where Apple's tvOS simulator lists that one controller.
 TV_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd
 	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.TVSystemUIService
 	com.apple.PosterBoard com.apple.campo com.apple.splashboardd com.apple.MediaRemoteUI com.apple.assetsubscriptiond
 	com.apple.mobileassetd com.apple.tvremoted com.apple.CoreAuthentication.daemon com.apple.storekitd
-	com.apple.voiced com.apple.accessibility.axassetsd com.apple.geod com.apple.mediaremoted"
+	com.apple.voiced com.apple.accessibility.axassetsd com.apple.geod com.apple.mediaremoted
+	com.apple.GameController.gamecontrollerd"
 TV_UI_SLIM="com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd com.apple.FileCoordination"
 # Platforms 1: watchOS. Carousel is watchOS's SpringBoard (the watch face, the app grid, notifications); the watch face
 # itself comes from nanotimekitd. nanoregistryd (+ its launch helper) holds the pairing state, unpaired for a watch booted

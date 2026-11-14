@@ -142,6 +142,11 @@ static VService* cur_touch = &touch_svc;   // the touchscreen of the command bei
 // Platforms 1: an Apple Watch's Digital Crown, as Apple's watchOS SimulatorHID registers it
 // ("com.apple.SimulatorHID.MainScreenDigitalCrownService": Apple vendor usage page 0xff0b, usage 1, built in)
 static VService crown_svc;
+// tvOS: the simulator's virtual game controller. Apple's tvOS SimulatorHID (SimHIDVirtualServiceManager) adds
+// "com.apple.SimulatorHID.GamePadService" at start, connected, with exactly these properties (no Transport / VendorID):
+// gamecontrollerd matches GenericDesktop / GamePad and lists it as an MFi "Gamepad" (extended gamepad, 23 buttons,
+// 6 axes, 3 dpads), so GCController.controllers() has 1 controller in Apple's tvOS simulator with no input sent.
+static VService gamepad_svc;
 // Platforms 2: visionOS's pointer. RealitySimulation's RSPointerInputProvider takes mouse events (GenericDesktop /
 // Mouse) from a trackpad, Universal Control or a service whose Transport is "Virtual-AssistiveTouch", and turns them
 // into the system pointer (hover, and a click is a tap where it points). The simulator's touchscreen is not an input
@@ -887,6 +892,13 @@ static void* listen_thread(void* arg) {
 			paloma_svc = (VService){ "paloma", 0x7863000000000008ull, make_props(@"x86Sim natural input", 0xff00, 0x6f, nil) };
 			add_service(system, &paloma_svc);
 			_dyld_register_func_for_add_image(hmd_hook);
+		}
+		if (model && !strncmp(model, "AppleTV", 7)) {
+			gamepad_svc = (VService){ "gamepad", 0x786300000000000aull, (CFDictionaryRef)[@{
+				@"DeviceUsagePairs": @[ @{ @"DeviceUsagePage": @1, @"DeviceUsage": @5 } ],
+				@"PrimaryUsagePage": @1, @"PrimaryUsage": @5,
+				@"PhysicalDeviceUniqueID": @"SimulatedGamepad", @"GameControllerType": @1, @"Product": @"Gamepad" } retain] };
+			add_service(system, &gamepad_svc);
 		}
 		if (model && !strncmp(model, "Watch", 5)) {
 			crown_svc = (VService){ "crown", 0x7863000000000006ull,
