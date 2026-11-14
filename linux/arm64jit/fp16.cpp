@@ -4,7 +4,8 @@
 // shared cache: fmla/fmul by element, three-same arithmetic and compares, conversions). dynarmic hands each of them to
 // UserCallbacks::InterpreterFallback; this file executes them on the flushed guest state (lanes computed in binary32
 // and rounded to binary16 once, which is exact for add/sub/mul/div/sqrt; fused multiply-add rounds twice). FPCR's
-// rounding mode is honoured only by the explicit-rounding conversions; FZ16 and DN are not modelled.
+// rounding mode is honoured by add/sub/mul/div/sqrt (computed in binary64, see d2h) and the explicit-rounding
+// conversions; FZ16 and DN are not modelled.
 #include "a64.h"
 #include <cmath>
 #include <cstdint>
@@ -22,49 +23,127 @@ inline void set_lane(V &v, int i, uint16_t h) {
     w = (w & ~(0xffffull << s)) | ((u64)h << s);
 }
 inline bool isnan_h(uint16_t h) { return (h & 0x7c00) == 0x7c00 && (h & 0x3ff); }
-inline uint16_t qnan(uint16_t a, uint16_t b) { return (isnan_h(a) ? a : b) | 0x200; }
+inline bool issnan_h(uint16_t h) { return isnan_h(h) && !(h & 0x200); }
+// FPProcessNaNs: a signalling NaN first (operand 1, then 2), then a quiet one; the result is quiet (FPCR.DN = 0)
+inline uint16_t qnan(uint16_t a, uint16_t b) {
+    if (issnan_h(a)) return a | 0x200;
+    if (issnan_h(b)) return b | 0x200;
+    return (isnan_h(a) ? a : b) | 0x200;
+}
+// x rounded to binary16 in the FPCR rounding mode m (0 RN, 1 RP, 2 RM, 3 RZ). A sum, difference or product of two
+// halves is exact in binary64, and a quotient or square root of halves can't fall within 2^-53 (relative) of a half
+// without being one, so rounding binary64's (round-to-nearest) value once more in m gives the correctly rounded half.
+// (binary32 is enough for round-to-nearest only: its rounding before a directed one is visible.)
+inline uint16_t d2h(double x, int m) {
+    const _Float16 f = (_Float16)x;
+    uint16_t h; memcpy(&h, &f, 2);
+    if (m == 0 || std::isnan(x)) return h;
+    const double back = (double)f;
+    if (back == x) return h;
+    const bool want_up = m == 1 || (m == 3 && x < 0);  // the result must not be below x (RP; RZ of a negative)
+    if (want_up ? back > x : back < x) return h;       // round-to-nearest already went the right way
+    // one step in the wanted direction: within a sign, half bit patterns order like magnitudes
+    return (x > 0) == want_up ? (uint16_t)(h + 1) : (uint16_t)(h - 1);
+}
+// x + y in mode m: an exact zero sum of operands of opposite sign is -0 only when rounding toward -inf
+inline uint16_t add_h(uint16_t x, uint16_t y, int m) {
+    if (isnan_h(x) || isnan_h(y)) return qnan(x, y);
+    const double r = (double)h2f(x) + (double)h2f(y);
+    if (std::isnan(r)) return 0x7e00;
+    if (r == 0 && !((x & 0x7fff) == 0 && (y & 0x7fff) == 0 && (x >> 15) == (y >> 15))) return m == 2 ? 0x8000 : 0;
+    return d2h(r, m);
+}
+// Arm's default NaN (an invalid operation without a NaN operand: inf - inf, 0 * inf, 0 / 0, sqrt(-x)); x86 makes -NaN
+inline uint16_t arith(uint16_t r) { return isnan_h(r) ? 0x7e00 : r; }
+inline bool isinf_h(uint16_t h) { return (h & 0x7fff) == 0x7c00; }
+inline bool iszero_h(uint16_t h) { return (h & 0x7fff) == 0; }
+// FPMulAdd(addend, op1, op2), fused, in mode m (FMLA; FMLS negates op1 first). NaNs: FPProcessNaNs3 (signalling addend,
+// op1, op2, then quiet), and a quiet-NaN addend with an inf * 0 product is the default NaN. The product of two halves is
+// exact; the sum is rounded once in binary64 (std::fma) and once more to binary16 (exact for round-to-nearest; a
+// directed mode can be off by one ulp when the addend dwarfs a tiny product by more than 2^53).
+inline uint16_t fma_h(uint16_t d, uint16_t x, uint16_t y, int m) {
+    const bool inv_prod = (isinf_h(x) && iszero_h(y)) || (iszero_h(x) && isinf_h(y));
+    if (isnan_h(d) || isnan_h(x) || isnan_h(y)) {
+        if (isnan_h(d) && !issnan_h(d) && inv_prod && !issnan_h(x) && !issnan_h(y)) return 0x7e00;
+        if (issnan_h(d)) return d | 0x200;
+        if (issnan_h(x)) return x | 0x200;
+        if (issnan_h(y)) return y | 0x200;
+        if (isnan_h(d)) return d | 0x200;
+        return (isnan_h(x) ? x : y) | 0x200;
+    }
+    const double r = std::fma((double)h2f(x), (double)h2f(y), (double)h2f(d));
+    if (std::isnan(r)) return 0x7e00;
+    if (r == 0) {  // an exact zero: zeros of one sign keep it, otherwise -0 only when rounding toward -inf
+        const bool pz = iszero_h(x) || iszero_h(y), ps = ((x ^ y) >> 15) & 1;
+        if (pz && iszero_h(d) && ps == (d >> 15)) return ps ? 0x8000 : 0;
+        return m == 2 ? 0x8000 : 0;
+    }
+    return d2h(r, m);
+}
+// FRECPS / FRSQRTS (FPRecipStepFused / FPRSqrtStepFused): op1 is negated first (a NaN op1 comes back with its sign
+// flipped), inf * 0 is 2.0 / 1.5, otherwise 2 - op1 * op2 (/ 2) fused (exact in binary64, rounded once)
+inline uint16_t step_h(uint16_t x, uint16_t y, bool rsqrt, int m) {
+    x ^= 0x8000;
+    if (isnan_h(x) || isnan_h(y)) return qnan(x, y);
+    if ((isinf_h(x) && iszero_h(y)) || (iszero_h(x) && isinf_h(y))) return rsqrt ? 0x3e00 : 0x4000;
+    const double r = (rsqrt ? 3.0 : 2.0) + (double)h2f(x) * h2f(y);
+    return arith(d2h(rsqrt ? r / 2 : r, m));
+}
 
 float fmax_(float a, float b) { return a > b ? a : b; }
 float fmin_(float a, float b) { return a < b ? a : b; }
-uint16_t maxnm(uint16_t a, uint16_t b) { if (isnan_h(a) && !isnan_h(b)) return b; if (isnan_h(b) && !isnan_h(a)) return a; if (isnan_h(a)) return qnan(a, b); return f2h(fmax_(h2f(a), h2f(b))); }
-uint16_t minnm(uint16_t a, uint16_t b) { if (isnan_h(a) && !isnan_h(b)) return b; if (isnan_h(b) && !isnan_h(a)) return a; if (isnan_h(a)) return qnan(a, b); return f2h(fmin_(h2f(a), h2f(b))); }
 uint16_t fmax_h(uint16_t a, uint16_t b) { if (isnan_h(a) || isnan_h(b)) return qnan(a, b); float x = h2f(a), y = h2f(b); if (x == 0 && y == 0) return (a & b); return f2h(fmax_(x, y)); }
 uint16_t fmin_h(uint16_t a, uint16_t b) { if (isnan_h(a) || isnan_h(b)) return qnan(a, b); float x = h2f(a), y = h2f(b); if (x == 0 && y == 0) return (a | b); return f2h(fmin_(x, y)); }
+// FPMaxNum / FPMinNum: only a quiet NaN against an operand that is not a quiet NaN drops out (it becomes -inf / +inf);
+// a signalling NaN still goes through the FPMax / FPMin NaN rules (a quiet NaN comes back), and so do signed zeros.
+uint16_t maxnm(uint16_t a, uint16_t b) {
+    const bool qa = isnan_h(a) && !issnan_h(a), qb = isnan_h(b) && !issnan_h(b);
+    if (qa && !qb) a = 0xfc00;
+    else if (qb && !qa) b = 0xfc00;
+    return fmax_h(a, b);
+}
+uint16_t minnm(uint16_t a, uint16_t b) {
+    const bool qa = isnan_h(a) && !issnan_h(a), qb = isnan_h(b) && !issnan_h(b);
+    if (qa && !qb) a = 0x7c00;
+    else if (qb && !qa) b = 0x7c00;
+    return fmin_h(a, b);
+}
 
 // three-same: (U, a, opcode) -> lane op. Returns false for unallocated.
-bool op3(int U, int a, int opc, uint16_t x, uint16_t y, uint16_t d, uint16_t &r) {
+bool op3(int U, int a, int opc, uint16_t x, uint16_t y, uint16_t d, uint16_t &r, int m = 0) {
     float fx = h2f(x), fy = h2f(y);
     switch ((U << 4) | (a << 3) | opc) {
     case 0b00000: r = maxnm(x, y); return true;                               // FMAXNM
-    case 0b00001: r = f2h(std::fma(fx, fy, h2f(d))); return true;             // FMLA
-    case 0b00010: r = f2h(fx + fy); return true;                              // FADD
+    case 0b00001: r = fma_h(d, x, y, m); return true;                         // FMLA
+    case 0b00010: r = add_h(x, y, m); return true;                            // FADD
     case 0b00011:                                                              // FMULX: inf * 0 = +-2
-        r = ((std::isinf(fx) && fy == 0) || (fx == 0 && std::isinf(fy))) ? f2h(std::signbit(fx) != std::signbit(fy) ? -2.0f : 2.0f)
-                                                                          : f2h(fx * fy);
+        r = isnan_h(x) || isnan_h(y) ? qnan(x, y)
+            : ((std::isinf(fx) && fy == 0) || (fx == 0 && std::isinf(fy))) ? f2h(std::signbit(fx) != std::signbit(fy) ? -2.0f : 2.0f)
+                                                                          : d2h((double)fx * fy, m);
         return true;
     case 0b00100: r = fx == fy ? 0xffff : 0; return true;                     // FCMEQ
     case 0b00110: r = fmax_h(x, y); return true;                              // FMAX
-    case 0b00111: r = f2h(2.0f - fx * fy); return true;                       // FRECPS
+    case 0b00111: r = step_h(x, y, false, m); return true;                    // FRECPS
     case 0b01000: r = minnm(x, y); return true;                               // FMINNM
-    case 0b01001: r = f2h(std::fma(-fx, fy, h2f(d))); return true;            // FMLS
-    case 0b01010: r = f2h(fx - fy); return true;                              // FSUB
+    case 0b01001: r = fma_h(d, x ^ 0x8000, y, m); return true;                // FMLS
+    case 0b01010: r = isnan_h(x) || isnan_h(y) ? qnan(x, y) : add_h(x, y ^ 0x8000, m); return true;  // FSUB
     case 0b01110: r = fmin_h(x, y); return true;                              // FMIN
-    case 0b01111: r = f2h((3.0f - fx * fy) / 2.0f); return true;              // FRSQRTS
-    case 0b10011: r = f2h(fx * fy); return true;                              // FMUL
+    case 0b01111: r = step_h(x, y, true, m); return true;                     // FRSQRTS
+    case 0b10011: r = isnan_h(x) || isnan_h(y) ? qnan(x, y) : arith(d2h((double)fx * fy, m)); return true;  // FMUL
     case 0b10100: r = fx >= fy ? 0xffff : 0; return true;                     // FCMGE
     case 0b10101: r = std::fabs(fx) >= std::fabs(fy) ? 0xffff : 0; return true;  // FACGE
-    case 0b10111: r = f2h(fx / fy); return true;                              // FDIV
-    case 0b11010: r = f2h(std::fabs(fx - fy)); return true;                   // FABD
+    case 0b10111: r = isnan_h(x) || isnan_h(y) ? qnan(x, y) : arith(d2h((double)fx / fy, m)); return true;  // FDIV
+    case 0b11010: r = (isnan_h(x) || isnan_h(y) ? qnan(x, y) : add_h(x, y ^ 0x8000, m)) & 0x7fff; return true;  // FABD
     case 0b11100: r = fx > fy ? 0xffff : 0; return true;                      // FCMGT
     case 0b11101: r = std::fabs(fx) > std::fabs(fy) ? 0xffff : 0; return true;  // FACGT
     }
     return false;
 }
 // pairwise ops of three-same (U=1): FMAXNMP 000, FADDP 010, FMAXP 110; a=1: FMINNMP 000, FMINP 110
-bool pairwise(int a, int opc, uint16_t x, uint16_t y, uint16_t &r) {
+bool pairwise(int a, int opc, uint16_t x, uint16_t y, uint16_t &r, int m = 0) {
     switch ((a << 3) | opc) {
     case 0b0000: r = maxnm(x, y); return true;
-    case 0b0010: r = f2h(h2f(x) + h2f(y)); return true;
+    case 0b0010: r = add_h(x, y, m); return true;
     case 0b0110: r = fmax_h(x, y); return true;
     case 0b1000: r = minnm(x, y); return true;
     case 0b1110: r = fmin_h(x, y); return true;
@@ -122,7 +201,7 @@ bool op2(GuestThread &t, int U, int a, int opc, uint16_t x, uint16_t &r) {
     case 0b1111010: r = cvt_int(f, 1, true); return true;     // FCVTPU
     case 0b1111011: r = cvt_int(f, 3, true); return true;     // FCVTZU
     case 0b1111101: r = f2h(1.0f / std::sqrt(f)); return true;  // FRSQRTE (exact; ARM's is an estimate)
-    case 0b1111111: r = f2h(std::sqrt(f)); return true;       // FSQRT
+    case 0b1111111: r = isnan_h(x) ? qnan(x, x) : arith(d2h(std::sqrt((double)f), fpcr_mode(t))); return true;  // FSQRT
     }
     return false;
 }
@@ -208,13 +287,13 @@ bool fp16_interpret(GuestThread &t, u32 insn) {
                 const V &src = i < lanes / 2 ? n : m;
                 int k = (i % (lanes / 2)) * 2;
                 uint16_t v;
-                if (!pairwise(a, opc, lane(src, k), lane(src, k + 1), v)) return false;
+                if (!pairwise(a, opc, lane(src, k), lane(src, k + 1), v, fpcr_mode(t))) return false;
                 set_lane(r, i, v);
             }
         } else {
             for (int i = 0; i < lanes; i++) {
                 uint16_t v;
-                if (!op3(U, a, opc, lane(n, i), lane(m, i), lane(d, i), v)) return false;
+                if (!op3(U, a, opc, lane(n, i), lane(m, i), lane(d, i), v, fpcr_mode(t))) return false;
                 set_lane(r, i, v);
             }
         }
@@ -238,8 +317,8 @@ bool fp16_interpret(GuestThread &t, u32 insn) {
             uint16_t v;
             if (kind == 0) op3(0, 0, 1, lane(n, i), e, lane(d, i), v);
             else if (kind == 1) op3(0, 1, 1, lane(n, i), e, lane(d, i), v);
-            else if (kind == 2) op3(1, 0, 3, lane(n, i), e, 0, v);
-            else op3(0, 0, 3, lane(n, i), e, 0, v);
+            else if (kind == 2) op3(1, 0, 3, lane(n, i), e, 0, v, fpcr_mode(t));
+            else op3(0, 0, 3, lane(n, i), e, 0, v, fpcr_mode(t));
             set_lane(r, i, v);
         }
         if (sel) r = {r[0] & 0xffff, 0};
@@ -268,7 +347,7 @@ bool fp16_interpret(GuestThread &t, u32 insn) {
         V n = j.GetVector(Rn);
         uint16_t x = lane(n, 0), y = lane(n, 1), v;
         int p = opc == 0b01100 ? 0 : opc == 0b01101 ? 2 : opc == 0b01111 ? 6 : -1;
-        if (p < 0 || (o1 && p == 2) || !pairwise(o1, p, x, y, v)) return false;
+        if (p < 0 || (o1 && p == 2) || !pairwise(o1, p, x, y, v, fpcr_mode(t))) return false;
         j.SetVector(Rd, {v, 0});
         return true;
     }
@@ -278,10 +357,15 @@ bool fp16_interpret(GuestThread &t, u32 insn) {
         int p = opc == 0b01100 ? 0 : opc == 0b01111 ? 6 : -1;
         if (p < 0) return false;
         V n = j.GetVector(Rn);
-        int lanes = Q ? 8 : 4;
-        uint16_t acc = lane(n, 0);
-        for (int i = 1; i < lanes; i++) pairwise(o1, p, acc, lane(n, i), acc);
-        j.SetVector(Rd, {acc, 0});
+        const int lanes = Q ? 8 : 4;
+        // Reduce() in the Arm pseudocode pairs lanes as a tree (op(Reduce(lower half), Reduce(upper half))), not left to
+        // right. The order shows with a NaN: FMAXNMV / FMINNMV turn a signalling NaN into a quiet NaN that the next
+        // FPMaxNum / FPMinNum drops, so the other lane of that pair is lost (Apple M-series hardware does the same).
+        uint16_t v[8];
+        for (int i = 0; i < lanes; i++) v[i] = lane(n, i);
+        for (int w = lanes; w > 1; w /= 2)
+            for (int i = 0; i < w / 2; i++) pairwise(o1, p, v[2 * i], v[2 * i + 1], v[i]);
+        j.SetVector(Rd, {v[0], 0});
         return true;
     }
     // Scalar integer -> FP16 (SCVTF/UCVTF Hd, Wn/Xn). dynarmic raises UnallocatedEncoding for
