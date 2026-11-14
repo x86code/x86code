@@ -2,10 +2,10 @@
 //
 // iOS 27's RenderBox, CoreImage, Vision, ... use half-precision vector arithmetic (about 70k instructions in the
 // shared cache: fmla/fmul by element, three-same arithmetic and compares, conversions). dynarmic hands each of them to
-// UserCallbacks::InterpreterFallback; this file executes them on the flushed guest state (lanes computed in binary32
-// and rounded to binary16 once, which is exact for add/sub/mul/div/sqrt; fused multiply-add rounds twice). FPCR's
-// rounding mode is honoured by add/sub/mul/div/sqrt (computed in binary64, see d2h) and the explicit-rounding
-// conversions; FZ16 and DN are not modelled.
+// UserCallbacks::InterpreterFallback; this file executes them on the flushed guest state. Arithmetic lanes are computed
+// in binary64 and rounded to binary16 in FPCR's rounding mode (d2h: correctly rounded for add/sub/mul/div/sqrt; fused
+// multiply-add can be one ulp off under a directed mode, see fma_h); NaNs follow Arm's FPProcessNaNs. FZ16, DN, AH and
+// the FPSR flags are not modelled.
 #include "a64.h"
 #include <cmath>
 #include <cstdint>
@@ -313,12 +313,13 @@ bool fp16_interpret(GuestThread &t, u32 insn) {
         else return false;
         V n = j.GetVector(Rn), d = j.GetVector(Rd), r = sel ? V{0, 0} : d;
         const uint16_t e = lane(j.GetVector(rm), idx);
+        const int mode = fpcr_mode(t);
         for (int i = 0; i < lanes; i++) {
             uint16_t v;
-            if (kind == 0) op3(0, 0, 1, lane(n, i), e, lane(d, i), v);
-            else if (kind == 1) op3(0, 1, 1, lane(n, i), e, lane(d, i), v);
-            else if (kind == 2) op3(1, 0, 3, lane(n, i), e, 0, v, fpcr_mode(t));
-            else op3(0, 0, 3, lane(n, i), e, 0, v, fpcr_mode(t));
+            if (kind == 0) op3(0, 0, 1, lane(n, i), e, lane(d, i), v, mode);       // FMLA
+            else if (kind == 1) op3(0, 1, 1, lane(n, i), e, lane(d, i), v, mode);  // FMLS
+            else if (kind == 2) op3(1, 0, 3, lane(n, i), e, 0, v, mode);           // FMUL
+            else op3(0, 0, 3, lane(n, i), e, 0, v, mode);                          // FMULX
             set_lane(r, i, v);
         }
         if (sel) r = {r[0] & 0xffff, 0};
