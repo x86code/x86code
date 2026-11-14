@@ -717,7 +717,16 @@ fi
 # offers the rebuild; X86SIM_AOT_AUTOUPDATE=1 runs `x86sim-aot update` (2 builders, nice 19, idle IO) right away.
 AOTBIN=$X/tools/launcher/target/release/x86sim-aot
 if [ -x "$AOTBIN" ]; then
-	(sleep 90; nice -n 19 ionice -c 3 "$AOTBIN" --jc "$JC" --device "$D" status > "$ST/aot-status.txt" 2>&1
+	# Launch 1: and only once the phone is idle (its scope used under half a core over 5 s; at most 5 min more): the
+	# check reads the image, its index and every training profile (~7 CPU s, ~12 s, GBs of IO, 1.8 GB RSS) and landed in
+	# the middle of any app opened ~1.5 min after boot.
+	(sleep 90
+	 CGS=/sys/fs/cgroup$(awk -F: '/^0::/{print $NF; exit}' /proc/self/cgroup)/cpu.stat
+	 for _ in $(seq 60); do
+		u0=$(awk '/^usage_usec/{print $2}' "$CGS" 2>/dev/null) || break; [ -n "$u0" ] || break; sleep 5
+		u1=$(awk '/^usage_usec/{print $2}' "$CGS" 2>/dev/null); [ $(( ${u1:-0} - u0 )) -lt 2500000 ] && break
+	 done
+	 nice -n 19 ionice -c 3 "$AOTBIN" --jc "$JC" --device "$D" status > "$ST/aot-status.txt" 2>&1
 	 if [ "${X86SIM_AOT_AUTOUPDATE:-0}" = 1 ] && grep -q "need rebuilding" "$ST/aot-status.txt"; then
 		"$AOTBIN" --jc "$JC" --device "$D" update --workers 2 > "$ST/aot-update.log" 2>&1
 	 fi) < /dev/null > /dev/null 2>&1 &
