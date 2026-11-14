@@ -42,7 +42,7 @@ Kills (SIGKILL, as jetsam; launchd / RunningBoard relaunch what is needed on the
     of the last touch (or of jetsam's start); at an untouched home screen HOT daemons get IDLE too.
   - X86SIM_JETSAM_DEMAND (default below): on-demand daemons without EnablePressuredExit that a basic phone only needs
     for a feature in use (Siri's assets, Wallet's passd): as idle-exit daemons once clean (tracked, not dirty).
-    assistantd too (RAM 4: dictation / Siri; the keyboard and Siri look it up and launchd starts it).
+    (assistantd was one too (RAM 4) until Launch 1: see RESIDENT.)
   - X86SIM_JETSAM_XPC (default 1): system XPC services (.xpc bundles) as idle-exit daemons once tracked and clean (RAM 10).
   - X86SIM_JETSAM_DIRTY (default siriactionsd, corespeechd): such daemons also when dirty, after X86SIM_JETSAM_DIRTY_IDLE s CPU-idle.
 Something relaunched within RELAUNCH s of its kill (a launch event, or a client that needed it) doubles its grace
@@ -76,7 +76,7 @@ HOT = set(os.environ.get("X86SIM_JETSAM_HOT", "containermanagerd,containermanage
 DEMAND = set(os.environ.get("X86SIM_JETSAM_DEMAND", "passd,assistant_cdmd,ContextService,"
                             "STExtractionService,localspeechrecognition,com.apple.datamigrator,"
                             "com.apple.MobileAsset.DownloadService.Builtin,siriactionsd,"
-                            "assetsubscriptiond,AppIntentsLiveEntityService,assistantd").split(",")) - {""}
+                            "assetsubscriptiond,AppIntentsLiveEntityService").split(",")) - {""}
 # RAM 7: kept resident although idle-exit-able. UserFontManager is fontservicesd's XPC service; fontservicesd's activity
 # com.apple.fontservicesd.subscription-support (Interval 300) asks it for the font providers' subscription info every
 # 5 min (0.2 s of CPU). Reclaimed 30 s after each ask, every ask relaunched it: ~140 MB PSS (dyld cache fault-around)
@@ -91,7 +91,14 @@ DEMAND = set(os.environ.get("X86SIM_JETSAM_DEMAND", "passd,assistant_cdmd,Contex
 # this boot (com.apple.SpeakSelection PreferencesLastLoadedOn = kern.boottime): after an idle kill it came back with an
 # empty database for the rest of the boot (AVSpeechSynthesisVoice.speechVoices() empty). A Mac's simulator never
 # kills it. ~45 MB.
-RESIDENT = set(os.environ.get("X86SIM_JETSAM_RESIDENT", "UserFontManager,fontservicesd,nsurlsessiond,axassetsd").split(",")) - {""}
+# Launch 1 (2026-11-14): assistantd. Settings looks it up at every open (which part of it: not traced), so once
+# reclaimed (DEMAND, 30 s idle) each Settings open relaunched it 1-2 s into the launch, and its startup woke ~8
+# daemons (siriknowledged, sirittsd,
+# corespeechd, ContextService, assetsubscriptiond, localspeechrecognition, STExtractionService, mobileassetd's asset
+# queries): ~4 CPU s on the device during the app's launch (device CPU in the first 6 s 8.6 -> 4.8 s, medians of 6),
+# then reclaimed again 30 s later. Resident it is ~26 MB, and the others stay reclaimed (only its start asks for them).
+RESIDENT = set(os.environ.get("X86SIM_JETSAM_RESIDENT", "UserFontManager,fontservicesd,nsurlsessiond,axassetsd,"
+                              "assistantd").split(",")) - {""}
 # watchOS: chronod serves the watch face's complications, so ClockFace asks for it again at once. Reclaimed, it "came back
 # 0 s after its kill" each time and relaunched ~13 widget extensions, which were killed again 10 s later (52 extension
 # kills in 20 idle minutes, at 30, 60, 120, ... s). iOS reclaims it for good (no face holds it there).
