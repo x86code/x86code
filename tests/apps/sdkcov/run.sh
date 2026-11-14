@@ -33,6 +33,11 @@ DATA=$(xs get_app_container "$BID" data 2>/dev/null)
 [ -d "$DATA" ] || { echo "sdkcov: no data container for $BID" >&2; exit 1; }
 RES=$DATA/Documents/x86test-results.txt
 rm -f "$X86SIM_DEVICE"/data/tmp/sdkcov-*.out "$X86SIM_DEVICE"/data/tmp/sdkcov-*.err
+# tvOS / watchOS / visionOS: func:HomeKit.manager's Home access prompt would cover the app for the rest of the run (the
+# focus, window and snapshot checks then fail "not foreground-active"): granted up front, as ref-mac.sh does on Apple's
+case $plat in tvos|watchos|xros) sqlite3 "$X86SIM_DEVICE/data/Library/TCC/TCC.db" "insert or replace into access
+	(service, client, client_type, auth_value, auth_reason, auth_version, flags) values
+	('kTCCServiceWillow', '$BID', 0, 2, 4, 1, 0)" 2>/dev/null || echo "  note: HomeKit not pre-granted (no TCC.db yet?)" ;; esac
 [ "$fresh" = 1 ] && rm -f "$RES" "$DATA/Documents/sdkcov-progress" "$DATA/Documents/sdkcov-coverage.json"
 # a finished previous run starts over by itself (Harness.prepare); an unfinished one resumes
 echo "sdkcov $plat on $(basename "$X86SIM_DEVICE"): results $RES"
