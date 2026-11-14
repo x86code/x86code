@@ -41,6 +41,15 @@ trap cleanup EXIT
 echo "ref-mac: $rt on $dev"
 xcrun simctl boot "$dev" && xcrun simctl bootstatus "$dev" -b >/dev/null
 xcrun simctl install "$dev" "$W/sdkcov-$plat.app" || exit 1
+# tvOS / watchOS / visionOS: func:HomeKit.manager's HMHomeManager asks for Home access; the prompt would take focus from the app
+# for the rest of the run (More_tvOS.swift's focus, window and snapshot checks need the app active; on the watch the
+# app stayed inactive behind it, applicationState 1): grant it up front
+# (simctl privacy over ssh fails here: "Failed to create TCC authorization record: Operation not permitted"; the
+# device's TCC.db takes the row directly, as simctl would write it)
+case $plat in tvos|watchos|xros) xcrun simctl privacy "$dev" grant homekit com.x86sim.test.sdkcov >/dev/null 2>&1 ||
+	sqlite3 "$HOME/Library/Developer/CoreSimulator/Devices/$dev/data/Library/TCC/TCC.db" "insert or replace into access
+		(service, client, client_type, auth_value, auth_reason, auth_version, flags) values
+		('kTCCServiceWillow', 'com.x86sim.test.sdkcov', 0, 2, 4, 1, 0)" || echo "ref-mac: HomeKit not pre-granted" ;; esac
 data=$(xcrun simctl get_app_container "$dev" com.x86sim.test.sdkcov data)
 res=$data/Documents/x86test-results.txt
 t0=$(date +%s); n=0

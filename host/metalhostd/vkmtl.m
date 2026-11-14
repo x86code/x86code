@@ -30,6 +30,9 @@
 #import <sys/un.h>
 #import <pthread.h>
 #import <stdatomic.h>
+#import <fcntl.h>
+#import <errno.h>
+#import <string.h>
 #import <unistd.h>
 #include "vkmtl_proto.h"
 
@@ -820,6 +823,7 @@ typedef NS_ENUM(int, VKCBState) { VKCBRecording, VKCBCommitted, VKCBDone };
 	pthread_mutex_t _lock;
 	pthread_cond_t _cond;
 	NSMutableArray* _keep;     // resources used (retained until completion, like retainedReferences)
+	uint32_t* _surfs; uint32_t _nsurfs;  // IOSurfaces under textures in _keep: their implicit-sync counts (see vk_pending)
 }
 - (void)addCommand:(uint32_t)kind data:(const void*)d size:(uint32_t)n;
 - (void)appendCommands:(const void*)d size:(size_t)n count:(uint32_t)count;
@@ -1611,6 +1615,24 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 }
 @end
 
+// x86Sim: implicit IOSurface GPU sync (see host/iosurfaced: a Lock without kIOSurfaceLockAvoidSync waits until the
+// surface's count is 0). Every committed command buffer counts once for each IOSurface whose texture it uses, until
+// mtlvk reports it done: then a CPU reader in any process sees what the GPU wrote, as with Apple's driver.
+#define IOSURF_PENDING_PATH "/private/tmp/x86sim-iosurface-pending"
+#define IOSURF_PENDING_N 65536
+static _Atomic uint32_t* vk_pending(void) {
+	static _Atomic uint32_t* table;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		int fd = open(IOSURF_PENDING_PATH, O_RDWR);
+		if (fd < 0) { VKLOG("%s: %s: no implicit IOSurface sync", IOSURF_PENDING_PATH, strerror(errno)); return; }
+		void* m = mmap(NULL, IOSURF_PENDING_N * sizeof(uint32_t), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		close(fd);
+		if (m != MAP_FAILED) table = m;
+	});
+	return table;
+}
+
 @implementation VKMTLCommandBuffer
 - (instancetype)initWithQueue:(VKMTLCommandQueue*)q retained:(BOOL)retained {
 	self = [super init];
@@ -1626,7 +1648,7 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 	return self;
 }
 - (void)dealloc {
-	free(_cmds.p);
+	free(_cmds.p); free(_surfs);
 	[_queue release]; [_scheduled release]; [_completed release]; [_keep release]; [_error release];
 	pthread_mutex_destroy(&_lock); pthread_cond_destroy(&_cond);
 	[super dealloc];
@@ -1711,6 +1733,18 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 	}
 	for (MTLCommandBufferHandler h in sched) h((id<MTLCommandBuffer>)self);
 	[sched release];
+	_Atomic uint32_t* pend = vk_pending();
+	if (pend) for (id o in _keep) {
+		if (![o isKindOfClass:[VKMTLTexture class]]) continue;
+		IOSurfaceRef sf = ((VKMTLTexture*)o)->_iosurface;
+		if (!sf) continue;
+		uint32_t sid = IOSurfaceGetID(sf), i;
+		for (i = 0; i < _nsurfs && _surfs[i] != sid; i++) {}
+		if (i < _nsurfs) continue;
+		_surfs = realloc(_surfs, (_nsurfs + 1) * sizeof(uint32_t));
+		_surfs[_nsurfs++] = sid;
+		atomic_fetch_add(&pend[sid % IOSURF_PENDING_N], 1);
+	}
 	vk_push_copied();
 	wbuf b = { 0 };
 	wb_u64(&b, _queue->_vkid); wb_u64(&b, _vkid); wb_u32(&b, _count); wb_u32(&b, 0);
@@ -1735,6 +1769,10 @@ static void vk_att(vkmtl_attachment* a, MTLRenderPassAttachmentDescriptor* d, VK
 		done = [_completed copy];
 		[_completed removeAllObjects];
 	}
+	// the GPU is done with the surfaces: CPU locks may go ahead (before the handlers: they may read them too)
+	_Atomic uint32_t* pend = _nsurfs ? vk_pending() : NULL;
+	for (uint32_t i = 0; pend && i < _nsurfs; i++) atomic_fetch_sub(&pend[_surfs[i] % IOSURF_PENDING_N], 1);
+	free(_surfs); _surfs = NULL; _nsurfs = 0;
 	for (MTLCommandBufferHandler h in done) h((id<MTLCommandBuffer>)self);
 	[done release];
 	[_keep removeAllObjects];

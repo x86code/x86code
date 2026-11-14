@@ -6,6 +6,7 @@
 //   (the "machine" never sleeps). Interposition only reaches callers outside the dyld
 //   shared cache (plugins, daemons' own code), which is where these calls come from.
 #include <IOKit/IOKitLib.h>
+#include <TargetConditionals.h>
 #include <Block.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <bsm/audit.h>
@@ -366,6 +367,71 @@ __attribute__((constructor)) static void shim_ifimage_init(void)
 {
 	_dyld_register_func_for_add_image(shim_ifimage_added);
 }
+
+// x86Sim: watchOS face snapshots. At every boot ClockFace has nanotimekitd's NTKFaceSnapshotService render the face
+// gallery (~150 faces and variants; nothing is persisted across boots on this platform). Most gallery faces carry
+// complications of apps the watchOS simulator runtime ships only as localization stubs (no executable: Heart Rate,
+// Activity, World Clock, Timer, Mind, Weather), so chronod has no extension for them, the widget scene never gets live
+// content, and each such complication waits out its content confirmation: 5 s (ensureContentWithTimeout:) + 10 s
+// (prepareForSnapshotWithTimeout:, +[NTKWidgetRichComplicationView _widgetSnapshotTimeout]) per face, then renders
+// empty anyway. The pass took ~37 min, and all that time the service stayed dirty (an XPC transaction) at 35-260 MB
+// PSS (each render faults ~150-200 MB of dyld cache / AOT image back in), and relaunched at once when reclaimed.
+// For a widget whose extension the host's CHSWidgetExtensionProvider does not know, the same calls run with a 50 ms
+// timeout: the same empty complication, ~0.2-0.5 s per face, the pass is done in ~2-3 min and the idle service exits.
+// Widgets of installed extensions keep their timeouts. X86SIM_CHUIS_FAST=0: off.
+#if TARGET_OS_WATCH
+static void (*shim_chuis_ensure_orig)(id, SEL, double, void*);
+static void (*shim_chuis_snap_orig)(id, SEL, double, id, void*);
+static void (*shim_chuis_prep_orig)(id, SEL, double, void*);
+static Ivar shim_chuis_prov, shim_chuis_widget;
+static double shim_chuis_timeout(id self, double t)
+{
+	id prov = shim_chuis_prov ? object_getIvar(self, shim_chuis_prov) : nil;
+	id w = shim_chuis_widget ? object_getIvar(self, shim_chuis_widget) : nil;
+	id ident = w ? ((id (*)(id, SEL)) objc_msgSend)(w, sel_registerName("extensionIdentity")) : nil;
+	if (!prov || !ident || t <= 0.05)
+		return t;
+	id ext = ((id (*)(id, SEL, id)) objc_msgSend)(prov, sel_registerName("widgetExtensionForExtensionIdentity:"), ident);
+	return ext ? t : 0.05;
+}
+static void shim_chuis_ensure(id self, SEL sel, double t, void* completion)
+{
+	shim_chuis_ensure_orig(self, sel, shim_chuis_timeout(self, t), completion);
+}
+static void shim_chuis_snap(id self, SEL sel, double t, id queue, void* completion)
+{
+	shim_chuis_snap_orig(self, sel, shim_chuis_timeout(self, t), queue, completion);
+}
+static void shim_chuis_prep(id self, SEL sel, double t, void* completion)
+{
+	shim_chuis_prep_orig(self, sel, shim_chuis_timeout(self, t), completion);
+}
+static void shim_chuis_added(const struct mach_header* mh, intptr_t slide)
+{
+	static bool done;
+	Class h = objc_getClass("CHUISWidgetHostViewController"), wh = objc_getClass("CHUISWatchComplicationsWidgetHostViewController");
+	if (done || !h || !wh)
+		return;
+	done = true;
+	shim_chuis_prov = class_getInstanceVariable(h, "_extensionProvider");
+	shim_chuis_widget = class_getInstanceVariable(h, "_widget");
+	if (!shim_chuis_prov || !shim_chuis_widget)
+		return;
+	Method m;
+	if ((m = class_getInstanceMethod(h, sel_registerName("ensureContentWithTimeout:completion:"))))
+		shim_chuis_ensure_orig = (void*) method_setImplementation(m, (IMP) shim_chuis_ensure);
+	if ((m = class_getInstanceMethod(h, sel_registerName("snapshotContentWithTimeout:queue:completion:"))))
+		shim_chuis_snap_orig = (void*) method_setImplementation(m, (IMP) shim_chuis_snap);
+	if ((m = class_getInstanceMethod(wh, sel_registerName("prepareForSnapshotWithTimeout:completion:"))))
+		shim_chuis_prep_orig = (void*) method_setImplementation(m, (IMP) shim_chuis_prep);
+}
+__attribute__((constructor)) static void shim_chuis_init(void)
+{
+	const char* e = getenv("X86SIM_CHUIS_FAST");
+	if (!(e && *e == '0'))
+		_dyld_register_func_for_add_image(shim_chuis_added);
+}
+#endif
 
 // x86Sim Platforms 1: tvOS system sleep. PineBoard's sleep (power button held, Settings > Sleep Now, the idle timer) runs
 // -[PBPowerManager sleepSystemWithReason:completion:]: its own will-sleep step sends HDMI-CEC standby through

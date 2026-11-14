@@ -7,7 +7,7 @@ set -euo pipefail
 S=${1:?src}; O=${2:?out}; mkdir -p "$O"
 SIM="xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=17.0 -O2"
 MAC="xcrun -sdk macosx clang -arch arm64 -O2"
-for t in hello bench threads signals fp16 fp16v sharestress icstress fusestress clockprobe timerprobe netprobe; do $SIM -o "$O/$t.sim" "$S/$t.c"; done
+for t in hello bench threads signals fp16 fp16v sharestress icstress fusestress clockprobe timerprobe netprobe stackovf; do $SIM -o "$O/$t.sim" "$S/$t.c"; done
 # Platforms 1: x86sim-aot's builder process (icstress) for tvOS and watchOS runtimes: dyld_sim runs only a main
 # executable of its own platform
 xcrun -sdk appletvsimulator clang -arch arm64 -mtvos-simulator-version-min=17.0 -O2 -o "$O/icstress-tvos.sim" "$S/icstress.c"

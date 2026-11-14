@@ -3,9 +3,9 @@
 // iOS 27's RenderBox, CoreImage, Vision, ... use half-precision vector arithmetic (about 70k instructions in the
 // shared cache: fmla/fmul by element, three-same arithmetic and compares, conversions). dynarmic hands each of them to
 // UserCallbacks::InterpreterFallback; this file executes them on the flushed guest state. Arithmetic lanes are computed
-// in binary64 and rounded to binary16 in FPCR's rounding mode (d2h: correctly rounded for add/sub/mul/div/sqrt; fused
-// multiply-add can be one ulp off under a directed mode, see fma_h); NaNs follow Arm's FPProcessNaNs. FZ16, DN, AH and
-// the FPSR flags are not modelled.
+// in binary64 and rounded to binary16 in FPCR's rounding mode (d2h: correctly rounded in every mode; fused multiply-add
+// feeds it binary64's rounding error of the sum too, see fma_h); NaNs follow Arm's FPProcessNaNs. FZ16, DN, AH and the
+// FPSR flags are not modelled.
 #include "a64.h"
 #include <cmath>
 #include <cstdint>
@@ -59,8 +59,12 @@ inline bool isinf_h(uint16_t h) { return (h & 0x7fff) == 0x7c00; }
 inline bool iszero_h(uint16_t h) { return (h & 0x7fff) == 0; }
 // FPMulAdd(addend, op1, op2), fused, in mode m (FMLA; FMLS negates op1 first). NaNs: FPProcessNaNs3 (signalling addend,
 // op1, op2, then quiet), and a quiet-NaN addend with an inf * 0 product is the default NaN. The product of two halves is
-// exact; the sum is rounded once in binary64 (std::fma) and once more to binary16 (exact for round-to-nearest; a
-// directed mode can be off by one ulp when the addend dwarfs a tiny product by more than 2^53).
+// exact; the sum p + a isn't always (a product down to 2^-48 under an addend up to 2^16 spans 64 bits), so binary64
+// rounds it to r, leaving an exact residual e (TwoSum). Rounding is monotone, so if r isn't a half (or a midpoint:
+// that needs p + a within a binary64 ulp of a, near a half) p + a lies between the same halves as r and d2h is right in
+// every mode. If r is a half and e != 0 it is still the nearest half (round-to-nearest is exact), but a directed mode
+// must see which side p + a is on: r moves one binary64 step that way, far short of the next half (65504 + a step
+// overflows to inf under RP, as p + a does).
 inline uint16_t fma_h(uint16_t d, uint16_t x, uint16_t y, int m) {
     const bool inv_prod = (isinf_h(x) && iszero_h(y)) || (iszero_h(x) && isinf_h(y));
     if (isnan_h(d) || isnan_h(x) || isnan_h(y)) {
@@ -71,12 +75,17 @@ inline uint16_t fma_h(uint16_t d, uint16_t x, uint16_t y, int m) {
         if (isnan_h(d)) return d | 0x200;
         return (isnan_h(x) ? x : y) | 0x200;
     }
-    const double r = std::fma((double)h2f(x), (double)h2f(y), (double)h2f(d));
+    const double p = (double)h2f(x) * h2f(y), a = h2f(d);
+    double r = std::fma((double)h2f(x), (double)h2f(y), a);  // == p + a rounded once; never left to fp-contract
     if (std::isnan(r)) return 0x7e00;
     if (r == 0) {  // an exact zero: zeros of one sign keep it, otherwise -0 only when rounding toward -inf
         const bool pz = iszero_h(x) || iszero_h(y), ps = ((x ^ y) >> 15) & 1;
         if (pz && iszero_h(d) && ps == (d >> 15)) return ps ? 0x8000 : 0;
         return m == 2 ? 0x8000 : 0;
+    }
+    if (m && std::isfinite(r) && (double)(_Float16)r == r) {
+        const double b = r - p, e = (p - (r - b)) + (a - b);
+        if (e != 0) r = std::nextafter(r, e > 0 ? INFINITY : -INFINITY);
     }
     return d2h(r, m);
 }
