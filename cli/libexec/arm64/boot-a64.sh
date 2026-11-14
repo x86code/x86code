@@ -238,12 +238,22 @@ TV_UI_SLIM="com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd com
 # Both: assetsubscriptiond (+ mobileassetd) as on iOS: it makes data/private/var/db/assetsubscriptiond, whose
 # UAFAssetSubscriptions.db assistantd opened 100-400 times a boot without it (sqlite "unable to open database file").
 # Watch: geod / navd / mapssyncd (on demand) as on iOS: without them the watch's Maps drew its empty grid, no tiles.
+# Watch + visionOS: ctkd, syncdefaultsd, accountsd, amsaccountsd (on demand, ~20-50 MB each once looked up), all in
+# Apple's simulator (ref-mac.sh watchos / xros, 27.2): without them TKTokenWatcher listed no tokens (Apple's: ctkd's
+# com.apple.setoken + setoken:aks), NSUbiquitousKeyValueStore.synchronize() was false (com.apple.kvsd) and StoreKit's
+# Storefront.current was nil (Apple's: USA 143441, from the simulator's local App Store sandbox account in accountsd).
+# visionOS also: locationd (feature "location": CLLocationManager.locationServicesEnabled() was false, Apple's true),
+# FileProvider (on demand: NSFileProviderManager answered NSCocoaErrorDomain 4099, no fileproviderd; Apple's
+# NSFileProviderErrorDomain -2001) and devicemanagementclient.managedappsd (on demand: ManagedApp's configuration stream
+# yielded nil at once for lack of it; Apple's yields nothing for an unmanaged app). With these ATTrackingManager's
+# status read notDetermined (0) as on Apple's, not restricted (1).
 WATCH_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Carousel com.apple.sleepd com.apple.TextInput.kbd
 	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.campo com.apple.splashboardd
 	com.apple.nanoregistryd com.apple.nanoregistrylaunchd com.apple.nanotimekitd com.apple.carouselecomoded
 	com.apple.assetsubscriptiond com.apple.mobileassetd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd
 	com.apple.CoreAuthentication.daemon com.apple.storekitd com.apple.quicklook.ThumbnailsAgent com.apple.voiced
-	com.apple.accessibility.axassetsd com.apple.wcd com.apple.locationd"
+	com.apple.accessibility.axassetsd com.apple.wcd com.apple.locationd com.apple.healthd
+	com.apple.ctkd com.apple.syncdefaultsd com.apple.accountsd com.apple.amsaccountsd"
 WATCH_UI_SLIM="com.apple.backboardd com.apple.Carousel com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.nanoregistryd com.apple.nanotimekitd"
 # Platforms 2: visionOS. SurfBoard is its SpringBoard; vhmdd (the simulator's virtual head-mounted display,
@@ -260,7 +270,9 @@ XR_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.SurfBoard c
 	com.apple.usernotificationsd com.apple.assistantd com.apple.splashboardd com.apple.assetsubscriptiond
 	com.apple.mobileassetd com.apple.searchd com.apple.corespotlightservice
 	com.apple.CoreAuthentication.daemon com.apple.storekitd com.apple.quicklook.ThumbnailsAgent com.apple.midiserver-sim
-	com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd"
+	com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd
+	com.apple.ctkd com.apple.syncdefaultsd com.apple.accountsd com.apple.amsaccountsd
+	com.apple.locationd com.apple.FileProvider com.apple.devicemanagementclient.managedappsd"
 XR_UI_SLIM="com.apple.backboardd com.apple.SurfBoard com.apple.vhmdd com.apple.wakeboardd com.apple.RealityEnvironment com.apple.TextInput.kbd
 	com.apple.FileCoordination"
 # No fpsim2host on tvOS / watchOS: their FileProvider has no FPSimulatorSupportInterface (no Files app), so it exited 1
