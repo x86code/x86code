@@ -223,5 +223,13 @@ struct RootView: View {
 struct SDKCovApp: App {
     @StateObject var runner = Runner.shared
     init() { Runner.shared.start() }
-    var body: some Scene { WindowGroup { RootView().environmentObject(runner) } }
+    var body: some Scene {
+        WindowGroup { RootView().environmentObject(runner) }
+        #if os(visionOS)
+        // More_visionOS.swift's window / immersive-space / compositor checks open these
+        WindowGroup(id: "sdkcov-volume") { SDKCovScenes.volume() }.windowStyle(.volumetric)
+        ImmersiveSpace(id: "sdkcov-immersive") { SDKCovScenes.immersive() }
+        ImmersiveSpace(id: "sdkcov-compositor") { SDKCovScenes.compositor() }
+        #endif
+    }
 }

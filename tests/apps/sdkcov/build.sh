@@ -8,16 +8,19 @@ X86SIM_ROOT=${X86SIM_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
 . "$X86SIM_ROOT/build/mac-env.sh"
 A=$X86SIM_ROOT/tests/apps; S=$A/sdkcov; OUT=$X86SIM_SCRATCH/apps; mkdir -p "$OUT"
 for p in ${*:-ios tvos watchos xros}; do
+	multi='<false/>'
 	case $p in
 	ios) sdk=iphonesimulator; tgt=arm64-apple-ios27.0-simulator; plat=iPhoneSimulator; fam='<integer>1</integer><integer>2</integer>'; extra= ;;
 	tvos) sdk=appletvsimulator; tgt=arm64-apple-tvos27.0-simulator; plat=AppleTVSimulator; fam='<integer>3</integer>'; extra= ;;
 	# a standalone (watch-only) app: watchOS installs and runs it without an iPhone companion
 	watchos) sdk=watchsimulator; tgt=arm64-apple-watchos27.0-simulator; plat=WatchSimulator; fam='<integer>4</integer>'
-		extra='<key>WKApplication</key><true/><key>WKWatchOnly</key><true/>'
+		# WKBackgroundModes self-care: WKExtendedRuntimeSession runs (refused with error 7 without it); the Health usage
+		# strings: the workout check may ask for Health access (an app without them is killed when it asks)
+		extra='<key>WKApplication</key><true/><key>WKWatchOnly</key><true/><key>WKBackgroundModes</key><array><string>self-care</string></array><key>NSHealthShareUsageDescription</key><string>sdkcov reads workouts it saved</string><key>NSHealthUpdateUsageDescription</key><string>sdkcov saves a test workout</string>'
 		# Xcode's watch SDK: the one in sdks/WatchSimulator.sdk is sim-sdk.py's substitute (macOS headers, no WatchKit)
 		[ "$X86SIM_BUILD" = linux ] && export SDK_WATCHOS=$X86SIM_ROOT/sdks/WatchSimulator-xcode.sdk ;;
 	# Xcode's visionOS SDK: sdks/XRSimulator.sdk is sim-sdk.py's substitute (iOS's framework list, not visionOS's)
-	xros) sdk=xrsimulator; tgt=arm64-apple-xros27.0-simulator; plat=XRSimulator; fam='<integer>7</integer>'; extra=
+	xros) sdk=xrsimulator; tgt=arm64-apple-xros27.0-simulator; plat=XRSimulator; fam='<integer>7</integer>'; extra=; multi='<true/>'  # volume + immersive spaces
 		[ "$X86SIM_BUILD" = linux ] && export SDK_XROS=$X86SIM_ROOT/sdks/XRSimulator-xcode.sdk ;;
 	*) echo "sdkcov build: unknown platform $p (ios, tvos, watchos, xros)" >&2; exit 2 ;;
 	esac
@@ -41,7 +44,7 @@ for p in ${*:-ios tvos watchos xros}; do
 <key>CFBundleSupportedPlatforms</key><array><string>$plat</string></array>
 <key>DTPlatformName</key><string>$sdk</string><key>MinimumOSVersion</key><string>27.0</string>
 <key>UIDeviceFamily</key><array>$fam</array><key>UILaunchScreen</key><dict/>
-<key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
+<key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key>$multi</dict>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoads</key><true/></dict>
 <key>BGTaskSchedulerPermittedIdentifiers</key><array><string>com.x86sim.test.sdkcov.refresh</string></array>
 <key>NSUserActivityTypes</key><array><string>com.x86sim.test.sdkcov.activity</string></array>
