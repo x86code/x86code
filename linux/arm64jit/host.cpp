@@ -539,6 +539,15 @@ static void on_fault(int sig, siginfo_t *si, void *uc) {
     long expect = 0;
     in_handler_tid.compare_exchange_strong(expect, tid);
     const u64 rip = (u64)ctx->uc_mcontext.gregs[REG_RIP];
+    // GitHub issue #2: a store into the guard below this thread's guest stack is a guest stack overflow (runaway
+    // recursion). Fatal, as on a device; reported as such (the backtrace is the recursion's frames).
+    if (GuestThread *t = GuestThread::current(); t && (sig == SIGSEGV || sig == SIGBUS) && t->in_stack_guard((u64)si->si_addr)) {
+        logf("guest stack overflow: addr %p below the thread's stack %#lx-%#lx (guest sp %#lx pc %#lx, rip %#llx); killing pid %d",
+             si->si_addr, (unsigned long)t->stack_base, (unsigned long)(t->stack_base + t->stack_size), (unsigned long)t->sp(),
+             (unsigned long)t->jit->GetPC(), (unsigned long long)rip, (int)getpid());
+        guest_backtrace(*t);
+        fatal_exit(sig);
+    }
     static const char *nf = getenv("X86SIM_A64_NATIVE_FAULT");
     const bool fatal = !Dynarmic::Backend::IsJitCodeAddress(rip) && !(nf && !strcmp(nf, "chain"));
     char buf[256];

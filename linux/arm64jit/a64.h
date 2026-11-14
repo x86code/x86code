@@ -48,6 +48,10 @@ struct GuestThread final : Dynarmic::A64::UserCallbacks {
     // Perf 1e: jit's register storage (Jit::GetStatePointers), refreshed whenever jit is (re)created
     Dynarmic::A64::Jit::StatePointers st{};
     u64 stack_base = 0, stack_size = 0;
+    // PROT_NONE below stack_base (GitHub issue #2): a guest stack overflow faults instead of corrupting the next mapping.
+    // Large enough that a frame of up to 1 MB without stack probes cannot step over it.
+    static constexpr u64 kGuestStackGuard = 1ull << 20;
+    bool in_stack_guard(u64 a) const { return stack_base && a < stack_base && a >= stack_base - kGuestStackGuard; }
     u64 tpidr = 0, tpidrro = 0;
     static constexpr int kGuestTsdSlots = 768;
     u64 *tsd = nullptr;  // the guest's TSD array (tpidrro_el0), see GuestThread()

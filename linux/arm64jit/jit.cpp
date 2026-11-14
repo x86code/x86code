@@ -918,8 +918,13 @@ GuestThread::GuestThread() {
     if (rss_debug) { struct mallinfo2 mi = mallinfo2(); logf("new Jit: anon RSS +%ld kB; glibc mmapped %zu MB in %zu blocks, arena %zu MB", rss() - before, mi.hblkhd >> 20, mi.hblks, mi.arena >> 20); }
     g_live_threads++;
     stack_size = 8u << 20;
-    stack_base = (u64)mmap(nullptr, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    if (stack_base == (u64)MAP_FAILED) die("cannot allocate a guest stack");
+    // GitHub issue #2: a PROT_NONE guard below the stack. Without one, a guest recursion that ran off the bottom kept
+    // writing into whatever mapping lay below (another thread's guest stack, JIT metadata, malloc arenas): backboardd
+    // died of the corruption later and elsewhere (Xbyak "offset is too big" in EmitX64::Patch, a jump to a data page,
+    // guest pc 0x2). Now the first store below the stack faults and is reported as a guest stack overflow (host.cpp).
+    void *stk = mmap(nullptr, kGuestStackGuard + stack_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    if (stk == MAP_FAILED || mprotect((char *)stk + kGuestStackGuard, stack_size, PROT_READ | PROT_WRITE) != 0) die("cannot allocate a guest stack");
+    stack_base = (u64)stk + kGuestStackGuard;
     susp_thread_init(*this);
 }
 // After a longjmp out of call() (pthread_exit) the Jit still counts as executing: its state is abandoned (leaked,
@@ -931,7 +936,7 @@ void GuestThread::reset_after_unwind() {
     jit = make_jit(cfg);
     st = jit->GetStatePointers();
 }
-GuestThread::~GuestThread() { gbt_forget(this); susp_thread_fini(*this); gsample_forget(this); g_live_threads--; munmap((void *)stack_base, stack_size); free(tsd); }
+GuestThread::~GuestThread() { gbt_forget(this); susp_thread_fini(*this); gsample_forget(this); g_live_threads--; munmap((void *)(stack_base - kGuestStackGuard), kGuestStackGuard + stack_size); free(tsd); }
 
 NRet GuestThread::call(u64 pc, const u64 *ints, int nints, const u64 *fps, int nfps) {
     struct Saved {
