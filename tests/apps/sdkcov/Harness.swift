@@ -41,6 +41,9 @@ final class Runner: ObservableObject {
     @Published var total = 0
     @Published var failures: [String] = []
     @Published var finished = false
+    /// a check's live view, shown in place of the progress list while set (input that only reaches what is on screen,
+    /// e.g. the watch's Digital Crown, which goes to the focused SwiftUI view)
+    @Published var overlay: AnyView?
     var manifest: Manifest?
 
     let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -198,6 +201,9 @@ final class Runner: ObservableObject {
 struct RootView: View {
     @EnvironmentObject var r: Runner
     var body: some View {
+        if let o = r.overlay { o } else { progress }
+    }
+    var progress: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 6) {
                 Text("sdkcov").font(.headline)

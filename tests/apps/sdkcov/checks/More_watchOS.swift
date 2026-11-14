@@ -37,6 +37,29 @@ final class SDKCovRuntimeSessionDelegate: NSObject, WKExtendedRuntimeSessionDele
     }
 }
 
+/// counts Digital Crown events that reach SDKCovCrownProbeView
+final class SDKCovCrownProbe: @unchecked Sendable {
+    let lock = NSLock()
+    var events = 0, idle = 0, value = 0.0, focused = false
+}
+
+/// a focused view taking the crown (.digitalCrownRotation with onChange / onIdle), shown by the crown-sequencer check
+struct SDKCovCrownProbeView: View {
+    let p: SDKCovCrownProbe
+    @State private var v = 0.0
+    @FocusState private var f: Bool
+    var body: some View {
+        Text("turn the crown").frame(maxWidth: .infinity, maxHeight: .infinity)
+            .focusable().focused($f)
+            .digitalCrownRotation(detent: $v, from: -1000, through: 1000, by: 0.1, sensitivity: .medium, isContinuous: true,
+                                  isHapticFeedbackEnabled: false,
+                                  onChange: { e in p.lock.withLock { p.events += 1; p.value = e.offset } },
+                                  onIdle: { p.lock.withLock { p.idle += 1 } })
+            .onAppear { f = true }
+            .onChange(of: f) { _, x in p.lock.withLock { p.focused = x } }
+    }
+}
+
 /// records Digital Crown rotation delivered to the focused crown sequencer
 final class SDKCovCrownDelegate: NSObject, WKCrownDelegate {
     let lock = NSLock()
@@ -166,7 +189,11 @@ extension Registry {
         })
         c.append(check("WatchKit", "crown-sequencer", timeout: 60) {
             // SDKCOV_CROWN_WAIT=<s> (launch --env): wait that long for Digital Crown input (`x86sim crown 120 5` meanwhile)
-            // and require it to arrive at the focused sequencer's delegate; without it only the sequencer's state is checked
+            // and require it to arrive in the app; without it only the sequencer's state is checked.
+            // In a SwiftUI app the crown goes to SwiftUI's crown focus (the focused .digitalCrownRotation view, else the
+            // scroll view), never to rootInterfaceController's WKCrownSequencer: on Apple's watchOS 27.2 simulator that
+            // delegate gets nothing while backboardd routes the scroll events to the app and its scroll view turns. So the
+            // input part puts a focused .digitalCrownRotation view on screen (Runner.overlay) and counts its events.
             let wait = Double(ProcessInfo.processInfo.environment["SDKCOV_CROWN_WAIT"] ?? "") ?? 0
             let d = SDKCovCrownDelegate()
             let cs = try await onMain { () -> WKCrownSequencer in
@@ -175,15 +202,15 @@ extension Registry {
                 let cs = root.crownSequencer; cs.delegate = d; cs.focus(); return cs
             }
             let st = await onMain { "idle \(cs.isIdle), haptics \(cs.isHapticFeedbackEnabled), rps \(cs.rotationsPerSecond)" }
-            var got = ""
-            if wait > 0 {
-                let ok = await watchWaitFor(wait) { d.lock.withLock { d.events > 0 && d.idle > 0 } }
-                let (t, n, idle) = d.lock.withLock { (d.total, d.events, d.idle) }
-                try expect(ok, "no crown input in \(Int(wait)) s: \(n) rotations, \(idle) idle")
-                got = ", crown: \(n) rotation events, total \(String(format: "%.3f", t)) rotations, idle \(idle)"
-            }
             await onMain { cs.resignFocus(); cs.delegate = nil }
-            return st + got
+            guard wait > 0 else { return st }
+            let probe = SDKCovCrownProbe()
+            await onMain { Runner.shared.overlay = AnyView(SDKCovCrownProbeView(p: probe)) }
+            defer { Task { @MainActor in Runner.shared.overlay = nil } }
+            let ok = await watchWaitFor(wait) { probe.lock.withLock { probe.events > 0 && probe.idle > 0 } }
+            let (n, v, idle, focused) = probe.lock.withLock { (probe.events, probe.value, probe.idle, probe.focused) }
+            try expect(ok, "no crown input in \(Int(wait)) s: \(n) rotation events, \(idle) idle, view focused \(focused)")
+            return st + ", crown: \(n) rotation events in SwiftUI, value \(String(format: "%.3f", v)), idle \(idle)"
         })
         c.append(check("_WatchKit_SwiftUI", "now-playing-view") {
             try await onMain {
