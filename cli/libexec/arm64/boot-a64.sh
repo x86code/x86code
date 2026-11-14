@@ -222,11 +222,15 @@ OUR_JOBS="com.x86sim.openurl=host/openurl/$A64_HOSTDIR/openurl
 	com.x86sim.fpsim2host=host/fpsim2host/$A64_HOSTDIR/fpsim2host|mach:com.apple.FileProvider.sim2host"
 # Platforms 1: tvOS. PineBoard is tvOS's SpringBoard (the home screen, "Top Shelf" and the app switcher); TVSystemUIService
 # (angel) draws the system overlays (volume, Control Center). No sleepd, InputUI or nanoregistryd on tvOS.
+# geod + mediaremoted (tvOS sdkcov round, on demand, both in Apple's tvOS simulator): without geod an app's MapKit
+# retried com.apple.geod ~15000 times in one sdkcov run (and its SwiftUI Map built 19 views, Apple's 21); without
+# mediaremoted NowPlaying's MediaSession.requestToBecomeApplicationPrimary() failed (internalFailure: no
+# com.apple.mediaremoted.xpc). Both checked against Apple's tvOS 27.2 simulator (tests/apps/sdkcov/ref-mac.sh tvos).
 TV_UI="com.apple.installcoordinationd com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd
 	com.apple.FileCoordination com.apple.usernotificationsd com.apple.assistantd com.apple.TVSystemUIService
 	com.apple.PosterBoard com.apple.campo com.apple.splashboardd com.apple.MediaRemoteUI com.apple.assetsubscriptiond
 	com.apple.mobileassetd com.apple.tvremoted com.apple.CoreAuthentication.daemon com.apple.storekitd
-	com.apple.voiced com.apple.accessibility.axassetsd"
+	com.apple.voiced com.apple.accessibility.axassetsd com.apple.geod com.apple.mediaremoted"
 TV_UI_SLIM="com.apple.backboardd com.apple.Pineboard com.apple.TextInput.kbd com.apple.FileCoordination"
 # Platforms 1: watchOS. Carousel is watchOS's SpringBoard (the watch face, the app grid, notifications); the watch face
 # itself comes from nanotimekitd. nanoregistryd (+ its launch helper) holds the pairing state, unpaired for a watch booted
