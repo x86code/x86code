@@ -193,6 +193,25 @@ def main():
               "Library/Application Support/Simulator", "Library/LaunchDaemons"]:
         os.makedirs(os.path.join(data, d), exist_ok=True)
     open(data + "/var/run/memory_warning_simulation", "a").close()
+    # x86Sim: the runtime's sample content (SampleContent next to RuntimeRoot: on iOS the photo library with its six
+    # sample photos, and the sample contacts), which CoreSimulator copies into a new device's data at `simctl create`.
+    # Without it the photo picker said "No Photos" where Apple's simulator shows the samples (tests/apps/sdkcov
+    # func:PhotosUI.picker-present). Only into a device that has no photo library or address book yet (a new one, or
+    # one erased); a marker keeps a device whose user deleted them from getting them back at the next boot.
+    sample = os.path.join(os.path.realpath(RUNTIME or ""), "../SampleContent")
+    marker = os.path.join(data, "Library/.x86sim-samplecontent")
+    if RUNTIME and os.path.isdir(sample) and not os.path.exists(marker):
+        if not os.path.exists(os.path.join(data, "Media/PhotoData/Photos.sqlite")) and \
+                not os.path.exists(os.path.join(data, "Library/AddressBook/AddressBook.sqlitedb")):
+            for top, dirs, files in os.walk(sample):
+                rel = os.path.relpath(top, sample)
+                os.makedirs(os.path.join(data, rel), exist_ok=True)
+                for f in files:
+                    dst = os.path.join(data, rel, f)
+                    if not os.path.lexists(dst):
+                        shutil.copy2(os.path.join(top, f), dst)
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        open(marker, "a").close()
     # Platforms 1: the photo library's folder. On iOS assetsd makes it; tvOS / watchOS run no photos daemon, and the
     # watch's nanotimekitd (the Photos face) opened Media/PhotoData/Photos.sqlite at every start and threw ("Error
     # validating url for store": CoreData could not statfs the missing folder).
