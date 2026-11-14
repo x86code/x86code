@@ -33,7 +33,12 @@ EAGER = {"com.apple.SpringBoard", "com.apple.backboardd", "com.apple.runningboar
          "com.apple.Pineboard", "com.apple.Carousel",
          # Platforms 2: visionOS's SpringBoard and the two that put its room on the screen (the simulator's virtual
          # head-mounted display, the hmd presentable server): nothing looks them up before the first frame
-         "com.apple.SurfBoard", "com.apple.vhmdd", "com.apple.wakeboardd", "com.apple.RealityEnvironment"}
+         "com.apple.SurfBoard", "com.apple.vhmdd", "com.apple.wakeboardd", "com.apple.RealityEnvironment",
+         # iOS share sheet: sharingd fills its share-extension cache (PlugInKit's continuous discovery) at its start. Started
+         # on demand by an app's first UIActivityViewController, it answered that request before discovery delivered ("0 new
+         # extensions from NSExtension") and the sheet had no app row (no Reminders) until the next one. Apple ships it
+         # RunAtLoad + KeepAlive. ~45 MB PSS idle here
+         "com.apple.sharingd"}
 PREFIX = x86config.get("X86SIM_PREFIX")
 MTLVK_SOCKET = os.environ.get("X86SIM_MTLVK_SOCKET") or os.path.join(x86config.get("X86SIM_STATE"), "mtlvk.sock")
 # x86Sim: the host side of the simulator's audio (cli/libexec/simaudio.py, started by cli/libexec/arm64/boot-a64.sh)

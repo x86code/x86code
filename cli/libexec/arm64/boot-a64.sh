@@ -202,6 +202,10 @@ MIN="com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system com.appl
 # AVSpeechSynthesizer said nothing). locationd: feature "location" (SpringBoard looks it up at boot, ~94 MB); without it
 # CMPedometer.isStepCountingAvailable() never returned. liveactivitiesd (on demand: com.apple.sessionservices): Live
 # Activities; without it ActivityAuthorizationInfo().areActivitiesEnabled was false where Apple's simulator says true.
+# sharingd + sharinguiservice: the share sheet. UIActivityViewController asks sharingd (com.apple.sharing.sharesheet) for
+# the activities and shows them in SharingUIService's remote view (angel, on demand). Without them the sheet came up as an
+# empty card (no header, app row or actions) where Apple's simulator shows the link, Reminders / More, Copy and Add to
+# Reading List. sharingd is EAGER (mksimdevice.py): its extension cache must be primed before the first share.
 UI="com.apple.installcoordinationd com.apple.mobiletimerd com.apple.backboardd com.apple.SpringBoard com.apple.sleepd com.apple.TextInput.kbd com.apple.FileCoordination
 	com.apple.usernotificationsd com.apple.InputUI com.apple.assistantd com.apple.assetsd com.apple.geod com.apple.navd com.apple.Maps.mapssyncd
 	com.apple.campo com.apple.FileProvider com.apple.DesktopServicesHelper com.apple.PosterBoard com.apple.financed
@@ -210,7 +214,8 @@ UI="com.apple.installcoordinationd com.apple.mobiletimerd com.apple.backboardd c
 	com.apple.siriinferenced com.apple.siriknowledged com.apple.siriactionsd com.apple.searchd com.apple.corespotlightservice
 	com.apple.assistant_cdmd com.apple.nanoregistryd com.apple.nanotimekitcompaniond
 	com.apple.CoreAuthentication.daemon com.apple.storekitd com.apple.quicklook.ThumbnailsAgent com.apple.midiserver-sim
-	com.apple.locationd com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd com.apple.liveactivitiesd"
+	com.apple.locationd com.apple.pasteboard.pasted com.apple.wcd com.apple.voiced com.apple.accessibility.axassetsd com.apple.liveactivitiesd
+	com.apple.sharingd com.apple.sharinguiservice"
 UI_SLIM="com.apple.backboardd com.apple.SpringBoard com.apple.TextInput.kbd com.apple.FileCoordination com.apple.InputUI
 	com.apple.assistantd"
 FULLUI="com.apple.chronod"

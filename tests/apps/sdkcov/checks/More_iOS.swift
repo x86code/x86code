@@ -1192,10 +1192,35 @@ extension Registry {
             return "vt100: \(cols) cols, \(num("lines")) lines, clear \(clear.debugDescription)"
         })
         // MARK: system view controllers presented (out-of-process content), Metal on screen, video export
-        c.append(check("UIKit", "activity-share-sheet-present", timeout: 40) {
-            let r = try await iosPresentSystem({ UIActivityViewController(activityItems: ["x86sim", URL(string: "https://example.com")!], applicationActivities: nil) })
-            // presented and dismissed is the check; what drawHierarchy captures of the remote sheet is reported
-            return "\(Int(r.size.width))x\(Int(r.size.height)), ink \(String(format: "%.2f", r.ink)), map \(r.grid)"
+        c.append(check("UIKit", "activity-share-sheet-present", timeout: 60) {
+            // the sheet's content (link header, app row, actions) is a remote scene: sharingd picks the activities and
+            // SharingUIService draws them. Once it is up, the presented controller hosts its layer (a CALayerHost with a
+            // context id) and takes the content's size (Apple's iPhone 17 Pro: 384x364, from the default 375x560).
+            // Without sharingd / SharingUIService the card stayed empty: no layer host, size unchanged.
+            // (drawHierarchy doesn't capture remote content, on Apple's simulator either: ink and map are only reported)
+            let initial = Mutex(CGSize.zero)
+            let hosted = Mutex<(UInt32, CGSize)?>(nil)
+            let r = try await iosPresentSystem({
+                let p = UIActivityViewController(activityItems: ["x86sim", URL(string: "https://example.com")!], applicationActivities: nil)
+                initial.withLock { $0 = p.preferredContentSize }
+                Task { @MainActor in   // poll while the sheet is up (iosPresentSystem dismisses it after settle)
+                    for _ in 0..<60 {
+                        func host(_ v: UIView) -> UInt32? {
+                            if NSStringFromClass(type(of: v.layer)) == "CALayerHost", let id = (v.layer.value(forKey: "contextId") as? NSNumber)?.uint32Value, id != 0 { return id }
+                            return v.subviews.lazy.compactMap(host).first
+                        }
+                        if p.viewIfLoaded?.window != nil, let id = host(p.view), p.preferredContentSize != initial.withLock({ $0 }) {
+                            hosted.withLock { $0 = (id, p.preferredContentSize) }; return
+                        }
+                        try? await Task.sleep(for: .milliseconds(250))
+                    }
+                }
+                return p
+            }, settle: 15)
+            guard let (id, size) = hosted.withLock({ $0 }) else {
+                throw Fail("the share sheet's remote content never came up (no hosted layer with a context id, size still \(initial.withLock { $0 })): sharingd / SharingUIService?")
+            }
+            return "remote content hosted (context \(id)), sheet \(Int(size.width))x\(Int(size.height)) from \(Int(initial.withLock { $0 }.width))x\(Int(initial.withLock { $0 }.height)), ink \(String(format: "%.2f", r.ink))"
         })
         c.append(check("UIKit", "document-picker-present", timeout: 40) {
             let r = try await iosPresentSystem({ UIDocumentPickerViewController(forOpeningContentTypes: [.plainText, .pdf]) })
