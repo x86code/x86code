@@ -637,6 +637,25 @@ except Exception:
 if d.pop("PreferencesLastLoadedOn", None) is not None:
 	plistlib.dump(d, open(sys.argv[1], "wb"), fmt=plistlib.FMT_BINARY)
 PY
+# The Network Extension configuration store: NEConfigurationManager (NEVPNManager / NERelayManager /
+# NETunnelProviderManager loadFromPreferences) reads /Library/Preferences/com.apple.networkextension.plist by
+# absolute path, on a Mac the host's own (a keyed archive: Version, Generation, Index {UserMap, ConfigurationProperties}
+# + one entry per configuration). When it can't read it (not root, no file) it asks com.apple.nehelper, which the
+# simulator runtime does not have: every load failed "IPC failed" (NEVPNErrorDomain 5, NEConfigurationErrorDomain 11)
+# where Apple's tvOS 27.2 simulator answers ok / 0 managers. An empty store, as a Mac without configurations:
+if [ ! -s "$DPREFIX/Library/Preferences/com.apple.networkextension.plist" ]; then
+	mkdir -p "$DPREFIX/Library/Preferences"
+	python3 - "$DPREFIX/Library/Preferences/com.apple.networkextension.plist" <<'PY'
+import plistlib, sys
+U = plistlib.UID
+md = {"$classname": "NSMutableDictionary", "$classes": ["NSMutableDictionary", "NSDictionary", "NSObject"]}
+empty = {"NS.keys": [], "NS.objects": [], "$class": U(6)}
+objs = ["$null", {"NS.keys": [U(2), U(4)], "NS.objects": [U(3), U(5)], "$class": U(6)},
+	"UserMap", empty, "ConfigurationProperties", dict(empty), md]
+plistlib.dump({"$archiver": "NSKeyedArchiver", "$version": 100000, "$objects": objs,
+	"$top": {"Version": 1, "Generation": 1, "Index": U(1)}}, open(sys.argv[1], "wb"), fmt=plistlib.FMT_BINARY)
+PY
+fi
 # Speed 27: and host data a Mac has in /System/Library (cli/libexec/arm64/fetch-macos-host.sh fetches it from the Mac
 # into runtimes/macos-host): geod seeds its resource manifest from /System/Library/GeoServicesData/ResourceManifest.json;
 # without it there was no active tile group and Maps drew a bare globe grid without ever requesting a tile.
