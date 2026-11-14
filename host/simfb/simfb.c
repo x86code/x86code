@@ -95,6 +95,7 @@ struct waiting { SFBSwapchainRef sc; IOSurfaceRef s; uint64_t target, id, t0ns; 
 struct disp {
 	SFBDisplayRef ref;
 	uint32_t id, w, h;
+	uint32_t type;   // SFBDisplayGetType: 0 a built-in panel, 1 an external display (see main_display_type)
 	CFStringRef name, devname, uid;
 	char ring_path[1024];
 	// frame ring
@@ -163,6 +164,35 @@ static CFArrayRef integrated_displays(void) {
 	return out;
 }
 
+// tvOS: the Apple TV's screen is its HDMI output. The device type's display is "displayType" "tvOut" (external-0,
+// TVOut). In Apple's tvOS 27.2 simulator (Apple TV 4K 1080p) that display is an external CADisplay (displayType 1,
+// isExternal) whose mode is sRGB ("1920x1080 60Hz sRGB SDR"), so UIScreen's traits say displayGamut sRGB (0) though
+// the device type's capabilities say P3. SFB type 1 gives the same here (QuartzCore's SimDisplay makes the CADisplay
+// external from it); as type 0 it was a built-in P3 panel: displayGamut P3 (1). SIMFB_DISPLAY_TYPE overrides.
+static uint32_t main_display_type(void) {
+	const char* force = getenv("SIMFB_DISPLAY_TYPE");
+	if (force && *force) return (uint32_t)atoi(force);
+	const char* path = getenv("SIMULATOR_CAPABILITIES");
+	if (!path) return 0;
+	CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8*)path, strlen(path), false);
+	CFReadStreamRef st = url ? CFReadStreamCreateWithFile(NULL, url) : NULL;
+	CFPropertyListRef pl = NULL;
+	if (st && CFReadStreamOpen(st)) {
+		pl = CFPropertyListCreateWithStream(NULL, st, 0, kCFPropertyListImmutable, NULL, NULL);
+		CFReadStreamClose(st);
+	}
+	if (st) CFRelease(st);
+	if (url) CFRelease(url);
+	CFTypeRef arr = dict_get(dict_get(pl, "capabilities"), "displays");
+	if (!arr) arr = dict_get(pl, "displays");
+	uint32_t t = 0;
+	if (arr && CFGetTypeID(arr) == CFArrayGetTypeID() && CFArrayGetCount(arr) > 0 &&
+		dict_str_is(CFArrayGetValueAtIndex(arr, 0), "displayType", "tvOut"))
+		t = 1;
+	if (pl) CFRelease(pl);
+	return t;
+}
+
 static void swapchain_finalize(CFTypeRef ref) {
 	SFBSwapchainRef sc = (SFBSwapchainRef)ref;
 	if (sc->pending) CFRelease(sc->pending);
@@ -191,6 +221,7 @@ static void init_types(void) {
 				d->name = CFSTR("LCD"); // CA clients pick the main display by this exact name
 				d->devname = d->name;
 				d->uid = CFSTR("x86Sim-main-display");
+				d->type = main_display_type();
 				snprintf(d->ring_path, sizeof(d->ring_path), "%s", ring);
 			} else {
 				d->id = (uint32_t)dict_int(e, "screenID") ?: (uint32_t)(i + 1);
@@ -267,7 +298,7 @@ EXPORT bool SFBConnectionRemoveDisplay(SFBConnectionRef c, SFBDisplayRef d, void
 EXPORT CFTypeID SFBDisplayGetTypeID(void) { init_types(); return display_type; }
 EXPORT uint64_t SFBDisplayGetConnectionID(SFBDisplayRef d) { return 1; }
 EXPORT uint32_t SFBDisplayGetID(SFBDisplayRef d) { return disp_of(d)->id; }
-EXPORT uint32_t SFBDisplayGetType(SFBDisplayRef d) { return 0; }
+EXPORT uint32_t SFBDisplayGetType(SFBDisplayRef d) { return disp_of(d)->type; }
 EXPORT CFStringRef SFBDisplayGetName(SFBDisplayRef d) { return disp_of(d)->name; }
 EXPORT CFStringRef SFBDisplayGetDisplayUID(SFBDisplayRef d) { return disp_of(d)->uid; }
 // x86Sim: new in iOS 27's SimFramebuffer client interface
