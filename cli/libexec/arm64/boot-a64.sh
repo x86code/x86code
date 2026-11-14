@@ -607,6 +607,22 @@ for b in CoreGlyphs CoreGlyphsPriority CoreGlyphsPrivate; do
 	ln -sfn "/Volumes/SystemRoot$(realpath "$X86SIM_RUNTIME")/System/Library/CoreServices/$b.bundle" \
 		"$DPREFIX/System/Library/CoreServices/$b.bundle"
 done
+# Bundles Darling's own tree also has (a macOS stub, no resources): the Sign in with Apple button drawing takes its
+# Apple logo PDF and strings from +[AKUIBundleProvider bundle] = [NSBundle bundleWithPath:@"/System/Library/
+# PrivateFrameworks/AuthKitUI.framework"], on a Mac the host's copy. Here it was Darling's stub: no logo, and every app
+# showing an ASAuthorizationAppleIDButton / SignInWithAppleButton aborted (assertion "page" in _DrawLogoPDFIntoContext).
+# Darling's stub stays (its x86_64 binary): the runtime copy's entries it lacks are linked into a real directory in the
+# prefix's upper layer, which the overlay merges with Darling's.
+DLOWER=${X86SIM_DARLING_ROOT:-$X/darling-prefix/libexec/darling}
+for fw in PrivateFrameworks/AuthKitUI; do
+	src="$(realpath "$X86SIM_RUNTIME")/System/Library/$fw.framework" dst="$DPREFIX/System/Library/$fw.framework"
+	[ -d "$src" ] || continue
+	[ -L "$dst" ] && rm -f "$dst"
+	mkdir -p "$dst"
+	for e in "$src"/*; do
+		[ -e "$DLOWER/System/Library/$fw.framework/${e##*/}" ] || ln -sfn "/Volumes/SystemRoot$e" "$dst/${e##*/}"
+	done
+done
 # TextToSpeech's voice database (axassetsd, /var/mobile/Library/Accessibility/voicedb.sqlite) is refilled at every
 # start by its loaders, each skipped when com.apple.SpeakSelection's PreferencesLastLoadedOn says it already loaded in
 # this boot: the value is kern.boottime, which here is the Linux host's for every device boot. So after the first
